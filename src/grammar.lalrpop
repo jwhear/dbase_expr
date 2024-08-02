@@ -1,0 +1,115 @@
+use crate::ast::{Expression, BinaryOp, UnaryOp, apply_string_escapes};
+
+grammar;
+
+// Precedence climbing: each tier is a distinct precedence level. We start with
+//  the lowest precedence and work our way up to "terms".
+pub Expr = Or;
+Or = Tier<OrOp, And>;
+And = Tier<AndOp, Not>;
+Not = TierUnary<NotOp, Relation>;
+Relation = Tier<RelationOp, Add>;
+Add = Tier<AddOp, Factor>;
+Factor = Tier<FactorOp, Neg>;
+Neg = TierUnary<NegOp, Exp>;
+Exp = Tier<ExpOp, Term>;
+
+pub Exprs = Comma<Expr>;
+
+Term: Box<Expression> = {
+	Bool => Box::new(Expression::BoolLiteral(<>)),
+	Num => Box::new(Expression::NumberLiteral(<>)),
+	DoubleQuoteString => Box::new(Expression::DoubleQuoteStringLiteral(<>)),
+	SingleQuoteString => Box::new(Expression::SingleQuoteStringLiteral(<>)),
+
+	// ALIAS->FIELD
+	<alias:Ident> "->" <name:Ident> => Box::new(Expression::Field{ alias: Some(alias), name }),
+	// FIELD
+	Ident => Box::new(Expression::Field{alias: None, name: <>}),
+
+	Call => Box::new(Expression::FunctionCall{name: <>.0, args: <>.1}),
+	"(" <t:Expr> ")" => t,
+};
+
+Bool: bool = {
+	r"\.[tT]([rR][uU][eE])?\." => true,
+	r"\.[fF]([aA][lL][sS][eE])?\." => false,
+};
+Num: String = r"[0-9]+(\.[0-9]+)?" => <>.to_string();
+Ident: String = r"[a-zA-Z_][a-zA-Z_0-9]*" => <>.to_string();
+Call: (String, Vec<Box<Expression>>) = <name:Ident> "(" <args:Exprs> ")" => (name, args);
+Field: Box<Expression> = {
+	
+};
+
+DoubleQuoteString: String = <l:r#""(\\\\|\\"|[^"\\])*""#> => apply_string_escapes(&l[1..l.len()-1]);
+SingleQuoteString: String = <l:r#"'(\\\\|\\'|[^'\\])*'"#> => apply_string_escapes(&l[1..l.len()-1]);
+
+ExpOp: BinaryOp = {
+	"**" => BinaryOp::Exp,
+	"^" => BinaryOp::Exp,
+};
+
+FactorOp: BinaryOp = {
+	"*" => BinaryOp::Mul,
+	"/" => BinaryOp::Div,
+};
+
+AddOp: BinaryOp = {
+	"+" => BinaryOp::Add,
+	"-" => BinaryOp::Sub,
+};
+
+RelationOp: BinaryOp = {
+	"=" => BinaryOp::Eq,
+	"<>" => BinaryOp::Ne,
+	"#" => BinaryOp::Ne,
+	"<" => BinaryOp::Lt,
+	"<=" => BinaryOp::Le,
+	">" => BinaryOp::Gt,
+	">=" => BinaryOp::Ge,
+	"$" => BinaryOp::Contain,
+};
+
+AndOp: BinaryOp = {
+	r"\.[aA][nN][dD]\." => BinaryOp::And,
+};
+
+OrOp: BinaryOp = {
+	".[oO][rR]." => BinaryOp::Or,
+};
+
+NotOp: UnaryOp = {
+	".[nN][oO][tT]." => UnaryOp::Not,
+};
+
+NegOp: UnaryOp = {
+	"-" => UnaryOp::Neg,
+}
+
+
+
+
+// Utility macros
+//-------------------------------------------------------
+
+// Matches a comma separated list of T and returns them in a Vec
+Comma<T>: Vec<T> = { // (1)
+    <mut v:(<T> ",")*> <e:T?> => match e { // (2)
+        None => v,
+        Some(e) => {
+            v.push(e);
+            v
+        }
+    }
+};
+
+Tier<Op,NextTier>: Box<Expression> = {
+	Tier<Op,NextTier> Op NextTier => Box::new(Expression::BinaryOperator(<>)),
+	NextTier
+};
+
+TierUnary<Op,NextTier>: Box<Expression> = {
+	Op NextTier => Box::new(Expression::UnaryOperator(<>)),
+	NextTier
+};
