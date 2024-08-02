@@ -34,12 +34,16 @@ fn main() {
                 Ok(tree) => println!("{test}:\n\t{}\n", Printer::new(tree)),
                 Err(e) => eprintln!("Error translating tree: {e:?}"),
             },
+
+            // The parse failed with an unexpected token: show the approximate
+            //  position in the source
             Err(lalrpop_util::ParseError::InvalidToken { location }) => {
                 let end = test.len().min(location + 10);
                 println!("Failed: {}\nError near here: {}", test, unsafe {
                     test.get_unchecked(location..end)
                 })
             }
+            // Any other kind of error, just print it
             Err(e) => println!("{:?}", e),
         };
     }

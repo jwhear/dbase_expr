@@ -83,9 +83,11 @@ fn ok(exp: Expression) -> Result {
     Ok(Box::new(exp))
 }
 
+/// Translates dBase expression to a SQL expression.
 pub fn translate(source: &ast::Expression) -> Result {
     use ast::Expression as E;
 
+    // helper for creating binary operators
     let binop = |l, op, r| ok(Expression::BinaryOperator(translate(l)?, op, translate(r)?));
 
     match source {
@@ -108,6 +110,10 @@ pub fn translate(source: &ast::Expression) -> Result {
         E::BinaryOperator(l, op, r) => match op {
             //TODO Add, Sub are ambiguous: could be concat or days (for dates)
             // Use julianday(date) to transform a date into days
+            // Solving this will require an additional param to translate that
+            //  allows the querying of the type of expressions.  Most will be
+            //  trivial (e.g. `DATE()` always produces a Date), but bare Fields
+            //  require the database schema.
             ast::BinaryOp::Add => binop(l, BinaryOp::Add, r),
             ast::BinaryOp::Sub => binop(l, BinaryOp::Sub, r),
             ast::BinaryOp::Mul => binop(l, BinaryOp::Mul, r),
@@ -141,6 +147,9 @@ pub fn translate(source: &ast::Expression) -> Result {
     }
 }
 
+// This function does the kind of gross work of converting dBase function calls
+//  to the SQL equivalent.  Some are super straightforward: `CHR(97)` -> `CHR(97)`
+//  but others have no exact equivalent and have to resolve to a nested bundle.
 fn translate_function_call(name: &str, args: &[Box<ast::Expression>]) -> Result {
     let name = name.to_uppercase();
 
@@ -245,6 +254,7 @@ fn translate_function_call(name: &str, args: &[Box<ast::Expression>]) -> Result 
     }
 }
 
+//NOTE(justin): This function almost certainly has a bug hiding in it.
 fn escape_single_quotes(s: &str) -> String {
     let mut res = String::new();
     res.reserve(s.len());

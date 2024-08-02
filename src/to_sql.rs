@@ -144,31 +144,3 @@ impl ToSQL for Expression {
         }
     }
 }
-
-/*fn translate_function_call(name: &str, args: &Vec<Box<Expression>>) -> Expression {
-    let name = name.to_uppercase();
-
-    macro_rules! f {
-        ($name:literal, $($args:expr),*) => {
-            Expression::FunctionCall {
-                name: $name.to_string(),
-                args: vec![$($args.into()),*],
-            }
-        };
-    }
-
-    match name.as_str() {
-        "ALLTRIM" => f!("trim", args[0].clone()),
-        "DATE" => f!("strftime", "%Y%m%d"),
-        // SQLite just stores dates as strings.  We do need to introduce dashes
-        //  to transform "YYYYMMDD" to "YYYY-MM-DD"
-        "STOD" => f!(
-            "concat_ws",
-            "-",
-            f!("substr", 1, 4),
-            f!("substr", 5, 2),
-            f!("substr", 7, 2)
-        ),
-        unknown => panic!("Unknown function name: {unknown}"),
-    }
-}*/
