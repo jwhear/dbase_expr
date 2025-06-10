@@ -1,4 +1,4 @@
-use dbase_query::*;
+use dbase_expr::*;
 use to_sql::Printer;
 
 fn main() {
