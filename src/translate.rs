@@ -656,28 +656,6 @@ fn translate_function_call(
     }
 }
 
-/// If the expression is evaluated what is the type of the resulting value?
-/*fn eval_type_of_expression(
-    expr: &Expression,
-    field_lookup: &impl Fn(Option<&str>, &str) -> FieldType,
-) -> FieldType {
-    match expr {
-        Expression::BoolLiteral(_) => FieldType::Logical,
-        Expression::NumberLiteral(lit) => {
-            let dec = lit.chars().position(|c| c == '.').unwrap_or(0) as u32;
-            FieldType::Numeric {
-                len: lit.len() as u32,
-                dec,
-            }
-        }
-        Expression::SingleQuoteStringLiteral(_) => FieldType::Memo,
-        Expression::Field { alias, name } => field_lookup(alias.as_deref(), name),
-        Expression::FunctionCall { name } => {todo!()},
-        Expression::BinaryOperator(, , )
-    }
-}
-*/
-
 //NOTE(justin): This function almost certainly has a bug hiding in it.
 fn escape_single_quotes(s: &str) -> String {
     let mut res = String::new();
