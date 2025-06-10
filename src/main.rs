@@ -1,4 +1,4 @@
-use dbase_expr::*;
+use dbase_expr::{translate::FieldType, *};
 use to_sql::Printer;
 
 fn main() {
@@ -13,6 +13,8 @@ fn main() {
         ".T..AND..FALSE.",
         r#""double \" quote""#,
         r#"'single \' quote'"#,
+        r#"VAL('10.123')"#,
+        "SUBSTR('hello', 2, 3)",
         // From Paul
         r#"iif(.t., (ID="A"), (ID="E"))"#,
         "bindatafield <> CHR(0)",
@@ -28,10 +30,21 @@ fn main() {
          ((DATE() - STOD('20000102')) -
           VAL(STR((DATE() - STOD('20000102'))/7 - 0.5,6,0))*7)",
     ];
+
+    let field_lookup = |alias: Option<&str>, field: &str| match (alias, field) {
+        (_, "a" | "b" | "c") => FieldType::Integer,
+        (_, "bindatafield") => FieldType::MemoBinary,
+        (_, "SHIP_DATE") => FieldType::Date,
+        (_, "ID") => FieldType::Character(1),
+        (_, "L_NAME") => FieldType::Character(20),
+        (Some(alias), _) => panic!("unknown field: {alias}.{field}"),
+        (None, _) => panic!("unknown field: {field}"),
+    };
+
     for test in tests.iter() {
         match parser.parse(test) {
-            Ok(t) => match sql::translate(&t) {
-                Ok(tree) => println!("{test}:\n\t{}\n", Printer::new(tree)),
+            Ok(t) => match translate::translate(&t, &field_lookup) {
+                Ok(tree) => println!("{test}\n=>\n{}\n", Printer::new(tree.0)),
                 Err(e) => eprintln!("Error translating tree: {e:?}"),
             },
 

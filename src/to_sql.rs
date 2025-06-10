@@ -1,4 +1,4 @@
-use crate::sql::{BinaryOp, Expression, StorageClass, UnaryOp};
+use crate::translate::{BinaryOp, Expression, UnaryOp};
 use std::fmt::{Display, Formatter, Result};
 
 #[derive(Debug, Clone, Copy)]
@@ -74,18 +74,6 @@ impl ToSQL for BinaryOp {
     }
 }
 
-impl ToSQL for StorageClass {
-    fn to_sql(&self, out: &mut Formatter, _: PrinterConfig) -> Result {
-        match self {
-            StorageClass::None => write!(out, "NONE"),
-            StorageClass::Text => write!(out, "TEXT"),
-            StorageClass::Real => write!(out, "REAL"),
-            StorageClass::Integer => write!(out, "INTEGER"),
-            StorageClass::Numeric => write!(out, "NUMERIC"),
-        }
-    }
-}
-
 impl ToSQL for Expression {
     fn to_sql(&self, out: &mut Formatter, conf: PrinterConfig) -> Result {
         match self {
@@ -97,11 +85,11 @@ impl ToSQL for Expression {
 
             // The content of the double quoted string is about to be put into
             //  single quotes, so escape any bare single quotes
-            Expression::Field { alias: None, name } => write!(out, "{name}"),
+            Expression::Field { alias: None, name } => write!(out, "\"{name}\""),
             Expression::Field {
                 alias: Some(alias),
                 name,
-            } => write!(out, "{alias}.{name}"),
+            } => write!(out, "{alias}.\"{name}\""),
             Expression::UnaryOperator(op, exp) => {
                 write!(out, "(")?;
                 match op {
@@ -137,10 +125,23 @@ impl ToSQL for Expression {
             Expression::Cast(expr, to) => {
                 write!(out, "CAST (")?;
                 expr.to_sql(out, conf)?;
-                write!(out, " AS ")?;
-                to.to_sql(out, conf)?;
+                write!(out, " AS {to}")?;
                 write!(out, ")")
             }
+            Expression::Iif {
+                cond,
+                when_true,
+                when_false,
+            } => {
+                write!(out, "CASE WHEN ")?;
+                cond.to_sql(out, conf)?;
+                write!(out, " THEN ")?;
+                when_true.to_sql(out, conf)?;
+                write!(out, " ELSE ")?;
+                when_false.to_sql(out, conf)?;
+                write!(out, " END")
+            }
+            Expression::BareFunctionCall(name) => write!(out, " {name} "),
         }
     }
 }
