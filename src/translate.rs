@@ -24,7 +24,7 @@ pub enum UnaryOp {
     Neg,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expression {
     BoolLiteral(bool),
     NumberLiteral(String),
@@ -50,7 +50,7 @@ pub enum Expression {
     BareFunctionCall(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {
     UnsupportedFunction(String),
     IncorrectArgCount(String, usize),
@@ -60,6 +60,28 @@ pub enum Error {
     },
     Other(String),
 }
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnsupportedFunction(name) => write!(f, "Unsupported function: {name}"),
+            Self::IncorrectArgCount(name, count) => write!(
+                f,
+                "Function {name} called with an incorrect number of arguments (got {count})"
+            ),
+            Self::ArgWrongType {
+                func,
+                wrong_arg_index,
+            } => write!(
+                f,
+                "Function {func:?}: argument {wrong_arg_index} is the wrong type",
+            ),
+            Self::Other(msg) => write!(f, "Error: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for Error {}
 
 // These From implementations help the translation implementation
 impl From<&str> for Box<Expression> {

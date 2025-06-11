@@ -22,7 +22,7 @@ pub enum UnaryOp {
     Neg,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expression {
     BoolLiteral(bool),
     NumberLiteral(String),
