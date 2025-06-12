@@ -4,6 +4,7 @@ use to_sql::Printer;
 fn main() {
     let parser = grammar::ExprParser::new();
     let tests = [
+        "deleted() = .f. .and. substr(id, 1, 3 ) <> \"($)\"",
         "12",
         "(12)",
         "a + b * c",
@@ -31,7 +32,7 @@ fn main() {
           VAL(STR((DATE() - STOD('20000102'))/7 - 0.5,6,0))*7)",
     ];
 
-    let field_lookup = |alias: Option<&str>, field: &str| match (alias, field) {
+    let get_type = |alias: Option<&str>, field: &str| match (alias, field) {
         (_, "a" | "b" | "c") => FieldType::Integer,
         (_, "bindatafield") => FieldType::MemoBinary,
         (_, "SHIP_DATE") => FieldType::Date,
@@ -39,6 +40,12 @@ fn main() {
         (_, "L_NAME") => FieldType::Character(20),
         (Some(alias), _) => panic!("unknown field: {alias}.{field}"),
         (None, _) => panic!("unknown field: {field}"),
+    };
+
+    let field_lookup = |alias: Option<&str>, field: &str| -> (String, FieldType) {
+        let field = field.to_string().to_uppercase();
+        let field_type = get_type(alias, &field);
+        (field, field_type)
     };
 
     for test in tests.iter() {
