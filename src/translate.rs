@@ -177,7 +177,7 @@ pub fn translate(
             ok(
                 Expression::Field {
                     alias: alias.clone(),
-                    name: name.clone(),
+                    name,
                 },
                 field_type,
             )
