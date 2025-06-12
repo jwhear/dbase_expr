@@ -128,7 +128,7 @@ pub enum FieldType {
 /// Translates dBase expression to a SQL expression.
 pub fn translate(
     source: &ast::Expression,
-    field_lookup: &impl Fn(Option<&str>, &str) -> FieldType,
+    field_lookup: &impl Fn(Option<&str>, &str) -> (String, FieldType),
 ) -> Result {
     use ast::Expression as E;
 
@@ -172,13 +172,16 @@ pub fn translate(
                 FieldType::Character(len as u32),
             )
         }
-        E::Field { alias, name } => ok(
-            Expression::Field {
-                alias: alias.clone(),
-                name: name.clone(),
-            },
-            field_lookup(alias.as_deref(), name),
-        ),
+        E::Field { alias, name } => {
+            let (name, field_type) = field_lookup(alias.as_deref(), name);
+            ok(
+                Expression::Field {
+                    alias: alias.clone(),
+                    name,
+                },
+                field_type,
+            )
+        }
         E::UnaryOperator(op, r) => match op {
             ast::UnaryOp::Not => ok(
                 Expression::UnaryOperator(UnaryOp::Not, translate(r, field_lookup)?.0),
@@ -398,7 +401,7 @@ pub fn translate(
 fn translate_function_call(
     name: &str,
     args: &[Box<ast::Expression>],
-    field_lookup: &impl Fn(Option<&str>, &str) -> FieldType,
+    field_lookup: &impl Fn(Option<&str>, &str) -> (String, FieldType),
 ) -> Result {
     let name = name.to_uppercase();
 
