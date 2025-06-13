@@ -32,6 +32,7 @@ pub enum Expression {
     Field {
         alias: Option<String>,
         name: String,
+        width: Option<u32>,
     },
     FunctionCall {
         name: String,
@@ -125,6 +126,17 @@ pub enum FieldType {
     //Unicode = b'U',
 }
 
+impl FieldType {
+    pub fn fixed_len(&self) -> Option<u32> {
+        match self {
+            Self::Character(len) | Self::CharacterBinary(len) | Self::Numeric { len, .. } => {
+                Some(*len)
+            }
+            _ => None,
+        }
+    }
+}
+
 /// Translates dBase expression to a SQL expression.
 pub fn translate(
     source: &ast::Expression,
@@ -178,6 +190,7 @@ pub fn translate(
                 Expression::Field {
                     alias: alias.clone(),
                     name,
+                    width: field_type.fixed_len(),
                 },
                 field_type,
             )
@@ -480,6 +493,7 @@ fn translate_function_call(
             Expression::Field {
                 alias: None,
                 name: "__deleted".into(),
+                width: None,
             },
             FieldType::Logical,
         ),
@@ -560,6 +574,7 @@ fn translate_function_call(
             Expression::Field {
                 alias: None,
                 name: "RECNO5".into(),
+                width: None,
             },
             FieldType::Integer,
         ),

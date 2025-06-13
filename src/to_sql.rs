@@ -76,6 +76,11 @@ impl ToSQL for BinaryOp {
 
 impl ToSQL for Expression {
     fn to_sql(&self, out: &mut Formatter, conf: PrinterConfig) -> Result {
+        // Fixed-length fields may be stored as NULL or right-trimmed. We need
+        //  pad them back out
+        let mut padded =
+            |inner: &str, width: u32| write!(out, "RPAD(COALESCE({inner}, ''), {width}, ' ')");
+
         match self {
             Expression::BoolLiteral(v) => {
                 write!(out, "{}", if *v { "TRUE" } else { "FALSE" })
@@ -83,13 +88,18 @@ impl ToSQL for Expression {
             Expression::NumberLiteral(v) => write!(out, "{v}"),
             Expression::SingleQuoteStringLiteral(v) => write!(out, "'{v}'"),
 
-            // The content of the double quoted string is about to be put into
-            //  single quotes, so escape any bare single quotes
-            Expression::Field { alias: None, name } => write!(out, "\"{name}\""),
-            Expression::Field {
-                alias: Some(alias),
-                name,
-            } => write!(out, "{alias}.\"{name}\""),
+            Expression::Field { alias, name, width } => {
+                let full_name = if let Some(alias) = alias {
+                    format!("{alias}.\"{name}\"")
+                } else {
+                    format!("\"{name}\"")
+                };
+                if let Some(width) = width {
+                    padded(&full_name, *width)
+                } else {
+                    out.write_str(&full_name)
+                }
+            }
             Expression::UnaryOperator(op, exp) => {
                 write!(out, "(")?;
                 match op {
