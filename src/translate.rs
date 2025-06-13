@@ -235,7 +235,7 @@ pub fn translate(
                 }
 
                 // Add on a character type maps to CONCAT
-                (ast::BinaryOp::Add, FieldType::Character(_)) => {
+                (ast::BinaryOp::Add, FieldType::Character(_) | FieldType::Memo) => {
                     binop(l, BinaryOp::Concat, r, FieldType::Memo)
                 }
                 // Sub on a character type also maps to CONCAT but with the
@@ -248,7 +248,7 @@ pub fn translate(
                 //   REPEAT(' ', LENGTH(l) - LENGTH( RTRIM(l) ))
                 // )
                 //
-                (ast::BinaryOp::Sub, FieldType::Character(_)) => {
+                (ast::BinaryOp::Sub, FieldType::Character(_) | FieldType::Memo) => {
                     let without_spaces = Box::new(Expression::FunctionCall {
                         name: "RTRIM".into(),
                         args: vec![l.clone()],
