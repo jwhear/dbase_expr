@@ -76,11 +76,11 @@ AndOp: BinaryOp = {
 };
 
 OrOp: BinaryOp = {
-	".[oO][rR]." => BinaryOp::Or,
+	r"\.[oO][rR]\." => BinaryOp::Or,
 };
 
 NotOp: UnaryOp = {
-	".[nN][oO][tT]." => UnaryOp::Not,
+	r"\.[nN][oO][tT]\." => UnaryOp::Not,
 };
 
 NegOp: UnaryOp = {

@@ -5,12 +5,14 @@ fn main() {
     let parser = grammar::ExprParser::new();
     let tests = [
         "deleted() = .f. .and. substr(id, 1, 3 ) <> \"($)\"",
+        ".NOT.deleted()",
         "12",
         "(12)",
         "a + b * c",
         "a * b + c",
         "(a + b) * c",
         "left((a), -b + -c)",
+        "a .or. b",
         ".T..AND..FALSE.",
         r#""double \" quote""#,
         r#"'single \' quote'"#,
@@ -33,8 +35,8 @@ fn main() {
     ];
 
     let get_type = |alias: Option<&str>, field: &str| match (alias, field) {
-        (_, "a" | "b" | "c") => FieldType::Integer,
-        (_, "bindatafield") => FieldType::MemoBinary,
+        (_, "A" | "B" | "C") => FieldType::Integer,
+        (_, "BINDATAFIELD") => FieldType::MemoBinary,
         (_, "SHIP_DATE") => FieldType::Date,
         (_, "ID") => FieldType::Character(1),
         (_, "L_NAME") => FieldType::Character(20),
