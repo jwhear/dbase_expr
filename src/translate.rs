@@ -32,7 +32,7 @@ pub enum Expression {
     Field {
         alias: Option<String>,
         name: String,
-        width: Option<u32>,
+        field_type: FieldType,
     },
     FunctionCall {
         name: String,
@@ -190,7 +190,7 @@ pub fn translate(
                 Expression::Field {
                     alias: alias.clone(),
                     name,
-                    width: field_type.fixed_len(),
+                    field_type,
                 },
                 field_type,
             )
@@ -493,7 +493,7 @@ fn translate_function_call(
             Expression::Field {
                 alias: None,
                 name: "__deleted".into(),
-                width: None,
+                field_type: FieldType::Logical,
             },
             FieldType::Logical,
         ),
@@ -574,7 +574,7 @@ fn translate_function_call(
             Expression::Field {
                 alias: None,
                 name: "RECNO5".into(),
-                width: None,
+                field_type: FieldType::Integer,
             },
             FieldType::Integer,
         ),
