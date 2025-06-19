@@ -329,7 +329,7 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Str
         },
 
         BinaryOp::Contain => match (left, right) {
-            (Str(haystack, _), Str(needle, _)) => Ok(Bool(haystack.contains(&needle))),
+            (Str(needle, _), Str(haystack, _)) => Ok(Bool(haystack.contains(&needle))),
             _ => Err("Contain: requires string operands".to_string()),
         },
 
