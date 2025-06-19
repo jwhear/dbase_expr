@@ -1,4 +1,4 @@
-use crate::translate::{BinaryOp, Expression, UnaryOp};
+use crate::translate::{BinaryOp, Expression, FieldType, UnaryOp};
 use std::fmt::{Display, Formatter, Result};
 
 #[derive(Debug, Clone, Copy)]
@@ -88,13 +88,17 @@ impl ToSQL for Expression {
             Expression::NumberLiteral(v) => write!(out, "{v}"),
             Expression::SingleQuoteStringLiteral(v) => write!(out, "'{v}'"),
 
-            Expression::Field { alias, name, width } => {
+            Expression::Field {
+                alias,
+                name,
+                field_type,
+            } => {
                 let full_name = if let Some(alias) = alias {
                     format!("{alias}.\"{name}\"")
                 } else {
                     format!("\"{name}\"")
                 };
-                if let Some(width) = width {
+                if let FieldType::Character(width) = field_type {
                     padded(&full_name, *width)
                 } else {
                     out.write_str(&full_name)
