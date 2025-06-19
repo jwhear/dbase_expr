@@ -29,6 +29,7 @@ fn expr_tests() {
         r#"'single \' quote'"#,
         r#"VAL('10.123')"#,
         "SUBSTR('hello', 2, 3)",
+        "ID + L_NAME",
         // From Paul
         r#"iif(.t., (ID="A"), (ID="E"))"#,
         "bindatafield <> CHR(0)",
@@ -67,8 +68,8 @@ fn expr_tests() {
             "SHIP_DATE" => Some(evaluate::Value::Date(
                 NaiveDate::from_ymd_opt(2024, 8, 1).unwrap(),
             )),
-            "ID" => Some(evaluate::Value::Str("DOEJOH".into())),
-            "L_NAME" => Some(evaluate::Value::Str("Smith".into())),
+            "ID" => Some(evaluate::Value::Str("DOEJOH".into(), 10)),
+            "L_NAME" => Some(evaluate::Value::Str("Smith".into(), 100)),
             "__DELETED" => Some(evaluate::Value::Bool(false)),
             _ => None,
         }

@@ -7,7 +7,7 @@ use crate::ast::{BinaryOp, Expression, UnaryOp};
 
 #[derive(Clone, PartialEq)]
 pub enum Value {
-    Str(String),
+    Str(String, usize),
     Bool(bool),
     Number(f64),
     Date(NaiveDate),
@@ -18,7 +18,7 @@ pub enum Value {
 impl Debug for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Value::Str(s) => write!(f, "String: '{}'", s.replace('\'', "''")),
+            Value::Str(s, len) => write!(f, "String: '{}', Length: {}", s.replace('\'', "''"), len),
             Value::Bool(b) => write!(f, "Boolean: {}", if *b { ".T." } else { ".F." }),
             Value::Number(n) => write!(f, "Number: {}", n),
             Value::Date(d) => write!(f, "Date: {}", d.format("%Y-%m-%d")),
@@ -40,12 +40,23 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
             .map_err(|e| e.to_string()),
 
         Expression::SingleQuoteStringLiteral(s) | Expression::DoubleQuoteStringLiteral(s) => {
-            Ok(Value::Str(s.clone()))
+            Ok(Value::Str(s.clone(), s.len()))
         }
 
-        Expression::Field { name, .. } => {
-            get(name).ok_or_else(|| format!("Field '{}' not found in row", name))
-        }
+        Expression::Field { name, .. } => match get(name) {
+            Some(Value::Str(s, len)) => {
+                let padded = if s.len() < len {
+                    let mut padded = s.to_string();
+                    padded.extend(std::iter::repeat(' ').take(len - s.len()));
+                    padded
+                } else {
+                    s.chars().take(len).collect()
+                };
+                Ok(Value::Str(padded, len))
+            }
+            Some(v) => Ok(v),
+            None => Err(format!("Field '{}' not found in row", name)),
+        },
 
         Expression::UnaryOperator(op, expr) => {
             let v = evaluate(expr, get)?;
@@ -72,32 +83,34 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
 
             match name_upper.as_str() {
                 "LTRIM" => match &args[..] {
-                    [Value::Str(s)] => Ok(Value::Str(s.trim_end().to_string())),
+                    [Value::Str(s, len)] => Ok(Value::Str(s.trim_end().to_string(), *len)),
                     _ => Err("LTRIM expects a single string argument".to_string()),
                 },
 
                 "RTRIM" => match &args[..] {
                     //TODO
-                    [Value::Str(s)] => Ok(Value::Str(s.trim_start().to_string())),
+                    [Value::Str(s, len)] => Ok(Value::Str(s.trim_start().to_string(), *len)),
                     _ => Err("RTRIM expects a single string argument".to_string()),
                 },
 
                 "ALLTRIM" => match &args[..] {
                     //TODO
-                    [Value::Str(s)] => Ok(Value::Str(s.trim_start().trim_end().to_string())),
+                    [Value::Str(s, len)] => {
+                        Ok(Value::Str(s.trim_start().trim_end().to_string(), *len))
+                    }
                     _ => Err("ALLTRIM expects a single string argument".to_string()),
                 },
 
                 "CHR" => match &args[..] {
                     [Value::Number(n)] => {
                         let ch = (*n as u8) as char;
-                        Ok(Value::Str(ch.to_string()))
+                        Ok(Value::Str(ch.to_string(), 1))
                     }
                     _ => Err("CHR expects a single numeric argument".to_string()),
                 },
 
                 "CTOD" | "STOD" => match &args[..] {
-                    [Value::Str(s)] => {
+                    [Value::Str(s, _len)] => {
                         let fmt = if name_upper == "CTOD" {
                             "%m/%d/%y"
                         } else {
@@ -112,12 +125,12 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
 
                 "DTOC" => match &args[..] {
                     [Value::Date(d)] => {
-                        let fmt = if args.len() == 2 {
-                            "%Y%m%d"
+                        let (fmt, len) = if args.len() == 2 {
+                            ("%Y%m%d", 8)
                         } else {
-                            "%m/%d/%y"
+                            ("%m/%d/%y", 10)
                         };
-                        Ok(Value::Str(d.format(fmt).to_string()))
+                        Ok(Value::Str(d.format(fmt).to_string(), len))
                     }
                     _ => Err("DTOC expects a date argument".to_string()),
                 },
@@ -136,37 +149,43 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
                 },
 
                 "LEFT" => match &args[..] {
-                    [Value::Str(s), Value::Number(n)] => {
+                    [Value::Str(s, _len), Value::Number(n)] => {
                         let n = *n as usize;
-                        Ok(Value::Str(s.chars().take(n).collect()))
+                        Ok(Value::Str(s.chars().take(n).collect(), n))
                     }
                     [Value::Number(v), Value::Number(n)] => {
                         let n = *n as usize;
-                        Ok(Value::Str(v.to_string().chars().take(n).collect()))
+                        Ok(Value::Str(v.to_string().chars().take(n).collect(), n))
                     }
                     _ => Err("LEFT expects (string, number) or (number, number)".to_string()),
                 },
 
                 "RIGHT" => match &args[..] {
-                    [Value::Str(s), Value::Number(n)] => Ok(Value::Str(right_str_n(&s, *n))),
+                    [Value::Str(s, _len), Value::Number(n)] => {
+                        Ok(Value::Str(right_str_n(&s, *n), *n as usize))
+                    }
                     [Value::Number(v), Value::Number(n)] => {
-                        Ok(Value::Str(right_str_n(&v.to_string(), *n)))
+                        Ok(Value::Str(right_str_n(&v.to_string(), *n), *n as usize))
                     }
                     _ => Err("RIGHT expects (string, number) or (number, number)".to_string()),
                 },
 
                 "SUBSTR" => match &args[..] {
-                    [Value::Str(s), Value::Number(start), Value::Number(len)] => {
+                    [
+                        Value::Str(s, _len),
+                        Value::Number(start),
+                        Value::Number(len),
+                    ] => {
                         let start = (*start as usize).saturating_sub(1);
                         let len = *len as usize;
                         let substr: String = s.chars().skip(start).take(len).collect();
-                        Ok(Value::Str(substr))
+                        Ok(Value::Str(substr, len))
                     }
                     _ => Err("SUBSTR expects (string, start, length)".to_string()),
                 },
 
                 "UPPER" => match &args[..] {
-                    [Value::Str(s)] => Ok(Value::Str(s.to_uppercase())),
+                    [Value::Str(s, len)] => Ok(Value::Str(s.to_uppercase(), *len)),
                     _ => Err("UPPER expects a single string argument".to_string()),
                 },
 
@@ -178,13 +197,13 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
                             width = *len as usize,
                             prec = *dec as usize
                         );
-                        Ok(Value::Str(fmt.trim().to_string()))
+                        Ok(Value::Str(fmt.trim().to_string(), *len as usize))
                     }
                     _ => Err("STR expects (number, len, dec)".to_string()),
                 },
 
                 "VAL" => match &args[..] {
-                    [Value::Str(s)] => s
+                    [Value::Str(s, _len)] => s
                         .parse::<f64>()
                         .map(Value::Number)
                         .map_err(|e| e.to_string()),
@@ -245,6 +264,11 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Str
                     .map(Value::Date)
                     .ok_or("Date addition overflow".to_string())
             }
+            (Value::Str(a, len_a), Value::Str(b, len_b)) => {
+                let mut result = a.clone();
+                result.push_str(&b);
+                Ok(Value::Str(result, len_a + len_b))
+            }
             _ => Err("Add: incompatible types".to_string()),
         },
         BinaryOp::Sub => match (left, right) {
@@ -281,31 +305,31 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Str
         BinaryOp::Ne => Ok(Bool(left != right)),
         BinaryOp::Lt => match (left, right) {
             (Number(a), Number(b)) => Ok(Bool(a < b)),
-            (Str(a), Str(b)) => Ok(Bool(a < b)),
+            (Str(a, _), Str(b, _)) => Ok(Bool(a < b)),
             (Date(a), Date(b)) => Ok(Bool(a < b)),
             _ => Err("Lt: incompatible types".to_string()),
         },
         BinaryOp::Le => match (left, right) {
             (Number(a), Number(b)) => Ok(Bool(a <= b)),
-            (Str(a), Str(b)) => Ok(Bool(a <= b)),
+            (Str(a, _), Str(b, _)) => Ok(Bool(a <= b)),
             (Date(a), Date(b)) => Ok(Bool(a <= b)),
             _ => Err("Le: incompatible types".to_string()),
         },
         BinaryOp::Gt => match (left, right) {
             (Number(a), Number(b)) => Ok(Bool(a > b)),
-            (Str(a), Str(b)) => Ok(Bool(a > b)),
+            (Str(a, _), Str(b, _)) => Ok(Bool(a > b)),
             (Date(a), Date(b)) => Ok(Bool(a > b)),
             _ => Err("Gt: incompatible types".to_string()),
         },
         BinaryOp::Ge => match (left, right) {
             (Number(a), Number(b)) => Ok(Bool(a >= b)),
-            (Str(a), Str(b)) => Ok(Bool(a >= b)),
+            (Str(a, _), Str(b, _)) => Ok(Bool(a >= b)),
             (Date(a), Date(b)) => Ok(Bool(a >= b)),
             _ => Err("Ge: incompatible types".to_string()),
         },
 
         BinaryOp::Contain => match (left, right) {
-            (Str(haystack), Str(needle)) => Ok(Bool(haystack.contains(&needle))),
+            (Str(haystack, _), Str(needle, _)) => Ok(Bool(haystack.contains(&needle))),
             _ => Err("Contain: requires string operands".to_string()),
         },
 
