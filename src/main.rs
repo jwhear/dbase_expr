@@ -29,6 +29,7 @@ fn expr_tests() {
         r#"'single \' quote'"#,
         r#"VAL('10.123')"#,
         "SUBSTR('hello', 2, 3)",
+        "IIF (B_T, ID, L_NAME)", //TODO: this should return length of 100 since we should assume the larger of the potential values
         "ID + L_NAME",
         // From Paul
         r#"iif(.t., (ID="A"), (ID="E"))"#,
