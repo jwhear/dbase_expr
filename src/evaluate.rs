@@ -235,13 +235,14 @@ fn right_str_n(s: &str, n: f64) -> String {
     if n >= s.len() {
         s.to_string()
     } else {
-        s.chars()
+        let start = s
+            .char_indices()
             .rev()
-            .take(n)
-            .collect::<String>()
-            .chars()
-            .rev()
-            .collect()
+            .nth(n - 1)
+            .expect("already checked n against len")
+            .0;
+
+        s[start..].to_string()
     }
 }
 
