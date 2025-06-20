@@ -83,21 +83,17 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
 
             match name_upper.as_str() {
                 "LTRIM" => match &args[..] {
-                    [Value::Str(s, len)] => Ok(Value::Str(s.trim_end().to_string(), *len)),
+                    [Value::Str(s, len)] => Ok(Value::Str(s.trim_start().to_string(), *len)),
                     _ => Err("LTRIM expects a single string argument".to_string()),
                 },
 
                 "RTRIM" => match &args[..] {
-                    //TODO
-                    [Value::Str(s, len)] => Ok(Value::Str(s.trim_start().to_string(), *len)),
+                    [Value::Str(s, len)] => Ok(Value::Str(s.trim_end().to_string(), *len)),
                     _ => Err("RTRIM expects a single string argument".to_string()),
                 },
 
                 "ALLTRIM" => match &args[..] {
-                    //TODO
-                    [Value::Str(s, len)] => {
-                        Ok(Value::Str(s.trim_start().trim_end().to_string(), *len))
-                    }
+                    [Value::Str(s, len)] => Ok(Value::Str(s.trim().to_string(), *len)),
                     _ => Err("ALLTRIM expects a single string argument".to_string()),
                 },
 
