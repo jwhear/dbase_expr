@@ -167,7 +167,13 @@ impl ToSQL for Expression {
                     }
                     arg.to_sql(out, conf)?;
                 }
-                write!(out, ")")
+                write!(out, ")")?;
+
+                if name == "STRPOS" {
+                    write!(out, " > 0")?; //need this to be a boolean
+                }
+
+                Ok(())
             }
             Expression::Cast(expr, to) => {
                 write!(out, "CAST (")?;
