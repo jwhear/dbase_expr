@@ -124,11 +124,11 @@ impl ToSQL for Expression {
                 //"l COLLATE \"C\" >= r AND l COLLATE \"C\" < r || chr(255)"
                 write!(out, "(")?;
                 l.to_sql(out, conf)?;
-                write!(out, "COLLATE \"C\" >= ")?;
+                write!(out, " COLLATE \"C\" >= ")?;
                 r.to_sql(out, conf)?;
                 write!(out, " AND ")?;
                 l.to_sql(out, conf)?;
-                write!(out, "COLLATE \"C\" < ")?;
+                write!(out, " COLLATE \"C\" < ")?;
                 r.to_sql(out, conf)?;
                 write!(out, " || chr(255)")?;
                 write!(out, ")")
@@ -137,11 +137,11 @@ impl ToSQL for Expression {
                 //"l COLLATE "C" < r OR l COLLATE "C" >= r || chr(255)""
                 write!(out, "(")?;
                 l.to_sql(out, conf)?;
-                write!(out, "COLLATE \"C\" < ")?;
+                write!(out, " COLLATE \"C\" < ")?;
                 r.to_sql(out, conf)?;
                 write!(out, " OR ")?;
                 l.to_sql(out, conf)?;
-                write!(out, "COLLATE \"C\" >= ")?;
+                write!(out, " COLLATE \"C\" >= ")?;
                 r.to_sql(out, conf)?;
                 write!(out, " || chr(255)")?;
                 write!(out, ")")
