@@ -67,12 +67,10 @@ impl ToSQL for BinaryOp {
             BinaryOp::Le => write!(out, "<="),
             BinaryOp::Gt => write!(out, ">"),
             BinaryOp::Ge => write!(out, ">="),
-            BinaryOp::Like => write!(out, " LIKE "),
-            BinaryOp::NotLike => write!(out, " NOT LIKE "),
-
             BinaryOp::And => write!(out, " AND "),
             BinaryOp::Or => write!(out, " OR "),
             BinaryOp::Concat => write!(out, " || "),
+            BinaryOp::StartsWith | BinaryOp::NotStartsWith => Err(std::fmt::Error), //StartsWith and NotStartsWith operators cannot be printed directly
         }
     }
 }
@@ -120,6 +118,32 @@ impl ToSQL for Expression {
                     UnaryOp::Neg => write!(out, "-"),
                 }?;
                 exp.to_sql(out, conf)?;
+                write!(out, ")")
+            }
+            Expression::BinaryOperator(l, op, r) if op == &BinaryOp::StartsWith => {
+                //"l COLLATE \"C\" >= r AND l COLLATE \"C\" < r || chr(255)"
+                write!(out, "(")?;
+                l.to_sql(out, conf)?;
+                write!(out, "COLLATE \"C\" >= ")?;
+                r.to_sql(out, conf)?;
+                write!(out, " AND ")?;
+                l.to_sql(out, conf)?;
+                write!(out, "COLLATE \"C\" < ")?;
+                r.to_sql(out, conf)?;
+                write!(out, " || chr(255)")?;
+                write!(out, ")")
+            }
+            Expression::BinaryOperator(l, op, r) if op == &BinaryOp::NotStartsWith => {
+                //"l COLLATE "C" < r OR l COLLATE "C" >= r || chr(255)""
+                write!(out, "(")?;
+                l.to_sql(out, conf)?;
+                write!(out, "COLLATE \"C\" < ")?;
+                r.to_sql(out, conf)?;
+                write!(out, " OR ")?;
+                l.to_sql(out, conf)?;
+                write!(out, "COLLATE \"C\" >= ")?;
+                r.to_sql(out, conf)?;
+                write!(out, " || chr(255)")?;
                 write!(out, ")")
             }
             Expression::BinaryOperator(l, op, r) => {

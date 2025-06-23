@@ -12,8 +12,8 @@ pub enum BinaryOp {
     Le,
     Gt,
     Ge,
-    Like,
-    NotLike,
+    StartsWith,
+    NotStartsWith,
     And,
     Or,
     Concat,
@@ -376,12 +376,12 @@ pub fn translate(
                 (ast::BinaryOp::Eq, FieldType::Character(_) | FieldType::Memo)
                     if string_compare == StringCompare::StartsWith =>
                 {
-                    binop(l, BinaryOp::Like, r, FieldType::Logical)
+                    binop(l, BinaryOp::StartsWith, r, FieldType::Logical)
                 }
                 (ast::BinaryOp::Ne, FieldType::Character(_) | FieldType::Memo)
                     if string_compare == StringCompare::StartsWith =>
                 {
-                    binop(l, BinaryOp::NotLike, r, FieldType::Logical)
+                    binop(l, BinaryOp::NotStartsWith, r, FieldType::Logical)
                 }
 
                 (
