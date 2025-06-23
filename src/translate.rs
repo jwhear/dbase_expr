@@ -177,22 +177,16 @@ pub fn translate(
             )
         }
         E::SingleQuoteStringLiteral(v) => {
-            let mut v = escape_single_quotes(v);
+            let v = escape_single_quotes(v);
             let len = v.len();
-            if string_compare == StringCompare::StartsWith {
-                v.push('%');
-            }
             ok(
                 Expression::SingleQuoteStringLiteral(v),
                 FieldType::Character(len as u32),
             )
         }
         E::DoubleQuoteStringLiteral(v) => {
-            let mut v = escape_single_quotes(v);
+            let v = escape_single_quotes(v);
             let len = v.len();
-            if string_compare == StringCompare::StartsWith {
-                v.push('%');
-            }
             ok(
                 Expression::SingleQuoteStringLiteral(v),
                 FieldType::Character(len as u32),
