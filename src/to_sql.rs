@@ -1,4 +1,4 @@
-use crate::translate::{BinaryOp, Expression, FieldType, UnaryOp};
+use crate::translate::{BinaryOp, CharacterStringManipulation, Expression, FieldType, UnaryOp};
 use std::fmt::{Display, Formatter, Result};
 
 #[derive(Debug, Clone, Copy)]
@@ -66,6 +66,7 @@ impl ToSQL for BinaryOp {
             BinaryOp::Gt => write!(out, ">"),
             BinaryOp::Ge => write!(out, ">="),
             BinaryOp::Like => write!(out, " LIKE "),
+            BinaryOp::NotLike => write!(out, " NOT LIKE "),
 
             BinaryOp::And => write!(out, " AND "),
             BinaryOp::Or => write!(out, " OR "),
@@ -78,8 +79,10 @@ impl ToSQL for Expression {
     fn to_sql(&self, out: &mut Formatter, conf: PrinterConfig) -> Result {
         // Fixed-length fields may be stored as NULL or right-trimmed. We need
         //  pad them back out
-        let mut padded =
-            |inner: &str, width: u32| write!(out, "RPAD(COALESCE({inner}, ''), {width}, ' ')");
+        let mut padded = |inner: &str, width: u32, pad_string: bool| match pad_string {
+            true => write!(out, "RPAD(COALESCE({}, ''), {}, ' ')", inner, width),
+            false => write!(out, "COALESCE({}, '')", inner),
+        };
 
         match self {
             Expression::BoolLiteral(v) => {
@@ -98,8 +101,8 @@ impl ToSQL for Expression {
                 } else {
                     format!("\"{name}\"")
                 };
-                if let FieldType::Character(width) = field_type {
-                    padded(&full_name, *width)
+                if let FieldType::Character(width, string_manipulation) = field_type {
+                    padded(&full_name, *width, &string_manipulation)
                 } else {
                     out.write_str(&full_name)
                 }
