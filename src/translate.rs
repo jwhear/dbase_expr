@@ -391,6 +391,14 @@ pub fn translate(
                     | FieldType::General
                     | FieldType::Memo
                     | FieldType::MemoBinary,
+                ) => binop(l, BinaryOp::Eq, r, FieldType::Logical),
+                (
+                    ast::BinaryOp::Ne,
+                    FieldType::Character(_)
+                    | FieldType::CharacterBinary(_)
+                    | FieldType::General
+                    | FieldType::Memo
+                    | FieldType::MemoBinary,
                 ) => binop(l, BinaryOp::Ne, r, FieldType::Logical),
 
                 // SQL doesn't have an exponentation operator, use the POW function
