@@ -1,16 +1,18 @@
-use crate::translate::{BinaryOp, CharacterStringManipulation, Expression, FieldType, UnaryOp};
+use crate::translate::{BinaryOp, Expression, FieldType, UnaryOp};
 use std::fmt::{Display, Formatter, Result};
 
 #[derive(Debug, Clone, Copy)]
 pub struct PrinterConfig {
     //pretty: bool,
     //indent: i32,
+    pad_string_fields: bool,
 }
 impl Default for PrinterConfig {
     fn default() -> Self {
         Self {
             //pretty: false,
             //indent: 0,
+            pad_string_fields: true,
         }
     }
 }
@@ -21,10 +23,10 @@ pub struct Printer<T> {
 }
 
 impl<T> Printer<T> {
-    pub fn new(tree: T) -> Self {
+    pub fn new(tree: T, pad_string_fields: bool) -> Self {
         Self {
             tree,
-            config: PrinterConfig::default(),
+            config: PrinterConfig { pad_string_fields },
         }
     }
 }
@@ -79,7 +81,7 @@ impl ToSQL for Expression {
     fn to_sql(&self, out: &mut Formatter, conf: PrinterConfig) -> Result {
         // Fixed-length fields may be stored as NULL or right-trimmed. We need
         //  pad them back out
-        let mut padded = |inner: &str, width: u32, pad_string: bool| match pad_string {
+        let mut padded = |inner: &str, width: u32| match conf.pad_string_fields {
             true => write!(out, "RPAD(COALESCE({}, ''), {}, ' ')", inner, width),
             false => write!(out, "COALESCE({}, '')", inner),
         };
@@ -101,8 +103,8 @@ impl ToSQL for Expression {
                 } else {
                     format!("\"{name}\"")
                 };
-                if let FieldType::Character(width, string_manipulation) = field_type {
-                    padded(&full_name, *width, &string_manipulation)
+                if let FieldType::Character(width) = field_type {
+                    padded(&full_name, *width)
                 } else {
                     out.write_str(&full_name)
                 }

@@ -113,24 +113,11 @@ pub enum StringCompare {
     StartsWith,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CharacterStringManipulation {
-    Default,
-    Padded,
-    StartsWith,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MemoStringManipulation {
-    Default,
-    StartsWith,
-}
-
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[repr(u8)]
 pub enum FieldType {
     //Binary = b'B',
-    Character(u32, CharacterStringManipulation) = b'C',
+    Character(u32) = b'C',
     CharacterBinary(u32) = b'Z',
     Currency = b'Y',
     DateTime = b'T',
@@ -140,7 +127,7 @@ pub enum FieldType {
     General = b'G',
     Integer = b'I',
     Logical = b'L',
-    Memo(MemoStringManipulation) = b'M',
+    Memo = b'M',
     MemoBinary = b'X',
     Numeric { len: u32, dec: u32 } = b'N',
     //Unicode = b'U',
@@ -149,7 +136,7 @@ pub enum FieldType {
 impl FieldType {
     pub fn fixed_len(&self) -> Option<u32> {
         match self {
-            Self::Character(len, _) | Self::CharacterBinary(len) | Self::Numeric { len, .. } => {
+            Self::Character(len) | Self::CharacterBinary(len) | Self::Numeric { len, .. } => {
                 Some(*len)
             }
             _ => None,
@@ -161,24 +148,14 @@ impl FieldType {
 pub fn translate(
     source: &ast::Expression,
     field_lookup: &impl Fn(Option<&str>, &str) -> (String, FieldType),
-    string_compare_type: StringCompare,
+    string_compare: StringCompare,
 ) -> Result {
     use ast::Expression as E;
-
-    let character_string_manipulation = match string_compare_type {
-        StringCompare::Equals => CharacterStringManipulation::Padded,
-        StringCompare::StartsWith => CharacterStringManipulation::StartsWith,
-    };
-
-    let memo_string_manipulation = match string_compare_type {
-        StringCompare::Equals => MemoStringManipulation::Default,
-        StringCompare::StartsWith => MemoStringManipulation::StartsWith,
-    };
 
     // helper for creating binary operators
     let binop = |l, op, r, ty| {
         ok(
-            Expression::BinaryOperator(l, op, translate(r, field_lookup, string_compare_type)?.0),
+            Expression::BinaryOperator(l, op, translate(r, field_lookup, string_compare)?.0),
             ty,
         )
     };
@@ -202,23 +179,23 @@ pub fn translate(
         E::SingleQuoteStringLiteral(v) => {
             let mut v = escape_single_quotes(v);
             let len = v.len();
-            if string_compare_type == StringCompare::StartsWith {
+            if string_compare == StringCompare::StartsWith {
                 v.push('%');
             }
             ok(
                 Expression::SingleQuoteStringLiteral(v),
-                FieldType::Character(len as u32, character_string_manipulation),
+                FieldType::Character(len as u32),
             )
         }
         E::DoubleQuoteStringLiteral(v) => {
             let mut v = escape_single_quotes(v);
             let len = v.len();
-            if string_compare_type == StringCompare::StartsWith {
+            if string_compare == StringCompare::StartsWith {
                 v.push('%');
             }
             ok(
                 Expression::SingleQuoteStringLiteral(v),
-                FieldType::Character(len as u32, character_string_manipulation),
+                FieldType::Character(len as u32),
             )
         }
         E::Field { alias, name } => {
@@ -236,12 +213,12 @@ pub fn translate(
             ast::UnaryOp::Not => ok(
                 Expression::UnaryOperator(
                     UnaryOp::Not,
-                    translate(r, field_lookup, string_compare_type)?.0,
+                    translate(r, field_lookup, string_compare)?.0,
                 ),
                 FieldType::Logical,
             ),
             ast::UnaryOp::Neg => {
-                let r = translate(r, field_lookup, string_compare_type)?;
+                let r = translate(r, field_lookup, string_compare)?;
                 ok(Expression::UnaryOperator(UnaryOp::Neg, r.0), r.1)
             }
         },
@@ -249,7 +226,7 @@ pub fn translate(
             // Add, Sub are ambiguous: could be numeric, concat, or days (for dates)
             // We translate the first operand and use its type to determine how
             //  to translate.
-            let (l, ty) = translate(l, field_lookup, string_compare_type)?;
+            let (l, ty) = translate(l, field_lookup, string_compare)?;
             match (op, ty) {
                 // For these types, simple addition is fine
                 (
@@ -275,12 +252,9 @@ pub fn translate(
                 }
 
                 // Add on a character type maps to CONCAT
-                (ast::BinaryOp::Add, FieldType::Character(_, _) | FieldType::Memo(_)) => binop(
-                    l,
-                    BinaryOp::Concat,
-                    r,
-                    FieldType::Memo(memo_string_manipulation),
-                ),
+                (ast::BinaryOp::Add, FieldType::Character(_) | FieldType::Memo) => {
+                    binop(l, BinaryOp::Concat, r, FieldType::Memo)
+                }
                 // Sub on a character type also maps to CONCAT but with the
                 //  trailing spaces of the first argument "moved" to the end
                 //  of the result. We can map this as:
@@ -291,7 +265,7 @@ pub fn translate(
                 //   REPEAT(' ', LENGTH(l) - LENGTH( RTRIM(l) ))
                 // )
                 //
-                (ast::BinaryOp::Sub, FieldType::Character(_, _) | FieldType::Memo(_)) => {
+                (ast::BinaryOp::Sub, FieldType::Character(_) | FieldType::Memo) => {
                     let without_spaces = Box::new(Expression::FunctionCall {
                         name: "RTRIM".into(),
                         args: vec![l.clone()],
@@ -318,11 +292,11 @@ pub fn translate(
                             name: "CONCAT".into(),
                             args: vec![
                                 without_spaces,
-                                translate(r, field_lookup, string_compare_type)?.0,
+                                translate(r, field_lookup, string_compare)?.0,
                                 repeated_spaces,
                             ],
                         },
-                        FieldType::Memo(memo_string_manipulation),
+                        FieldType::Memo,
                     )
                 }
 
@@ -399,31 +373,23 @@ pub fn translate(
                     binop(l, BinaryOp::Or, r, FieldType::Logical)
                 }
 
-                (ast::BinaryOp::Eq, FieldType::Character(_, _) | FieldType::Memo(_))
-                    if string_compare_type == StringCompare::StartsWith =>
+                (ast::BinaryOp::Eq, FieldType::Character(_) | FieldType::Memo)
+                    if string_compare == StringCompare::StartsWith =>
                 {
                     binop(l, BinaryOp::Like, r, FieldType::Logical)
                 }
-                (ast::BinaryOp::Ne, FieldType::Character(_, _) | FieldType::Memo(_))
-                    if string_compare_type == StringCompare::StartsWith =>
+                (ast::BinaryOp::Ne, FieldType::Character(_) | FieldType::Memo)
+                    if string_compare == StringCompare::StartsWith =>
                 {
                     binop(l, BinaryOp::NotLike, r, FieldType::Logical)
                 }
 
                 (
                     ast::BinaryOp::Eq,
-                    FieldType::Character(_, _)
+                    FieldType::Character(_)
                     | FieldType::CharacterBinary(_)
                     | FieldType::General
-                    | FieldType::Memo(_)
-                    | FieldType::MemoBinary,
-                ) => binop(l, BinaryOp::Eq, r, FieldType::Logical),
-                (
-                    ast::BinaryOp::Ne,
-                    FieldType::Character(_, _)
-                    | FieldType::CharacterBinary(_)
-                    | FieldType::General
-                    | FieldType::Memo(_)
+                    | FieldType::Memo
                     | FieldType::MemoBinary,
                 ) => binop(l, BinaryOp::Ne, r, FieldType::Logical),
 
@@ -431,7 +397,7 @@ pub fn translate(
                 (ast::BinaryOp::Exp, FieldType::Integer) => ok(
                     Expression::FunctionCall {
                         name: "POW".to_string(),
-                        args: vec![l, translate(r, field_lookup, string_compare_type)?.0],
+                        args: vec![l, translate(r, field_lookup, string_compare)?.0],
                     },
                     ty,
                 ),
@@ -439,11 +405,11 @@ pub fn translate(
                 // SQL doesn't have a contain operator, use the STRPOS function
                 //NOTE(justin): not using LIKE here because the needle might contain
                 // LIKE wildcards (% and _).
-                (ast::BinaryOp::Contain, FieldType::Character(_, _)) => ok(
+                (ast::BinaryOp::Contain, FieldType::Character(_)) => ok(
                     Expression::FunctionCall {
                         name: "STRPOS".to_string(),
                         // Note that in CodeBase the haystack is the right arg
-                        args: vec![translate(r, field_lookup, string_compare_type)?.0, l],
+                        args: vec![translate(r, field_lookup, string_compare)?.0, l],
                     },
                     // Contains always returns T/F
                     FieldType::Logical,
@@ -455,7 +421,7 @@ pub fn translate(
             }
         }
         E::FunctionCall { name, args } => {
-            translate_function_call(name, args, field_lookup, string_compare_type)
+            translate_function_call(name, args, field_lookup, string_compare)
         }
     }
 }
@@ -467,24 +433,13 @@ fn translate_function_call(
     name: &str,
     args: &[Box<ast::Expression>],
     field_lookup: &impl Fn(Option<&str>, &str) -> (String, FieldType),
-    string_compare_type: StringCompare,
+    string_compare: StringCompare,
 ) -> Result {
     let name = name.to_uppercase();
-
-    let character_string_manipulation = match string_compare_type {
-        StringCompare::Equals => CharacterStringManipulation::Padded,
-        StringCompare::StartsWith => CharacterStringManipulation::StartsWith,
-    };
-
-    let memo_string_manipulation = match string_compare_type {
-        StringCompare::Equals => MemoStringManipulation::Default,
-        StringCompare::StartsWith => MemoStringManipulation::StartsWith,
-    };
-
     // Helper to get the specified argument or return the appropriate error
     let arg = |index: usize| {
         args.get(index)
-            .map(|a| translate(a, field_lookup, string_compare_type))
+            .map(|a| translate(a, field_lookup, string_compare))
             .ok_or(Error::IncorrectArgCount(name.clone(), index))
     };
 
@@ -492,7 +447,7 @@ fn translate_function_call(
     let all_args = || {
         let res: std::result::Result<Vec<_>, Error> = args
             .iter()
-            .map(|a| translate(a, field_lookup, string_compare_type).map(|r| r.0))
+            .map(|a| translate(a, field_lookup, string_compare).map(|r| r.0))
             .collect();
         res
     };
@@ -515,7 +470,7 @@ fn translate_function_call(
                 name: "TRIM".to_string(),
                 args: vec![arg(0)??.0],
             },
-            FieldType::Memo(memo_string_manipulation),
+            FieldType::Memo,
         ),
         // CHR(x) => CHR(x)
         "CHR" => ok(
@@ -523,7 +478,7 @@ fn translate_function_call(
                 name,
                 args: all_args()?,
             },
-            FieldType::Character(1, character_string_manipulation),
+            FieldType::Character(1),
         ),
         // CTOD(x) => TO_DATE(x, 'MM/DD/YY')
         "CTOD" => ok(
@@ -570,7 +525,7 @@ fn translate_function_call(
                         name: "TO_CHAR".into(),
                         args: vec![arg(0)??.0, "YYYYMMDD".into()],
                     },
-                    FieldType::Character(8, character_string_manipulation),
+                    FieldType::Character(8),
                 )
             } else {
                 ok(
@@ -582,7 +537,7 @@ fn translate_function_call(
                             "MM/DD/YY".into(),
                         ],
                     },
-                    FieldType::Character(8, character_string_manipulation),
+                    FieldType::Character(8),
                 )
             }
         }
@@ -591,7 +546,7 @@ fn translate_function_call(
                 name: "TO_CHAR".into(),
                 args: vec![arg(0)??.0, "YYYYMMDD".into()],
             },
-            FieldType::Character(8, character_string_manipulation),
+            FieldType::Character(8),
         ),
 
         // IIF(x, y, z) => Iif expression
@@ -613,14 +568,14 @@ fn translate_function_call(
                 name: "SUBSTR".to_string(),
                 args: vec![arg(0)??.0, 1.into(), arg(1)??.0],
             },
-            FieldType::Memo(memo_string_manipulation),
+            FieldType::Memo,
         ),
         "LTRIM" => ok(
             Expression::FunctionCall {
                 name: "LTRIM".into(),
                 args: vec![arg(0)??.0],
             },
-            FieldType::Memo(memo_string_manipulation),
+            FieldType::Memo,
         ),
 
         // MONTH(x) => DATE_PART('MONTH', x)
@@ -652,8 +607,8 @@ fn translate_function_call(
                 _ => Err(wrong_type(1)),
             }?;
             let out_ty = match ty {
-                FieldType::Character(len, m) => FieldType::Character(len - n, m),
-                _ => FieldType::Memo(memo_string_manipulation),
+                FieldType::Character(len) => FieldType::Character(len - n),
+                _ => FieldType::Memo,
             };
             ok(
                 Expression::FunctionCall {
@@ -705,7 +660,7 @@ fn translate_function_call(
                         fmt.into(),
                     ],
                 },
-                FieldType::Character(len as u32, character_string_manipulation),
+                FieldType::Character(len as u32),
             )
         }
         "SUBSTR" => {
@@ -720,7 +675,7 @@ fn translate_function_call(
                     name: "SUBSTR".into(),
                     args: all_args()?,
                 },
-                FieldType::Character(len, character_string_manipulation),
+                FieldType::Character(len),
             )
         }
         "TRIM" => ok(
@@ -728,7 +683,7 @@ fn translate_function_call(
                 name: "RTRIM".into(),
                 args: vec![arg(0)??.0],
             },
-            FieldType::Memo(memo_string_manipulation),
+            FieldType::Memo,
         ),
         "UPPER" => {
             let (first, ty) = arg(0)??;
