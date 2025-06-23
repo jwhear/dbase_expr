@@ -82,8 +82,12 @@ impl ToSQL for Expression {
         // Fixed-length fields may be stored as NULL or right-trimmed. We need
         //  pad them back out
         let mut padded = |inner: &str, width: u32| match conf.pad_string_fields {
-            true => write!(out, "RPAD(COALESCE({}, ''), {}, ' ')", inner, width),
-            false => write!(out, "COALESCE({}, '')", inner),
+            true => write!(
+                out,
+                "RPAD(COALESCE({}, ''), {}, ' ') COLLATE \"C\"",
+                inner, width
+            ),
+            false => write!(out, "COALESCE({}, '') COLLATE \"C\"", inner),
         };
 
         match self {
