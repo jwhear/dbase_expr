@@ -77,13 +77,8 @@ impl ToSQL for Expression {
     fn to_sql(&self, out: &mut Formatter, conf: PrinterConfig) -> Result {
         // Fixed-length fields may be stored as NULL or right-trimmed. We need
         //  pad them back out
-        let mut padded = |inner: &str, width: u32| {
-            write!(
-                out,
-                "RPAD(COALESCE({}, ''), {}, ' ') COLLATE \"C\"",
-                inner, width
-            )
-        };
+        let mut padded =
+            |inner: &str, width: u32| write!(out, "RPAD(COALESCE({inner}, ''), {width}, ' ')");
 
         match self {
             Expression::BoolLiteral(v) => {
