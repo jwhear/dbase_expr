@@ -12,7 +12,7 @@ pub enum BinaryOp {
     Le,
     Gt,
     Ge,
-    Like,
+    StartsWith,
     And,
     Or,
     Concat,
@@ -356,25 +356,27 @@ pub fn translate(
                     binop(l, BinaryOp::Or, r, FieldType::Logical)
                 }
 
-                //TODO CodeBase interprets equality as "starts with" for strings,
-                //  e.g. ("2" = "20" == TRUE)
-                // For now we will simply use Postgres eq and neq for all text
-                //  and binary data
+                (ast::BinaryOp::Eq, FieldType::Character(_) | FieldType::Memo) => {
+                    binop(l, BinaryOp::StartsWith, r, FieldType::Logical)
+                }
+                (ast::BinaryOp::Ne, FieldType::Character(_) | FieldType::Memo) => {
+                    let starts_with = Expression::BinaryOperator(
+                        l,
+                        BinaryOp::StartsWith,
+                        translate(r, field_lookup)?.0,
+                    );
+                    ok(
+                        Expression::UnaryOperator(UnaryOp::Not, Box::new(starts_with)),
+                        FieldType::Logical,
+                    )
+                }
                 (
                     ast::BinaryOp::Eq,
-                    FieldType::Character(_)
-                    | FieldType::CharacterBinary(_)
-                    | FieldType::General
-                    | FieldType::Memo
-                    | FieldType::MemoBinary,
+                    FieldType::CharacterBinary(_) | FieldType::General | FieldType::MemoBinary,
                 ) => binop(l, BinaryOp::Eq, r, FieldType::Logical),
                 (
                     ast::BinaryOp::Ne,
-                    FieldType::Character(_)
-                    | FieldType::CharacterBinary(_)
-                    | FieldType::General
-                    | FieldType::Memo
-                    | FieldType::MemoBinary,
+                    FieldType::CharacterBinary(_) | FieldType::General | FieldType::MemoBinary,
                 ) => binop(l, BinaryOp::Ne, r, FieldType::Logical),
 
                 // SQL doesn't have an exponentation operator, use the POW function
@@ -389,15 +391,14 @@ pub fn translate(
                 // SQL doesn't have a contain operator, use the STRPOS function
                 //NOTE(justin): not using LIKE here because the needle might contain
                 // LIKE wildcards (% and _).
-                (ast::BinaryOp::Contain, FieldType::Character(_)) => ok(
-                    Expression::FunctionCall {
+                (ast::BinaryOp::Contain, FieldType::Character(_)) => {
+                    let strpos = Box::new(Expression::FunctionCall {
                         name: "STRPOS".to_string(),
                         // Note that in CodeBase the haystack is the right arg
                         args: vec![translate(r, field_lookup)?.0, l],
-                    },
-                    // Contains always returns T/F
-                    FieldType::Logical,
-                ),
+                    });
+                    ok(Expression::Cast(strpos, "bool"), FieldType::Logical)
+                }
 
                 (op, ty) => Err(Error::Other(format!(
                     "Unsupported operator/type combination: {op:?} and {ty:?}"
@@ -417,7 +418,6 @@ fn translate_function_call(
     field_lookup: &impl Fn(Option<&str>, &str) -> (String, FieldType),
 ) -> Result {
     let name = name.to_uppercase();
-
     // Helper to get the specified argument or return the appropriate error
     let arg = |index: usize| {
         args.get(index)

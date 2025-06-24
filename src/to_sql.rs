@@ -65,11 +65,10 @@ impl ToSQL for BinaryOp {
             BinaryOp::Le => write!(out, "<="),
             BinaryOp::Gt => write!(out, ">"),
             BinaryOp::Ge => write!(out, ">="),
-            BinaryOp::Like => write!(out, " LIKE "),
-
             BinaryOp::And => write!(out, " AND "),
             BinaryOp::Or => write!(out, " OR "),
             BinaryOp::Concat => write!(out, " || "),
+            BinaryOp::StartsWith => write!(out, " ^@ "),
         }
     }
 }
