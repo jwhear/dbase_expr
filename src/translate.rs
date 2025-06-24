@@ -360,10 +360,14 @@ pub fn translate(
                     binop(l, BinaryOp::StartsWith, r, FieldType::Logical)
                 }
                 (ast::BinaryOp::Ne, FieldType::Character(_) | FieldType::Memo) => {
-                    let starts_with = binop(l, BinaryOp::StartsWith, r, FieldType::Logical)?;
+                    let starts_with = Expression::BinaryOperator(
+                        l,
+                        BinaryOp::StartsWith,
+                        translate(r, field_lookup)?.0,
+                    );
                     ok(
-                        Expression::UnaryOperator(UnaryOp::Not, starts_with.0),
-                        starts_with.1,
+                        Expression::UnaryOperator(UnaryOp::Not, Box::new(starts_with)),
+                        FieldType::Logical,
                     )
                 }
                 (
@@ -387,15 +391,14 @@ pub fn translate(
                 // SQL doesn't have a contain operator, use the STRPOS function
                 //NOTE(justin): not using LIKE here because the needle might contain
                 // LIKE wildcards (% and _).
-                (ast::BinaryOp::Contain, FieldType::Character(_)) => ok(
-                    Expression::FunctionCall {
+                (ast::BinaryOp::Contain, FieldType::Character(_)) => {
+                    let strpos = Box::new(Expression::FunctionCall {
                         name: "STRPOS".to_string(),
                         // Note that in CodeBase the haystack is the right arg
                         args: vec![translate(r, field_lookup)?.0, l],
-                    },
-                    // Contains always returns T/F
-                    FieldType::Logical,
-                ),
+                    });
+                    ok(Expression::Cast(strpos, "bool"), FieldType::Logical)
+                }
 
                 (op, ty) => Err(Error::Other(format!(
                     "Unsupported operator/type combination: {op:?} and {ty:?}"
