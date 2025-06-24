@@ -13,7 +13,6 @@ pub enum BinaryOp {
     Gt,
     Ge,
     StartsWith,
-    NotStartsWith,
     And,
     Or,
     Concat,
@@ -361,9 +360,12 @@ pub fn translate(
                     binop(l, BinaryOp::StartsWith, r, FieldType::Logical)
                 }
                 (ast::BinaryOp::Ne, FieldType::Character(_) | FieldType::Memo) => {
-                    binop(l, BinaryOp::NotStartsWith, r, FieldType::Logical)
+                    let starts_with = binop(l, BinaryOp::StartsWith, r, FieldType::Logical)?;
+                    ok(
+                        Expression::UnaryOperator(UnaryOp::Not, starts_with.0),
+                        starts_with.1,
+                    )
                 }
-
                 (
                     ast::BinaryOp::Eq,
                     FieldType::CharacterBinary(_) | FieldType::General | FieldType::MemoBinary,
