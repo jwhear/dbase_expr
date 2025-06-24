@@ -149,12 +149,10 @@ fn to_sql_tests() {
 
     for test in tests.iter() {
         match parser.parse(test) {
-            Ok(t) => {
-                match translate::translate(&t, &field_lookup, translate::StringCompare::Equals) {
-                    Ok(tree) => println!("{test}\n=>\n{}\n", Printer::new(tree.0, true)),
-                    Err(e) => eprintln!("Error translating tree: {e:?}"),
-                }
-            }
+            Ok(t) => match translate::translate(&t, &field_lookup) {
+                Ok(tree) => println!("{test}\n=>\n{}\n", Printer::new(tree.0)),
+                Err(e) => eprintln!("Error translating tree: {e:?}"),
+            },
 
             // The parse failed with an unexpected token: show the approximate
             //  position in the source

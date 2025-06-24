@@ -107,12 +107,6 @@ fn ok(exp: Expression, ty: FieldType) -> Result {
     Ok((Box::new(exp), ty))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StringCompare {
-    Equals,
-    StartsWith,
-}
-
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[repr(u8)]
 pub enum FieldType {
@@ -148,14 +142,13 @@ impl FieldType {
 pub fn translate(
     source: &ast::Expression,
     field_lookup: &impl Fn(Option<&str>, &str) -> (String, FieldType),
-    string_compare: StringCompare,
 ) -> Result {
     use ast::Expression as E;
 
     // helper for creating binary operators
     let binop = |l, op, r, ty| {
         ok(
-            Expression::BinaryOperator(l, op, translate(r, field_lookup, string_compare)?.0),
+            Expression::BinaryOperator(l, op, translate(r, field_lookup)?.0),
             ty,
         )
     };
@@ -205,14 +198,11 @@ pub fn translate(
         }
         E::UnaryOperator(op, r) => match op {
             ast::UnaryOp::Not => ok(
-                Expression::UnaryOperator(
-                    UnaryOp::Not,
-                    translate(r, field_lookup, string_compare)?.0,
-                ),
+                Expression::UnaryOperator(UnaryOp::Not, translate(r, field_lookup)?.0),
                 FieldType::Logical,
             ),
             ast::UnaryOp::Neg => {
-                let r = translate(r, field_lookup, string_compare)?;
+                let r = translate(r, field_lookup)?;
                 ok(Expression::UnaryOperator(UnaryOp::Neg, r.0), r.1)
             }
         },
@@ -220,7 +210,7 @@ pub fn translate(
             // Add, Sub are ambiguous: could be numeric, concat, or days (for dates)
             // We translate the first operand and use its type to determine how
             //  to translate.
-            let (l, ty) = translate(l, field_lookup, string_compare)?;
+            let (l, ty) = translate(l, field_lookup)?;
             match (op, ty) {
                 // For these types, simple addition is fine
                 (
@@ -286,7 +276,7 @@ pub fn translate(
                             name: "CONCAT".into(),
                             args: vec![
                                 without_spaces,
-                                translate(r, field_lookup, string_compare)?.0,
+                                translate(r, field_lookup)?.0,
                                 repeated_spaces,
                             ],
                         },
@@ -367,39 +357,27 @@ pub fn translate(
                     binop(l, BinaryOp::Or, r, FieldType::Logical)
                 }
 
-                (ast::BinaryOp::Eq, FieldType::Character(_) | FieldType::Memo)
-                    if string_compare == StringCompare::StartsWith =>
-                {
+                (ast::BinaryOp::Eq, FieldType::Character(_) | FieldType::Memo) => {
                     binop(l, BinaryOp::StartsWith, r, FieldType::Logical)
                 }
-                (ast::BinaryOp::Ne, FieldType::Character(_) | FieldType::Memo)
-                    if string_compare == StringCompare::StartsWith =>
-                {
+                (ast::BinaryOp::Ne, FieldType::Character(_) | FieldType::Memo) => {
                     binop(l, BinaryOp::NotStartsWith, r, FieldType::Logical)
                 }
 
                 (
                     ast::BinaryOp::Eq,
-                    FieldType::Character(_)
-                    | FieldType::CharacterBinary(_)
-                    | FieldType::General
-                    | FieldType::Memo
-                    | FieldType::MemoBinary,
+                    FieldType::CharacterBinary(_) | FieldType::General | FieldType::MemoBinary,
                 ) => binop(l, BinaryOp::Eq, r, FieldType::Logical),
                 (
                     ast::BinaryOp::Ne,
-                    FieldType::Character(_)
-                    | FieldType::CharacterBinary(_)
-                    | FieldType::General
-                    | FieldType::Memo
-                    | FieldType::MemoBinary,
+                    FieldType::CharacterBinary(_) | FieldType::General | FieldType::MemoBinary,
                 ) => binop(l, BinaryOp::Ne, r, FieldType::Logical),
 
                 // SQL doesn't have an exponentation operator, use the POW function
                 (ast::BinaryOp::Exp, FieldType::Integer) => ok(
                     Expression::FunctionCall {
                         name: "POW".to_string(),
-                        args: vec![l, translate(r, field_lookup, string_compare)?.0],
+                        args: vec![l, translate(r, field_lookup)?.0],
                     },
                     ty,
                 ),
@@ -411,7 +389,7 @@ pub fn translate(
                     Expression::FunctionCall {
                         name: "STRPOS".to_string(),
                         // Note that in CodeBase the haystack is the right arg
-                        args: vec![translate(r, field_lookup, string_compare)?.0, l],
+                        args: vec![translate(r, field_lookup)?.0, l],
                     },
                     // Contains always returns T/F
                     FieldType::Logical,
@@ -422,9 +400,7 @@ pub fn translate(
                 ))),
             }
         }
-        E::FunctionCall { name, args } => {
-            translate_function_call(name, args, field_lookup, string_compare)
-        }
+        E::FunctionCall { name, args } => translate_function_call(name, args, field_lookup),
     }
 }
 
@@ -435,13 +411,12 @@ fn translate_function_call(
     name: &str,
     args: &[Box<ast::Expression>],
     field_lookup: &impl Fn(Option<&str>, &str) -> (String, FieldType),
-    string_compare: StringCompare,
 ) -> Result {
     let name = name.to_uppercase();
     // Helper to get the specified argument or return the appropriate error
     let arg = |index: usize| {
         args.get(index)
-            .map(|a| translate(a, field_lookup, string_compare))
+            .map(|a| translate(a, field_lookup))
             .ok_or(Error::IncorrectArgCount(name.clone(), index))
     };
 
@@ -449,7 +424,7 @@ fn translate_function_call(
     let all_args = || {
         let res: std::result::Result<Vec<_>, Error> = args
             .iter()
-            .map(|a| translate(a, field_lookup, string_compare).map(|r| r.0))
+            .map(|a| translate(a, field_lookup).map(|r| r.0))
             .collect();
         res
     };

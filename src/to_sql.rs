@@ -5,14 +5,12 @@ use std::fmt::{Display, Formatter, Result};
 pub struct PrinterConfig {
     //pretty: bool,
     //indent: i32,
-    pad_string_fields: bool,
 }
 impl Default for PrinterConfig {
     fn default() -> Self {
         Self {
             //pretty: false,
             //indent: 0,
-            pad_string_fields: true,
         }
     }
 }
@@ -23,10 +21,10 @@ pub struct Printer<T> {
 }
 
 impl<T> Printer<T> {
-    pub fn new(tree: T, pad_string_fields: bool) -> Self {
+    pub fn new(tree: T) -> Self {
         Self {
             tree,
-            config: PrinterConfig { pad_string_fields },
+            config: PrinterConfig::default(),
         }
     }
 }
@@ -79,13 +77,12 @@ impl ToSQL for Expression {
     fn to_sql(&self, out: &mut Formatter, conf: PrinterConfig) -> Result {
         // Fixed-length fields may be stored as NULL or right-trimmed. We need
         //  pad them back out
-        let mut padded = |inner: &str, width: u32| match conf.pad_string_fields {
-            true => write!(
+        let mut padded = |inner: &str, width: u32| {
+            write!(
                 out,
                 "RPAD(COALESCE({}, ''), {}, ' ') COLLATE \"C\"",
                 inner, width
-            ),
-            false => write!(out, "COALESCE({}, '') COLLATE \"C\"", inner),
+            )
         };
 
         match self {
