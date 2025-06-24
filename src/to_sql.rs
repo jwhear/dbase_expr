@@ -133,8 +133,7 @@ impl ToSQL for Expression {
                     }
                     arg.to_sql(out, conf)?;
                 }
-                write!(out, ")")?;
-                Ok(())
+                write!(out, ")")
             }
             Expression::Cast(expr, to) => {
                 write!(out, "CAST (")?;
