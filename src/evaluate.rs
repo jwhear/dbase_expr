@@ -119,7 +119,7 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
                     _ => Err(format!("{} expects a single string argument", name)),
                 },
 
-                "DTOC" => match &args[..] {
+                "DTOC" | "DTOS" => match &args[..] {
                     [Value::Date(d)] => {
                         let (fmt, len) = if args.len() == 2 {
                             ("%Y%m%d", 8)
@@ -199,10 +199,16 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
                 },
 
                 "VAL" => match &args[..] {
-                    [Value::Str(s, _len)] => s
-                        .parse::<f64>()
-                        .map(Value::Number)
-                        .map_err(|e| e.to_string()),
+                    [Value::Str(s, _len)] => match s.trim().parse::<f64>() {
+                        Ok(v) => Ok(Value::Number(v)),
+                        Err(_) => {
+                            if s.trim().chars().all(|c| c == 'F' || c == 'f') {
+                                Ok(Value::Number(0.0)) // these are placeholders for float, we'll just use 0.0
+                            } else {
+                                Err(format!("VAL could not parse '{}' to a numeric value", s))
+                            }
+                        }
+                    },
                     _ => Err("VAL expects a string".to_string()),
                 },
 
