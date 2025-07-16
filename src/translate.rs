@@ -305,7 +305,8 @@ pub fn translate(
                     | FieldType::Float
                     | FieldType::Integer
                     | FieldType::Logical
-                    | FieldType::Date,
+                    | FieldType::Date
+                    | FieldType::Numeric { .. },
                 ) => binop(l, BinaryOp::Eq, r, FieldType::Logical),
                 (
                     ast::BinaryOp::Ne,
@@ -313,7 +314,8 @@ pub fn translate(
                     | FieldType::Float
                     | FieldType::Integer
                     | FieldType::Logical
-                    | FieldType::Date,
+                    | FieldType::Date
+                    | FieldType::Numeric { .. },
                 ) => binop(l, BinaryOp::Ne, r, FieldType::Logical),
                 (
                     ast::BinaryOp::Lt,
@@ -321,7 +323,8 @@ pub fn translate(
                     | FieldType::Float
                     | FieldType::Integer
                     | FieldType::Logical
-                    | FieldType::Date,
+                    | FieldType::Date
+                    | FieldType::Numeric { .. },
                 ) => binop(l, BinaryOp::Lt, r, FieldType::Logical),
                 (
                     ast::BinaryOp::Le,
@@ -329,7 +332,8 @@ pub fn translate(
                     | FieldType::Float
                     | FieldType::Integer
                     | FieldType::Logical
-                    | FieldType::Date,
+                    | FieldType::Date
+                    | FieldType::Numeric { .. },
                 ) => binop(l, BinaryOp::Le, r, FieldType::Logical),
                 (
                     ast::BinaryOp::Gt,
@@ -337,7 +341,8 @@ pub fn translate(
                     | FieldType::Float
                     | FieldType::Integer
                     | FieldType::Logical
-                    | FieldType::Date,
+                    | FieldType::Date
+                    | FieldType::Numeric { .. },
                 ) => binop(l, BinaryOp::Gt, r, FieldType::Logical),
                 (
                     ast::BinaryOp::Ge,
@@ -345,7 +350,8 @@ pub fn translate(
                     | FieldType::Float
                     | FieldType::Integer
                     | FieldType::Logical
-                    | FieldType::Date,
+                    | FieldType::Date
+                    | FieldType::Numeric { .. },
                 ) => binop(l, BinaryOp::Ge, r, FieldType::Logical),
 
                 // AND and OR are only for Logical
