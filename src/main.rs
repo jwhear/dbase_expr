@@ -42,21 +42,22 @@ fn expr_tests() {
         r#"(DATE() + 1) = STOD("20240802")"#,
         r#"(DATE() + 1) = STOD("20250620")"#,
         r#"(SHIP_DATE + 1) = STOD("20240802")"#,
+        "iif( ( trim( F_NAME ) <> trim( \" \" ) ), ( trim( F_NAME ) + \" \" + trim( L_NAME ) ), ( trim( F_NAME) + trim( L_NAME ) ) )",
         // From Randy's training video
         "date() + 7-
-         ((DATE() - STOD('20000102')) -
-           VAL(STR((DATE() - STOD('20000102'))/7 - 0.5,6,0))*7)",
+        ((DATE() - STOD('20000102')) -
+        VAL(STR((DATE() - STOD('20000102'))/7 - 0.5,6,0))*7)",
         "date() + 14 -
-         ((DATE() - STOD('20000102')) -
-          VAL(STR((DATE() - STOD('20000102'))/7 - 0.5,6,0))*7)",
+        ((DATE() - STOD('20000102')) -
+        VAL(STR((DATE() - STOD('20000102'))/7 - 0.5,6,0))*7)",
         "SHIP_DATE >= STOD('20240622')",
         "SHIP_DATE >= date() + 7-
-         ((DATE() - STOD('20000102')) -
-           VAL(STR((DATE() - STOD('20000102'))/7 - 0.5,6,0))*7)
-         .and.
+        ((DATE() - STOD('20000102')) -
+        VAL(STR((DATE() - STOD('20000102'))/7 - 0.5,6,0))*7)
+        .and.
          SHIP_DATE < date() + 14 -
          ((DATE() - STOD('20000102')) -
-          VAL(STR((DATE() - STOD('20000102'))/7 - 0.5,6,0))*7)",
+         VAL(STR((DATE() - STOD('20000102'))/7 - 0.5,6,0))*7)",
     ];
 
     let value_lookup = |field_name: &str| -> Option<evaluate::Value> {
@@ -72,6 +73,7 @@ fn expr_tests() {
                 NaiveDate::from_ymd_opt(2024, 8, 1).unwrap(),
             )),
             "ID" => Some(evaluate::Value::Str("DOEJOH".into(), 10)),
+            "F_NAME" => Some(evaluate::Value::Str("John".into(), 100)),
             "L_NAME" => Some(evaluate::Value::Str("Smith".into(), 100)),
             "__DELETED" => Some(evaluate::Value::Bool(false)),
             _ => None,
