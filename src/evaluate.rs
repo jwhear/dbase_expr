@@ -199,7 +199,7 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
                             width = *len as usize,
                             prec = *dec as usize
                         );
-                        Ok(Value::Str(fmt.trim().to_string(), *len as usize))
+                        Ok(Value::Str(fmt.trim_end().to_string(), *len as usize))
                     }
                     _ => Err("STR expects (number, len, dec)".to_string()),
                 },
