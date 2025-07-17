@@ -90,7 +90,7 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
                     _ => Err("LTRIM expects a single string argument".to_string()),
                 },
 
-                "RTRIM" => match &args[..] {
+                "TRIM" | "RTRIM" => match &args[..] {
                     [Value::Str(s, len)] => Ok(Value::Str(s.trim_end().to_string(), *len)),
                     [Value::Memo(s)] => Ok(Value::Memo(s.trim_end().to_string())),
                     _ => Err("RTRIM expects a single string argument".to_string()),
