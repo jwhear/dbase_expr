@@ -313,7 +313,7 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Str
             _ => Err("Mul: incompatible types".to_string()),
         },
         BinaryOp::Div => match (left, right) {
-            (Number(_), Number(b)) if b == 0.0 => Err("Division by zero".to_string()),
+            (Number(_), Number(b)) if b == 0.0 => Ok(Number(f64::NAN)),
             (Number(a), Number(b)) => Ok(Number(a / b)),
             _ => Err("Div: incompatible types".to_string()),
         },
