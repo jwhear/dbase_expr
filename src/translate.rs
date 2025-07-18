@@ -140,7 +140,7 @@ impl FieldType {
 /// Translates dBase expression to a SQL expression.
 pub fn translate(
     source: &ast::Expression,
-    field_lookup: &impl Fn(Option<&str>, &str) -> (String, FieldType),
+    field_lookup: &impl Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
 ) -> Result {
     use ast::Expression as E;
 
@@ -185,7 +185,8 @@ pub fn translate(
             )
         }
         E::Field { alias, name } => {
-            let (name, field_type) = field_lookup(alias.as_deref(), name);
+            let (name, field_type) =
+                field_lookup(alias.as_deref(), name).map_err(|e| Error::Other(e))?;
             ok(
                 Expression::Field {
                     alias: alias.clone(),
@@ -421,7 +422,7 @@ pub fn translate(
 fn translate_function_call(
     name: &str,
     args: &[Box<ast::Expression>],
-    field_lookup: &impl Fn(Option<&str>, &str) -> (String, FieldType),
+    field_lookup: &impl Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
 ) -> Result {
     let name = name.to_uppercase();
     // Helper to get the specified argument or return the appropriate error
