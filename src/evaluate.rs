@@ -327,25 +327,52 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Str
         BinaryOp::Ne => Ok(Bool(left != right)),
         BinaryOp::Lt => match (left, right) {
             (Number(a), Number(b)) => Ok(Bool(a < b)),
-            (Str(a, _) | Memo(a), Str(b, _) | Memo(b)) => Ok(Bool(a < b)),
+            (Str(a, _) | Memo(a), Str(b, len)) => {
+                Ok(Bool(&a[..len.min(a.len())] < &b[..a.len().min(b.len())]))
+            }
+            (Str(a, _) | Memo(a), Memo(b)) => {
+                let b_prefix = &b[..a.len().min(b.len())];
+                Ok(Bool(a < b_prefix.to_owned()))
+            }
             (Date(a), Date(b)) => Ok(Bool(a < b)),
             _ => Err("Lt: incompatible types".to_string()),
         },
+
         BinaryOp::Le => match (left, right) {
             (Number(a), Number(b)) => Ok(Bool(a <= b)),
-            (Str(a, _) | Memo(a), Str(b, _) | Memo(b)) => Ok(Bool(a <= b)),
+            (Str(a, _) | Memo(a), Str(b, len)) => {
+                Ok(Bool(&a[..len.min(a.len())] <= &b[..a.len().min(b.len())]))
+            }
+            (Str(a, _) | Memo(a), Memo(b)) => {
+                let b_prefix = &b[..a.len().min(b.len())];
+                Ok(Bool(a <= b_prefix.to_owned()))
+            }
             (Date(a), Date(b)) => Ok(Bool(a <= b)),
             _ => Err("Le: incompatible types".to_string()),
         },
+
         BinaryOp::Gt => match (left, right) {
             (Number(a), Number(b)) => Ok(Bool(a > b)),
-            (Str(a, _) | Memo(a), Str(b, _) | Memo(b)) => Ok(Bool(a > b)),
+            (Str(a, _) | Memo(a), Str(b, len)) => {
+                Ok(Bool(&a[..len.min(a.len())] > &b[..a.len().min(b.len())]))
+            }
+            (Str(a, _) | Memo(a), Memo(b)) => {
+                let b_prefix = &b[..a.len().min(b.len())];
+                Ok(Bool(a > b_prefix.to_owned()))
+            }
             (Date(a), Date(b)) => Ok(Bool(a > b)),
             _ => Err("Gt: incompatible types".to_string()),
         },
+
         BinaryOp::Ge => match (left, right) {
             (Number(a), Number(b)) => Ok(Bool(a >= b)),
-            (Str(a, _) | Memo(a), Str(b, _) | Memo(b)) => Ok(Bool(a >= b)),
+            (Str(a, _) | Memo(a), Str(b, len)) => {
+                Ok(Bool(&a[..len.min(a.len())] >= &b[..a.len().min(b.len())]))
+            }
+            (Str(a, _) | Memo(a), Memo(b)) => {
+                let b_prefix = &b[..a.len().min(b.len())];
+                Ok(Bool(a >= b_prefix.to_owned()))
+            }
             (Date(a), Date(b)) => Ok(Bool(a >= b)),
             _ => Err("Ge: incompatible types".to_string()),
         },
