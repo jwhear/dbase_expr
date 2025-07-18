@@ -112,14 +112,18 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
 
                 "CTOD" | "STOD" => match &args[..] {
                     [Value::Str(s, _len)] => {
-                        let fmt = if name_upper == "CTOD" {
-                            "%m/%d/%y"
+                        if s.trim().is_empty() {
+                            Ok(Value::Null)
                         } else {
-                            "%Y%m%d"
-                        };
-                        chrono::NaiveDate::parse_from_str(s, fmt)
-                            .map(Value::Date)
-                            .map_err(|e| format!("Date parse error: {}", e))
+                            let fmt = if name_upper == "CTOD" {
+                                "%m/%d/%y"
+                            } else {
+                                "%Y%m%d"
+                            };
+                            chrono::NaiveDate::parse_from_str(s, fmt)
+                                .map(Value::Date)
+                                .map_err(|e| format!("Date parse error: {}", e))
+                        }
                     }
                     _ => Err(format!("{} expects a single string argument", name)),
                 },
@@ -132,6 +136,10 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
                             ("%m/%d/%y", 10)
                         };
                         Ok(Value::Str(d.format(fmt).to_string(), len))
+                    }
+                    [Value::Null] => {
+                        let len = if name_upper == "CTOD" { 10 } else { 8 };
+                        Ok(Value::Str("".to_string(), len))
                     }
                     _ => Err("DTOC expects a date argument".to_string()),
                 },
