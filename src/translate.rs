@@ -363,55 +363,39 @@ pub fn translate(
                     binop(l, BinaryOp::Or, r, FieldType::Logical)
                 }
                 (ast::BinaryOp::Lt, FieldType::Character(len)) => {
-                    let left = get_string_comparison_left_side_expression(
-                        l,
-                        translate(r, field_lookup)?.0,
-                    );
-                    let right = get_string_comparison_right_side_expression(r.clone(), len);
+                    let left = string_comp_left(l, translate(r, field_lookup)?.0);
+                    let right = string_comp_right(r.clone(), len);
                     binop(left, BinaryOp::Lt, &right, FieldType::Logical)
                 }
                 (ast::BinaryOp::Le, FieldType::Character(len)) => {
-                    let left = get_string_comparison_left_side_expression(
-                        l,
-                        translate(r, field_lookup)?.0,
-                    );
-                    let right = get_string_comparison_right_side_expression(r.clone(), len);
+                    let left = string_comp_left(l, translate(r, field_lookup)?.0);
+                    let right = string_comp_right(r.clone(), len);
                     binop(left, BinaryOp::Le, &right, FieldType::Logical)
                 }
                 (ast::BinaryOp::Gt, FieldType::Character(len)) => {
-                    let left = get_string_comparison_left_side_expression(
-                        l,
-                        translate(r, field_lookup)?.0,
-                    );
-                    let right = get_string_comparison_right_side_expression(r.clone(), len);
+                    let left = string_comp_left(l, translate(r, field_lookup)?.0);
+                    let right = string_comp_right(r.clone(), len);
                     binop(left, BinaryOp::Gt, &right, FieldType::Logical)
                 }
                 (ast::BinaryOp::Ge, FieldType::Character(len)) => {
-                    let left = get_string_comparison_left_side_expression(
-                        l,
-                        translate(r, field_lookup)?.0,
-                    );
-                    let right = get_string_comparison_right_side_expression(r.clone(), len);
+                    let left = string_comp_left(l, translate(r, field_lookup)?.0);
+                    let right = string_comp_right(r.clone(), len);
                     binop(left, BinaryOp::Ge, &right, FieldType::Logical)
                 }
                 (ast::BinaryOp::Lt, FieldType::Memo) => {
-                    let right = translate(r, field_lookup)?;
-                    let left = get_string_comparison_left_side_expression(l, right.0);
+                    let left = string_comp_left(l, translate(r, field_lookup)?.0);
                     binop(left, BinaryOp::Lt, r, FieldType::Logical)
                 }
                 (ast::BinaryOp::Le, FieldType::Memo) => {
-                    let right = translate(r, field_lookup)?;
-                    let left = get_string_comparison_left_side_expression(l, right.0);
+                    let left = string_comp_left(l, translate(r, field_lookup)?.0);
                     binop(left, BinaryOp::Le, r, FieldType::Logical)
                 }
                 (ast::BinaryOp::Gt, FieldType::Memo) => {
-                    let right = translate(r, field_lookup)?;
-                    let left = get_string_comparison_left_side_expression(l, right.0);
+                    let left = string_comp_left(l, translate(r, field_lookup)?.0);
                     binop(left, BinaryOp::Gt, r, FieldType::Logical)
                 }
                 (ast::BinaryOp::Ge, FieldType::Memo) => {
-                    let right = translate(r, field_lookup)?;
-                    let left = get_string_comparison_left_side_expression(l, right.0);
+                    let left = string_comp_left(l, translate(r, field_lookup)?.0);
                     binop(left, BinaryOp::Ge, r, FieldType::Logical)
                 }
                 (ast::BinaryOp::Eq, FieldType::Character(_) | FieldType::Memo) => {
@@ -777,10 +761,7 @@ fn escape_single_quotes(s: &str) -> String {
 }
 
 // The left side of the string comparison should be truncated to the length of the right side (basically a startswith compare)
-fn get_string_comparison_left_side_expression(
-    l: Box<Expression>,
-    r: Box<Expression>,
-) -> Box<Expression> {
+fn string_comp_left(l: Box<Expression>, r: Box<Expression>) -> Box<Expression> {
     let right_side_len_expression = Box::new(Expression::FunctionCall {
         name: "LENGTH".into(),
         args: vec![r.clone()],
@@ -797,10 +778,7 @@ fn get_string_comparison_left_side_expression(
 }
 
 // The right side of the string comparison should be truncated to the length of fixed length (if applicable), no need to evaluate additional characters
-fn get_string_comparison_right_side_expression(
-    r: Box<ast::Expression>,
-    len: u32,
-) -> Box<ast::Expression> {
+fn string_comp_right(r: Box<ast::Expression>, len: u32) -> Box<ast::Expression> {
     let expression = Box::new(ast::Expression::FunctionCall {
         name: "SUBSTR".into(),
         args: vec![
