@@ -777,7 +777,7 @@ fn string_comp_left(l: Box<Expression>, r: Box<Expression>) -> Box<Expression> {
     left_side
 }
 
-// The right side of the string comparison should be truncated to the length of fixed length (if applicable), no need to evaluate additional characters
+// The right side of the string comparison should be truncated to the fixed length, no need to evaluate additional characters
 fn string_comp_right(r: Box<ast::Expression>, len: u32) -> Box<ast::Expression> {
     let expression = Box::new(ast::Expression::FunctionCall {
         name: "SUBSTR".into(),
