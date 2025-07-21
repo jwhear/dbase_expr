@@ -764,12 +764,12 @@ fn escape_single_quotes(s: &str) -> String {
 fn string_comp_left(l: Box<Expression>, r: Box<Expression>) -> Box<Expression> {
     let right_side_len_expression = Box::new(Expression::FunctionCall {
         name: "LENGTH".into(),
-        args: vec![r.clone()],
+        args: vec![r],
     });
     let left_side = Box::new(Expression::FunctionCall {
         name: "SUBSTR".into(),
         args: vec![
-            l.clone(),
+            l,
             Box::new(Expression::NumberLiteral("1".into())),
             right_side_len_expression,
         ],
@@ -782,7 +782,7 @@ fn string_comp_right(r: Box<ast::Expression>, len: u32) -> Box<ast::Expression> 
     let expression = Box::new(ast::Expression::FunctionCall {
         name: "SUBSTR".into(),
         args: vec![
-            r.clone(),
+            r,
             Box::new(ast::Expression::NumberLiteral("1".into())),
             Box::new(ast::Expression::NumberLiteral(len.to_string().into())),
         ],
