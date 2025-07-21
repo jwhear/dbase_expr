@@ -362,7 +362,42 @@ pub fn translate(
                 (ast::BinaryOp::Or, FieldType::Logical) => {
                     binop(l, BinaryOp::Or, r, FieldType::Logical)
                 }
-
+                (ast::BinaryOp::Lt, FieldType::Character(len)) => {
+                    let left = string_comp_left(l, translate(r, field_lookup)?.0);
+                    let right = string_comp_right(r.clone(), len);
+                    binop(left, BinaryOp::Lt, &right, FieldType::Logical)
+                }
+                (ast::BinaryOp::Le, FieldType::Character(len)) => {
+                    let left = string_comp_left(l, translate(r, field_lookup)?.0);
+                    let right = string_comp_right(r.clone(), len);
+                    binop(left, BinaryOp::Le, &right, FieldType::Logical)
+                }
+                (ast::BinaryOp::Gt, FieldType::Character(len)) => {
+                    let left = string_comp_left(l, translate(r, field_lookup)?.0);
+                    let right = string_comp_right(r.clone(), len);
+                    binop(left, BinaryOp::Gt, &right, FieldType::Logical)
+                }
+                (ast::BinaryOp::Ge, FieldType::Character(len)) => {
+                    let left = string_comp_left(l, translate(r, field_lookup)?.0);
+                    let right = string_comp_right(r.clone(), len);
+                    binop(left, BinaryOp::Ge, &right, FieldType::Logical)
+                }
+                (ast::BinaryOp::Lt, FieldType::Memo) => {
+                    let left = string_comp_left(l, translate(r, field_lookup)?.0);
+                    binop(left, BinaryOp::Lt, r, FieldType::Logical)
+                }
+                (ast::BinaryOp::Le, FieldType::Memo) => {
+                    let left = string_comp_left(l, translate(r, field_lookup)?.0);
+                    binop(left, BinaryOp::Le, r, FieldType::Logical)
+                }
+                (ast::BinaryOp::Gt, FieldType::Memo) => {
+                    let left = string_comp_left(l, translate(r, field_lookup)?.0);
+                    binop(left, BinaryOp::Gt, r, FieldType::Logical)
+                }
+                (ast::BinaryOp::Ge, FieldType::Memo) => {
+                    let left = string_comp_left(l, translate(r, field_lookup)?.0);
+                    binop(left, BinaryOp::Ge, r, FieldType::Logical)
+                }
                 (ast::BinaryOp::Eq, FieldType::Character(_) | FieldType::Memo) => {
                     binop(l, BinaryOp::StartsWith, r, FieldType::Logical)
                 }
@@ -723,6 +758,36 @@ fn escape_single_quotes(s: &str) -> String {
         res.push(c);
     }
     res
+}
+
+// The left side of the string comparison should be truncated to the length of the right side (basically a startswith compare)
+fn string_comp_left(l: Box<Expression>, r: Box<Expression>) -> Box<Expression> {
+    let right_side_len_expression = Box::new(Expression::FunctionCall {
+        name: "LENGTH".into(),
+        args: vec![r],
+    });
+    let left_side = Box::new(Expression::FunctionCall {
+        name: "SUBSTR".into(),
+        args: vec![
+            l,
+            Box::new(Expression::NumberLiteral("1".into())),
+            right_side_len_expression,
+        ],
+    });
+    left_side
+}
+
+// The right side of the string comparison should be truncated to the fixed length, no need to evaluate additional characters
+fn string_comp_right(r: Box<ast::Expression>, len: u32) -> Box<ast::Expression> {
+    let expression = Box::new(ast::Expression::FunctionCall {
+        name: "SUBSTR".into(),
+        args: vec![
+            r,
+            Box::new(ast::Expression::NumberLiteral("1".into())),
+            Box::new(ast::Expression::NumberLiteral(len.to_string().into())),
+        ],
+    });
+    expression
 }
 
 #[cfg(test)]
