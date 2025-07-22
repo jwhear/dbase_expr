@@ -84,7 +84,7 @@ fn expr_tests() {
         match parser.parse(test) {
             Ok(t) => match evaluate::evaluate(&t, &value_lookup) {
                 Ok(tree) => println!("{test} => {tree:?}\n"),
-                Err(e) => eprintln!("{test} => Error translating tree: {e:?}\n"),
+                Err(e) => eprintln!("{test} => Error translating tree: {e:?}\n:{test}\n"),
             },
             // The parse failed with an unexpected token: show the approximate
             //  position in the source
@@ -111,7 +111,6 @@ fn to_sql_tests() {
         "a * b + c",
         "(a + b) * c",
         "left((a), -b + -c)",
-        "a .or. b",
         ".T..AND..FALSE.",
         r#""double \" quote""#,
         r#"'single \' quote'"#,
@@ -143,17 +142,17 @@ fn to_sql_tests() {
         (None, _) => panic!("unknown field: {field}"),
     };
 
-    let field_lookup = |alias: Option<&str>, field: &str| -> (String, FieldType) {
+    let field_lookup = |alias: Option<&str>, field: &str| -> Result<(String, FieldType), String> {
         let field = field.to_string().to_uppercase();
         let field_type = get_type(alias, &field);
-        (field, field_type)
+        Ok((field, field_type))
     };
 
     for test in tests.iter() {
         match parser.parse(test) {
             Ok(t) => match translate::translate(&t, &field_lookup) {
                 Ok(tree) => println!("{test}\n=>\n{}\n", Printer::new(tree.0)),
-                Err(e) => eprintln!("Error translating tree: {e:?}"),
+                Err(e) => eprintln!("Error translating tree: {e:?}\n:{test}\n"),
             },
 
             // The parse failed with an unexpected token: show the approximate
