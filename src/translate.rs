@@ -137,20 +137,38 @@ impl FieldType {
     }
 }
 
+/// This trait allows the caller to control translation. See `DefaultPostgresTranslator`
+///  for a good starting place.
+pub trait TranslationContext {
+    /// Called to determine the proper name and type of a field.
+    ///   `alias`: the table reference if the field is qualified (in `foo.x` the alias is `foo`)
+    ///   `field`: the name of the field from the expression
+    ///
+    /// On success, returns a tuple of the proper (e.g. capitalized) name and the field type
+    fn lookup_field(
+        &self,
+        alias: Option<&str>,
+        field: &str,
+    ) -> std::result::Result<(String, FieldType), String>;
+
+    /// Called to translate a function call.
+    ///   `name`: the name of the function in the original expression
+    ///   `args`: the arguments to the function
+    ///
+    /// On success, returns an expression and the type the expression would return.
+    fn translate_fn_call(
+        &self,
+        name: &str,
+        args: &[Box<ast::Expression>],
+    ) -> std::result::Result<(Box<Expression>, FieldType), Error>;
+}
+
 /// Translates dBase expression to a SQL expression.
-pub fn translate(
-    source: &ast::Expression,
-    field_lookup: &impl Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
-) -> Result {
+pub fn translate<C: TranslationContext>(source: &ast::Expression, cx: &C) -> Result {
     use ast::Expression as E;
 
     // helper for creating binary operators
-    let binop = |l, op, r, ty| {
-        ok(
-            Expression::BinaryOperator(l, op, translate(r, field_lookup)?.0),
-            ty,
-        )
-    };
+    let binop = |l, op, r, ty| ok(Expression::BinaryOperator(l, op, translate(r, cx)?.0), ty);
 
     match source {
         E::BoolLiteral(v) => ok(Expression::BoolLiteral(*v), FieldType::Logical),
@@ -185,8 +203,9 @@ pub fn translate(
             )
         }
         E::Field { alias, name } => {
-            let (name, field_type) =
-                field_lookup(alias.as_deref(), name).map_err(|e| Error::Other(e))?;
+            let (name, field_type) = cx
+                .lookup_field(alias.as_deref(), name)
+                .map_err(|e| Error::Other(e))?;
             ok(
                 Expression::Field {
                     alias: alias.clone(),
@@ -198,11 +217,11 @@ pub fn translate(
         }
         E::UnaryOperator(op, r) => match op {
             ast::UnaryOp::Not => ok(
-                Expression::UnaryOperator(UnaryOp::Not, translate(r, field_lookup)?.0),
+                Expression::UnaryOperator(UnaryOp::Not, translate(r, cx)?.0),
                 FieldType::Logical,
             ),
             ast::UnaryOp::Neg => {
-                let r = translate(r, field_lookup)?;
+                let r = translate(r, cx)?;
                 ok(Expression::UnaryOperator(UnaryOp::Neg, r.0), r.1)
             }
         },
@@ -210,7 +229,7 @@ pub fn translate(
             // Add, Sub are ambiguous: could be numeric, concat, or days (for dates)
             // We translate the first operand and use its type to determine how
             //  to translate.
-            let (l, ty) = translate(l, field_lookup)?;
+            let (l, ty) = translate(l, cx)?;
             match (op, ty) {
                 // For these types, simple addition is fine
                 (
@@ -274,11 +293,7 @@ pub fn translate(
                     ok(
                         Expression::FunctionCall {
                             name: "CONCAT".into(),
-                            args: vec![
-                                without_spaces,
-                                translate(r, field_lookup)?.0,
-                                repeated_spaces,
-                            ],
+                            args: vec![without_spaces, translate(r, cx)?.0, repeated_spaces],
                         },
                         FieldType::Memo,
                     )
@@ -363,50 +378,47 @@ pub fn translate(
                     binop(l, BinaryOp::Or, r, FieldType::Logical)
                 }
                 (ast::BinaryOp::Lt, FieldType::Character(len)) => {
-                    let left = string_comp_left(l, translate(r, field_lookup)?.0);
+                    let left = string_comp_left(l, translate(r, cx)?.0);
                     let right = string_comp_right(r.clone(), len);
                     binop(left, BinaryOp::Lt, &right, FieldType::Logical)
                 }
                 (ast::BinaryOp::Le, FieldType::Character(len)) => {
-                    let left = string_comp_left(l, translate(r, field_lookup)?.0);
+                    let left = string_comp_left(l, translate(r, cx)?.0);
                     let right = string_comp_right(r.clone(), len);
                     binop(left, BinaryOp::Le, &right, FieldType::Logical)
                 }
                 (ast::BinaryOp::Gt, FieldType::Character(len)) => {
-                    let left = string_comp_left(l, translate(r, field_lookup)?.0);
+                    let left = string_comp_left(l, translate(r, cx)?.0);
                     let right = string_comp_right(r.clone(), len);
                     binop(left, BinaryOp::Gt, &right, FieldType::Logical)
                 }
                 (ast::BinaryOp::Ge, FieldType::Character(len)) => {
-                    let left = string_comp_left(l, translate(r, field_lookup)?.0);
+                    let left = string_comp_left(l, translate(r, cx)?.0);
                     let right = string_comp_right(r.clone(), len);
                     binop(left, BinaryOp::Ge, &right, FieldType::Logical)
                 }
                 (ast::BinaryOp::Lt, FieldType::Memo) => {
-                    let left = string_comp_left(l, translate(r, field_lookup)?.0);
+                    let left = string_comp_left(l, translate(r, cx)?.0);
                     binop(left, BinaryOp::Lt, r, FieldType::Logical)
                 }
                 (ast::BinaryOp::Le, FieldType::Memo) => {
-                    let left = string_comp_left(l, translate(r, field_lookup)?.0);
+                    let left = string_comp_left(l, translate(r, cx)?.0);
                     binop(left, BinaryOp::Le, r, FieldType::Logical)
                 }
                 (ast::BinaryOp::Gt, FieldType::Memo) => {
-                    let left = string_comp_left(l, translate(r, field_lookup)?.0);
+                    let left = string_comp_left(l, translate(r, cx)?.0);
                     binop(left, BinaryOp::Gt, r, FieldType::Logical)
                 }
                 (ast::BinaryOp::Ge, FieldType::Memo) => {
-                    let left = string_comp_left(l, translate(r, field_lookup)?.0);
+                    let left = string_comp_left(l, translate(r, cx)?.0);
                     binop(left, BinaryOp::Ge, r, FieldType::Logical)
                 }
                 (ast::BinaryOp::Eq, FieldType::Character(_) | FieldType::Memo) => {
                     binop(l, BinaryOp::StartsWith, r, FieldType::Logical)
                 }
                 (ast::BinaryOp::Ne, FieldType::Character(_) | FieldType::Memo) => {
-                    let starts_with = Expression::BinaryOperator(
-                        l,
-                        BinaryOp::StartsWith,
-                        translate(r, field_lookup)?.0,
-                    );
+                    let starts_with =
+                        Expression::BinaryOperator(l, BinaryOp::StartsWith, translate(r, cx)?.0);
                     ok(
                         Expression::UnaryOperator(UnaryOp::Not, Box::new(starts_with)),
                         FieldType::Logical,
@@ -425,7 +437,7 @@ pub fn translate(
                 (ast::BinaryOp::Exp, FieldType::Integer) => ok(
                     Expression::FunctionCall {
                         name: "POW".to_string(),
-                        args: vec![l, translate(r, field_lookup)?.0],
+                        args: vec![l, translate(r, cx)?.0],
                     },
                     ty,
                 ),
@@ -437,7 +449,7 @@ pub fn translate(
                     let strpos = Box::new(Expression::FunctionCall {
                         name: "STRPOS".to_string(),
                         // Note that in CodeBase the haystack is the right arg
-                        args: vec![translate(r, field_lookup)?.0, l],
+                        args: vec![translate(r, cx)?.0, l],
                     });
                     ok(Expression::Cast(strpos, "bool"), FieldType::Logical)
                 }
@@ -447,32 +459,62 @@ pub fn translate(
                 ))),
             }
         }
-        E::FunctionCall { name, args } => translate_function_call(name, args, field_lookup),
+        E::FunctionCall { name, args } => cx.translate_fn_call(name, args),
+    }
+}
+
+/// This type provides default function translation for Postgres. You can
+///  "inherit" while allowing overriding by implementing the TranslationContext
+///  trait and dispatching to `default_translate_fn_call` any function calls
+///  you're not interested in overriding.
+pub struct DefaultPostgresTranslator<F>
+where
+    F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
+{
+    pub field_lookup: F,
+}
+
+impl<F> TranslationContext for DefaultPostgresTranslator<F>
+where
+    F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
+{
+    fn lookup_field(
+        &self,
+        alias: Option<&str>,
+        field: &str,
+    ) -> std::result::Result<(String, FieldType), String> {
+        (self.field_lookup)(alias, field)
+    }
+
+    fn translate_fn_call(
+        &self,
+        name: &str,
+        args: &[Box<ast::Expression>],
+    ) -> std::result::Result<(Box<Expression>, FieldType), Error> {
+        default_translate_fn_call(name, args, self)
     }
 }
 
 // This function does the kind of gross work of converting dBase function calls
 //  to the SQL equivalent.  Some are super straightforward: `CHR(97)` -> `CHR(97)`
 //  but others have no exact equivalent and have to resolve to a nested bundle.
-fn translate_function_call(
+pub fn default_translate_fn_call(
     name: &str,
     args: &[Box<ast::Expression>],
-    field_lookup: &impl Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
-) -> Result {
+    cx: &impl TranslationContext,
+) -> std::result::Result<(Box<Expression>, FieldType), Error> {
     let name = name.to_uppercase();
     // Helper to get the specified argument or return the appropriate error
     let arg = |index: usize| {
         args.get(index)
-            .map(|a| translate(a, field_lookup))
+            .map(|a| translate(a, cx))
             .ok_or(Error::IncorrectArgCount(name.clone(), index))
     };
 
     // Translates all arguments and puts them into a Result<Vec>
     let all_args = || {
-        let res: std::result::Result<Vec<_>, Error> = args
-            .iter()
-            .map(|a| translate(a, field_lookup).map(|r| r.0))
-            .collect();
+        let res: std::result::Result<Vec<_>, Error> =
+            args.iter().map(|a| translate(a, cx).map(|r| r.0)).collect();
         res
     };
 

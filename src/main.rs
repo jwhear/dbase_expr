@@ -1,13 +1,92 @@
 use chrono::NaiveDate;
-use dbase_expr::{translate::FieldType, *};
+use dbase_expr::{
+    translate::{
+        DefaultPostgresTranslator, Error, Expression, FieldType, TranslationContext,
+        default_translate_fn_call,
+    },
+    *,
+};
 use to_sql::Printer;
 
 fn main() {
     println!("Running expr tests...");
     expr_tests();
 
+    // Plain vanilla translation
     println!("Running to_sql tests...");
-    to_sql_tests();
+    let get_type = |alias: Option<&str>, field: &str| match (alias, field) {
+        (_, "A" | "B" | "C") => FieldType::Integer,
+        (_, "BINDATAFIELD") => FieldType::MemoBinary,
+        (_, "SHIP_DATE") => FieldType::Date,
+        (_, "ID") => FieldType::Character(1),
+        (_, "L_NAME") => FieldType::Character(20),
+        (Some(alias), _) => panic!("unknown field: {alias}.{field}"),
+        (None, _) => panic!("unknown field: {field}"),
+    };
+
+    let translation_cx = DefaultPostgresTranslator {
+        field_lookup: |alias: Option<&str>, field: &str| -> Result<(String, FieldType), String> {
+            let field = field.to_string().to_uppercase();
+            let field_type = get_type(alias, &field);
+            Ok((field, field_type))
+        },
+    };
+    to_sql_tests(&translation_cx);
+
+    // Overriding the DTOS function
+    println!("Running to_sql tests with function overriding...");
+    pub struct CustomTranslator<F>
+    where
+        F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
+    {
+        field_lookup: F,
+    }
+    impl<F> TranslationContext for CustomTranslator<F>
+    where
+        F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
+    {
+        fn lookup_field(
+            &self,
+            alias: Option<&str>,
+            field: &str,
+        ) -> std::result::Result<(String, FieldType), String> {
+            (self.field_lookup)(alias, field)
+        }
+
+        fn translate_fn_call(
+            &self,
+            name: &str,
+            args: &[Box<ast::Expression>],
+        ) -> std::result::Result<(Box<Expression>, FieldType), Error> {
+            let name = name.to_uppercase();
+
+            let arg = |index: usize| {
+                args.get(index)
+                    .map(|a| translate::translate(a, self))
+                    .ok_or(Error::IncorrectArgCount(name.clone(), index))
+            };
+
+            if name == "DTOS" {
+                Ok((
+                    Box::new(Expression::FunctionCall {
+                        name: "CB_DATE_TO_TEXT".into(),
+                        args: vec![arg(0)??.0, "YYYYMMDD".into()],
+                    }),
+                    FieldType::Character(8),
+                ))
+            } else {
+                default_translate_fn_call(&name, args, self)
+            }
+        }
+    }
+    let cx = CustomTranslator {
+        field_lookup: |alias: Option<&str>, field: &str| -> Result<(String, FieldType), String> {
+            let field = field.to_string().to_uppercase();
+            let field_type = get_type(alias, &field);
+            Ok((field, field_type))
+        },
+    };
+    to_sql_tests(&cx);
 }
 
 fn expr_tests() {
@@ -100,7 +179,7 @@ fn expr_tests() {
     }
 }
 
-fn to_sql_tests() {
+fn to_sql_tests<T: TranslationContext>(cx: &T) {
     let parser = grammar::ExprParser::new();
     let tests = [
         "deleted() = .f. .and. substr(id, 1, 3 ) <> \"($)\"",
@@ -116,6 +195,7 @@ fn to_sql_tests() {
         r#"'single \' quote'"#,
         r#"VAL('10.123')"#,
         "SUBSTR('hello', 2, 3)",
+        "DTOS(DATE())",
         // From Paul
         r#"iif(.t., (ID="A"), (ID="E"))"#,
         "bindatafield <> CHR(0)",
@@ -132,25 +212,9 @@ fn to_sql_tests() {
           VAL(STR((DATE() - STOD('20000102'))/7 - 0.5,6,0))*7)",
     ];
 
-    let get_type = |alias: Option<&str>, field: &str| match (alias, field) {
-        (_, "A" | "B" | "C") => FieldType::Integer,
-        (_, "BINDATAFIELD") => FieldType::MemoBinary,
-        (_, "SHIP_DATE") => FieldType::Date,
-        (_, "ID") => FieldType::Character(1),
-        (_, "L_NAME") => FieldType::Character(20),
-        (Some(alias), _) => panic!("unknown field: {alias}.{field}"),
-        (None, _) => panic!("unknown field: {field}"),
-    };
-
-    let field_lookup = |alias: Option<&str>, field: &str| -> Result<(String, FieldType), String> {
-        let field = field.to_string().to_uppercase();
-        let field_type = get_type(alias, &field);
-        Ok((field, field_type))
-    };
-
     for test in tests.iter() {
         match parser.parse(test) {
-            Ok(t) => match translate::translate(&t, &field_lookup) {
+            Ok(t) => match translate::translate(&t, cx) {
                 Ok(tree) => println!("{test}\n=>\n{}\n", Printer::new(tree.0)),
                 Err(e) => eprintln!("Error translating tree: {e:?}\n:{test}\n"),
             },
