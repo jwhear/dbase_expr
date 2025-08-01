@@ -147,7 +147,7 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
                         Ok(Value::Str(text, len))
                     }
                     [Value::Null] => {
-                        let len = if name_upper == "CTOD" { 10 } else { 8 };
+                        let len: usize = if name_upper == "DTOC" { 10 } else { 8 };
                         Ok(Value::Str("".to_string(), len))
                     }
                     _ => Err("DTOC expects a date argument".to_string()),
