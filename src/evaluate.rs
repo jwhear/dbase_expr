@@ -26,7 +26,7 @@ impl Debug for Value {
             Value::Date(d) => write!(
                 f,
                 "Date: {}",
-                d.map_or("NULL".to_string(), |f| f.format("%Y-%m-%d").to_string())
+                d.map_or_else(|| "NULL".to_string(), |f| f.format("%Y-%m-%d").to_string())
             ),
             Value::Blob(b) => write!(f, "BLOB({:?})", b),
             Value::Null => write!(f, ".NULL."),
