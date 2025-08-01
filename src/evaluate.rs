@@ -11,7 +11,7 @@ pub enum Value {
     Memo(String),
     Bool(bool),
     Number(f64),
-    Date(NaiveDate),
+    Date(Option<NaiveDate>),
     Blob(Vec<u8>),
     Null,
 }
@@ -23,7 +23,11 @@ impl Debug for Value {
             Value::Memo(s) => write!(f, "Memo: '{}'", s.replace('\'', "''")),
             Value::Bool(b) => write!(f, "Boolean: {}", if *b { ".T." } else { ".F." }),
             Value::Number(n) => write!(f, "Number: {}", n),
-            Value::Date(d) => write!(f, "Date: {}", d.format("%Y-%m-%d")),
+            Value::Date(d) => write!(
+                f,
+                "Date: {}",
+                d.map_or("NULL".to_string(), |f| f.format("%Y-%m-%d").to_string())
+            ),
             Value::Blob(b) => write!(f, "BLOB({:?})", b),
             Value::Null => write!(f, ".NULL."),
         }
@@ -113,7 +117,7 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
                 "CTOD" | "STOD" => match &args[..] {
                     [Value::Str(s, _len)] => {
                         if s.trim().is_empty() {
-                            Ok(Value::Null)
+                            Ok(Value::Date(None))
                         } else {
                             let fmt = if name_upper == "CTOD" {
                                 "%m/%d/%y"
@@ -121,7 +125,7 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
                                 "%Y%m%d"
                             };
                             chrono::NaiveDate::parse_from_str(s, fmt)
-                                .map(Value::Date)
+                                .map(|d| Value::Date(Some(d)))
                                 .map_err(|e| format!("Date parse error: {}", e))
                         }
                     }
@@ -130,12 +134,17 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
 
                 "DTOC" | "DTOS" => match &args[..] {
                     [Value::Date(d)] => {
-                        let (fmt, len) = if args.len() == 2 {
-                            ("%Y%m%d", 8)
+                        let fmt = if name_upper == "DTOC" {
+                            "%m/%d/%y"
                         } else {
-                            ("%m/%d/%y", 10)
+                            "%Y%m%d"
                         };
-                        Ok(Value::Str(d.format(fmt).to_string(), len))
+                        let text = match d {
+                            Some(date) => date.format(fmt).to_string(),
+                            None => "".to_string(),
+                        };
+                        let len = if name_upper == "DTOC" { 10 } else { 8 };
+                        Ok(Value::Str(text, len))
                     }
                     [Value::Null] => {
                         let len = if name_upper == "CTOD" { 10 } else { 8 };
@@ -145,15 +154,18 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
                 },
 
                 "DAY" | "MONTH" | "YEAR" => match &args[..] {
-                    [Value::Date(d)] => {
-                        let result = match name_upper.as_str() {
-                            "DAY" => d.day() as f64,
-                            "MONTH" => d.month() as f64,
-                            "YEAR" => d.year() as f64,
-                            _ => unreachable!(),
-                        };
-                        Ok(Value::Number(result))
-                    }
+                    [Value::Date(d)] => match d {
+                        Some(date) => {
+                            let result = match name_upper.as_str() {
+                                "DAY" => date.day() as f64,
+                                "MONTH" => date.month() as f64,
+                                "YEAR" => date.year() as f64,
+                                _ => unreachable!(),
+                            };
+                            Ok(Value::Number(result))
+                        }
+                        None => Ok(Value::Number(0.0)),
+                    },
                     _ => Err(format!("{} expects a date argument", name_upper)),
                 },
 
@@ -226,7 +238,7 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
                     _ => Err("VAL expects a string".to_string()),
                 },
 
-                "DATE" => Ok(Value::Date(chrono::Local::now().naive_local().date())),
+                "DATE" => Ok(Value::Date(Some(chrono::Local::now().naive_local().date()))),
 
                 "IIF" => match &args[..] {
                     [Value::Bool(cond), when_true, when_false] => Ok(if *cond {
@@ -269,17 +281,27 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Str
         BinaryOp::Add => match (left, right) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a + b)),
             (Value::Date(d), Value::Number(n)) => {
-                // Add n days to date
-                let ndays = n as i64;
-                d.checked_add_signed(chrono::Duration::days(ndays))
-                    .map(Value::Date)
-                    .ok_or("Date addition overflow".to_string())
+                match d {
+                    Some(d) => {
+                        // Add n days to date
+                        let ndays = n as i64;
+                        d.checked_add_signed(chrono::Duration::days(ndays))
+                            .map(|d| Value::Date(Some(d)))
+                            .ok_or("Date addition overflow".to_string())
+                    }
+                    None => Ok(Value::Date(None)), //null + n = null
+                }
             }
             (Value::Number(n), Value::Date(d)) => {
-                let ndays = n as i64;
-                d.checked_add_signed(chrono::Duration::days(ndays))
-                    .map(Value::Date)
-                    .ok_or("Date addition overflow".to_string())
+                match d {
+                    Some(d) => {
+                        let ndays = n as i64;
+                        d.checked_add_signed(chrono::Duration::days(ndays))
+                            .map(|d| Value::Date(Some(d)))
+                            .ok_or("Date addition overflow".to_string())
+                    }
+                    None => return Ok(Value::Date(None)), //n + null = null
+                }
             }
             (Value::Str(a, len_a), Value::Str(b, len_b)) => {
                 let mut result = a.clone();
@@ -296,13 +318,19 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Str
         BinaryOp::Sub => match (left, right) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a - b)),
             (Value::Date(d), Value::Number(n)) => {
-                let ndays = n as i64;
-                d.checked_sub_signed(chrono::Duration::days(ndays))
-                    .map(Value::Date)
-                    .ok_or("Date subtraction overflow".to_string())
+                match d {
+                    Some(d) => {
+                        // Subtract n days from date
+                        let ndays = n as i64;
+                        d.checked_sub_signed(chrono::Duration::days(ndays))
+                            .map(|d| Value::Date(Some(d)))
+                            .ok_or("Date subtraction overflow".to_string())
+                    }
+                    None => Ok(Value::Date(None)), //null - n = null
+                }
             }
-            (Value::Date(d1), Value::Date(d2)) => {
-                // difference in days as float
+            (Value::Date(Some(d1)), Value::Date(Some(d2))) => {
+                // Difference in days as float
                 let duration = d1.signed_duration_since(d2);
                 Ok(Value::Number(duration.num_days() as f64))
             }
