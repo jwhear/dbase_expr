@@ -55,7 +55,7 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
             Some(Value::Str(s, len)) => {
                 let padded = if s.len() < len {
                     let mut padded = s.to_string();
-                    padded.extend(std::iter::repeat(' ').take(len - s.len()));
+                    padded.extend(std::iter::repeat_n(' ', len - s.len()));
                     padded
                 } else {
                     s.chars().take(len).collect()
@@ -183,7 +183,7 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
 
                 F::RIGHT => match &args[..] {
                     [Value::Str(s, _) | Value::Memo(s), Value::Number(n)] => {
-                        Ok(Value::Str(right_str_n(&s, *n), *n as usize))
+                        Ok(Value::Str(right_str_n(s, *n), *n as usize))
                     }
                     [Value::Number(v), Value::Number(n)] => {
                         Ok(Value::Str(right_str_n(&v.to_string(), *n), *n as usize))
@@ -302,7 +302,7 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Str
                             .map(|d| Value::Date(Some(d)))
                             .ok_or("Date addition overflow".to_string())
                     }
-                    None => return Ok(Value::Date(None)), //n + null = null
+                    None => Ok(Value::Date(None)), //n + null = null
                 }
             }
             (Value::Str(a, len_a), Value::Str(b, len_b)) => {
@@ -343,7 +343,7 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Str
             _ => Err("Mul: incompatible types".to_string()),
         },
         BinaryOp::Div => match (left, right) {
-            (Number(_), Number(b)) if b == 0.0 => Ok(Number(f64::NAN)),
+            (Number(_), Number(0.0)) => Ok(Number(f64::NAN)),
             (Number(a), Number(b)) => Ok(Number(a / b)),
             _ => Err("Div: incompatible types".to_string()),
         },
@@ -358,11 +358,11 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Str
         BinaryOp::Lt => match (left, right) {
             (Number(a), Number(b)) => Ok(Bool(a < b)),
             (Str(a, _) | Memo(a), Str(b, len)) => {
-                Ok(Bool(&a[..len.min(a.len())] < &b[..a.len().min(b.len())]))
+                Ok(Bool(a[..len.min(a.len())] < b[..a.len().min(b.len())]))
             }
             (Str(a, _) | Memo(a), Memo(b)) => {
                 let b_prefix = &b[..a.len().min(b.len())];
-                Ok(Bool(a < b_prefix.to_owned()))
+                Ok(Bool(a.as_str() < b_prefix))
             }
             (Date(a), Date(b)) => Ok(Bool(a < b)),
             _ => Err("Lt: incompatible types".to_string()),
@@ -371,11 +371,11 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Str
         BinaryOp::Le => match (left, right) {
             (Number(a), Number(b)) => Ok(Bool(a <= b)),
             (Str(a, _) | Memo(a), Str(b, len)) => {
-                Ok(Bool(&a[..len.min(a.len())] <= &b[..a.len().min(b.len())]))
+                Ok(Bool(a[..len.min(a.len())] <= b[..a.len().min(b.len())]))
             }
             (Str(a, _) | Memo(a), Memo(b)) => {
                 let b_prefix = &b[..a.len().min(b.len())];
-                Ok(Bool(a <= b_prefix.to_owned()))
+                Ok(Bool(a.as_str() <= b_prefix))
             }
             (Date(a), Date(b)) => Ok(Bool(a <= b)),
             _ => Err("Le: incompatible types".to_string()),
@@ -384,11 +384,11 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Str
         BinaryOp::Gt => match (left, right) {
             (Number(a), Number(b)) => Ok(Bool(a > b)),
             (Str(a, _) | Memo(a), Str(b, len)) => {
-                Ok(Bool(&a[..len.min(a.len())] > &b[..a.len().min(b.len())]))
+                Ok(Bool(a[..len.min(a.len())] > b[..a.len().min(b.len())]))
             }
             (Str(a, _) | Memo(a), Memo(b)) => {
                 let b_prefix = &b[..a.len().min(b.len())];
-                Ok(Bool(a > b_prefix.to_owned()))
+                Ok(Bool(a.as_str() > b_prefix))
             }
             (Date(a), Date(b)) => Ok(Bool(a > b)),
             _ => Err("Gt: incompatible types".to_string()),
@@ -397,11 +397,11 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Str
         BinaryOp::Ge => match (left, right) {
             (Number(a), Number(b)) => Ok(Bool(a >= b)),
             (Str(a, _) | Memo(a), Str(b, len)) => {
-                Ok(Bool(&a[..len.min(a.len())] >= &b[..a.len().min(b.len())]))
+                Ok(Bool(a[..len.min(a.len())] >= b[..a.len().min(b.len())]))
             }
             (Str(a, _) | Memo(a), Memo(b)) => {
                 let b_prefix = &b[..a.len().min(b.len())];
-                Ok(Bool(a >= b_prefix.to_owned()))
+                Ok(Bool(a.as_str() >= b_prefix))
             }
             (Date(a), Date(b)) => Ok(Bool(a >= b)),
             _ => Err("Ge: incompatible types".to_string()),

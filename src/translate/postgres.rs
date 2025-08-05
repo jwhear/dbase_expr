@@ -83,7 +83,7 @@ pub fn translate<C: TranslationContext>(source: &E, cx: &C) -> Result {
         E::Field { alias, name } => {
             let (name, field_type) = cx
                 .lookup_field(alias.as_deref(), name)
-                .map_err(|e| Error::Other(e))?;
+                .map_err(Error::Other)?;
             ok(
                 Expression::Field {
                     alias: alias.clone(),
@@ -491,9 +491,7 @@ pub fn translate_fn_call(
         F::RIGHT => {
             let (x, ty) = arg(0)??;
             let n = match arg(1)??.0.as_ref() {
-                Expression::NumberLiteral(v) => {
-                    u32::from_str_radix(&v, 10).map_err(|_| wrong_type(1))
-                }
+                Expression::NumberLiteral(v) => v.parse::<u32>().map_err(|_| wrong_type(1)),
                 _ => Err(wrong_type(1)),
             }?;
             let out_ty = match ty {
@@ -529,16 +527,12 @@ pub fn translate_fn_call(
         F::STR => {
             // `len` and dec` must be constants according to CB docs, so we can
             //   get them and convert to integers, then mix up a printf call
-            let len = match arg(1)??.0.as_ref() {
-                Expression::NumberLiteral(v) => {
-                    i64::from_str_radix(&v, 10).map_err(|_| wrong_type(1))
-                }
+            let len: i64 = match arg(1)??.0.as_ref() {
+                Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(1)),
                 _ => Err(wrong_type(1)),
             }?;
-            let dec = match arg(2)??.0.as_ref() {
-                Expression::NumberLiteral(v) => {
-                    i64::from_str_radix(&v, 10).map_err(|_| wrong_type(2))
-                }
+            let dec: i64 = match arg(2)??.0.as_ref() {
+                Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(2)),
                 _ => Err(wrong_type(2)),
             }?;
             // We need FMx.y where 'x' is '9' repeated len - dec - 1 times and
@@ -562,10 +556,8 @@ pub fn translate_fn_call(
             )
         }
         F::SUBSTR => {
-            let len = match arg(2)??.0.as_ref() {
-                Expression::NumberLiteral(v) => {
-                    u32::from_str_radix(&v, 10).map_err(|_| wrong_type(2))
-                }
+            let len: u32 = match arg(2)??.0.as_ref() {
+                Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(2)),
                 _ => Err(wrong_type(2)),
             }?;
             ok(

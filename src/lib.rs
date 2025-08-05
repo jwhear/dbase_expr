@@ -11,29 +11,52 @@
 //!  if you have a way to fetch field values on request, evaluation can occur
 //!  without translating to SQL and dispatching to a database.
 //!
+//! ## Supported Expressions
+//! The full dBase expression set, as described by the Codebase 6 reference guide
+//!  is supported. The full list of supported functions can be found in the
+//!  [CodebaseFunction] enum.
+//!
 //! ## Translation
 //! To translate a dBase expression to PostgreSQL:
 //! ```
-//! use dbase_expr::{grammar, translate::postgres, to_sql::Printer};
+//! # use dbase_expr::translate::FieldType;
+//! # fn main() -> Result<(), String> {
+//! use dbase_expr::{grammar, translate::{TranslationContext, postgres}, to_sql::{Printer, PrinterConfig}};
 //! let parser = grammar::ExprParser::new();
-//! let parse_tree = parser.parse(my_dbase_expression)?;
+//! let parse_tree = parser.parse(r#"(DATE() + 1) - STOD("20240731")"#)
+//!     .map_err(|e| format!("{e}"))?;
 //! let translator = postgres::Translator {
 //!    field_lookup: |opt_table_alias, field_name| {
+//!       // opt_table_alias will be Some(&str) if a table alias was provided
+//!       //  (e.g. "bar.foo") and None otherwise.
+//!       // field_name is a &str with the name of the field as sliced out of
+//!       //  the input: you will probably want to normalize this (e.g. uppercase).
+//!
 //!       //TODO normalize the field name if needed and produce the Codebase type
 //!       // Return a Ok((<normalized field name>, <field_type>))
 //!       //  or
 //!       // Err(<string describing the problem>)
+//!       Ok((String::from("FOO"), FieldType::Logical))
 //!    }
 //! };
-//! let (sql_tree, result_type) = translator.translate(&parse_tree)?;
-//! let printer = Printer::new(sql_tree);
+//! let (sql_tree, result_type) = translator.translate(&parse_tree)
+//!    .map_err(|e| format!("{e}"))?;
+//! let printer = Printer::new(sql_tree, PrinterConfig::default());
 //! let sql = format!("{printer}");
+//! # Ok(())
+//! # }
 //! ```
+//!
+//! Any component of this pipeline could be replaced, though in practice only
+//!  the [TranslationContext] and [PrinterConfig] need to be adjusted for
+//!  different SQL backends.
+//!
+//! For a fuller example, with nice error handling, see
 //!
 //! ## Backends
 //! Different SQL databases having varying types, functions, and even syntax.
-//! New translation backends can be implemented using the [translate::TranslationContext]
-//!  trait.
+//! New translation backends can be implemented using the [TranslationContext]
+//!  trait and, if needed, the [PrinterConfig] context.
 
 use lalrpop_util::lalrpop_mod;
 
@@ -42,4 +65,13 @@ pub mod codebase_functions;
 pub mod evaluate;
 pub mod to_sql;
 pub mod translate;
-lalrpop_mod!(pub grammar);
+
+lalrpop_mod!(#[allow(clippy::all)] pub grammar);
+
+// These imports are just to make the documentation nicer
+#[allow(unused_imports)]
+use codebase_functions::CodebaseFunction;
+#[allow(unused_imports)]
+use to_sql::PrinterConfig;
+#[allow(unused_imports)]
+use translate::TranslationContext;
