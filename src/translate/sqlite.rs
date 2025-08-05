@@ -3,7 +3,7 @@ use crate::{
     codebase_functions::CodebaseFunction as F,
     translate::{
         Error, Expression, FieldType, Result, TranslationContext, ok,
-        postgres::{get_all_args, get_arg, translate as default_translate, wrong_type},
+        postgres::{self, get_all_args, get_arg, translate as default_translate, wrong_type},
     },
 };
 
@@ -48,15 +48,8 @@ pub fn translate_fn_call(
     let all_args = || get_all_args(args, cx);
     let wrong_type = |index| wrong_type(index, name, args);
 
+    //these are only the ones that are different from Postgres, everything else falls through to postgres
     match name {
-        F::ALLTRIM => ok(
-            Expression::FunctionCall {
-                name: "TRIM".to_string(),
-                args: vec![arg(0)??.0],
-            },
-            FieldType::Memo,
-        ),
-
         F::CHR => ok(
             Expression::FunctionCall {
                 name: "CHAR".to_string(), // SQLite equivalent
@@ -73,11 +66,6 @@ pub fn translate_fn_call(
             FieldType::Date,
         ),
 
-        F::DATE => ok(
-            Expression::BareFunctionCall("CURRENT_DATE".to_string()),
-            FieldType::Date,
-        ),
-
         F::DAY => ok(
             Expression::FunctionCall {
                 name: "CAST".to_string(),
@@ -87,15 +75,6 @@ pub fn translate_fn_call(
                 })],
             },
             FieldType::Double,
-        ),
-
-        F::DELETED => ok(
-            Expression::Field {
-                alias: None,
-                name: "__deleted".into(),
-                field_type: FieldType::Logical,
-            },
-            FieldType::Logical,
         ),
 
         F::DTOC => {
@@ -127,34 +106,6 @@ pub fn translate_fn_call(
             FieldType::Character(8),
         ),
 
-        F::IIF => {
-            let (when_true, ty) = arg(1)??;
-            ok(
-                Expression::Iif {
-                    cond: arg(0)??.0,
-                    when_true,
-                    when_false: arg(2)??.0,
-                },
-                ty,
-            )
-        }
-
-        F::LEFT => ok(
-            Expression::FunctionCall {
-                name: "SUBSTR".to_string(),
-                args: vec![arg(0)??.0, 1.into(), arg(1)??.0],
-            },
-            FieldType::Memo,
-        ),
-
-        F::LTRIM => ok(
-            Expression::FunctionCall {
-                name: "LTRIM".into(),
-                args: vec![arg(0)??.0],
-            },
-            FieldType::Memo,
-        ),
-
         F::MONTH => ok(
             Expression::FunctionCall {
                 name: "CAST".to_string(),
@@ -164,15 +115,6 @@ pub fn translate_fn_call(
                 })],
             },
             FieldType::Double,
-        ),
-
-        F::RECNO => ok(
-            Expression::Field {
-                alias: None,
-                name: "RECNO5".into(),
-                field_type: FieldType::Integer,
-            },
-            FieldType::Integer,
         ),
 
         F::RIGHT => {
@@ -195,14 +137,6 @@ pub fn translate_fn_call(
                 out_ty,
             )
         }
-
-        F::RTRIM => ok(
-            Expression::FunctionCall {
-                name: "RTRIM".into(),
-                args: vec![arg(0)??.0],
-            },
-            FieldType::Memo,
-        ),
 
         F::STOD => {
             // Convert 'YYYYMMDD' -> 'YYYY-MM-DD' using SUBSTR
@@ -255,41 +189,6 @@ pub fn translate_fn_call(
             )
         }
 
-        F::SUBSTR => {
-            let len = match arg(2)??.0.as_ref() {
-                Expression::NumberLiteral(v) => {
-                    u32::from_str_radix(&v, 10).map_err(|_| wrong_type(2))
-                }
-                _ => Err(wrong_type(2)),
-            }?;
-            ok(
-                Expression::FunctionCall {
-                    name: "SUBSTR".into(),
-                    args: all_args()?,
-                },
-                FieldType::Character(len),
-            )
-        }
-
-        F::TRIM => ok(
-            Expression::FunctionCall {
-                name: "RTRIM".into(),
-                args: vec![arg(0)??.0],
-            },
-            FieldType::Memo,
-        ),
-
-        F::UPPER => {
-            let (first, ty) = arg(0)??;
-            ok(
-                Expression::FunctionCall {
-                    name: "UPPER".into(),
-                    args: vec![first],
-                },
-                ty,
-            )
-        }
-
         F::VAL => ok(
             Expression::Cast(arg(0)??.0, "REAL"),
             FieldType::Numeric { len: 0, dec: 0 },
@@ -306,6 +205,6 @@ pub fn translate_fn_call(
             FieldType::Double,
         ),
 
-        F::Unknown(unsupported) => Err(Error::UnsupportedFunction(unsupported.clone())),
+        other => postgres::translate_fn_call(other, args, cx),
     }
 }
