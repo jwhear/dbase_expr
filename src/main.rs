@@ -1,8 +1,9 @@
 use chrono::NaiveDate;
 use dbase_expr::{
+    to_sql::PrinterConfig,
     translate::{
-        Error, Expression, FieldType, TranslationContext, postgres::Translator,
-        postgres::translate as default_translate, postgres::translate_fn_call,
+        Error, Expression, FieldType, TranslationContext,
+        postgres::{Translator, translate as default_translate, translate_fn_call},
     },
     *,
 };
@@ -217,7 +218,10 @@ fn to_sql_tests<T: TranslationContext>(cx: &T) {
     for test in tests.iter() {
         match parser.parse(test) {
             Ok(t) => match cx.translate(&t) {
-                Ok(tree) => println!("{test}\n=>\n{}\n", Printer::new(tree.0)),
+                Ok(tree) => println!(
+                    "{test}\n=>\n{}\n",
+                    Printer::new(tree.0, PrinterConfig::default())
+                ),
                 Err(e) => eprintln!("Error translating tree: {e:?}\n:{test}\n"),
             },
 
