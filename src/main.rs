@@ -1,8 +1,8 @@
 use chrono::NaiveDate;
 use dbase_expr::{
     translate::{
-        DefaultPostgresTranslator, Error, Expression, FieldType, TranslationContext,
-        default_translate_fn_call,
+        Error, Expression, FieldType, TranslationContext, postgres::Translator,
+        postgres::translate as default_translate, postgres::translate_fn_call,
     },
     *,
 };
@@ -24,7 +24,7 @@ fn main() {
         (None, _) => panic!("unknown field: {field}"),
     };
 
-    let translation_cx = DefaultPostgresTranslator {
+    let translation_cx = Translator {
         field_lookup: |alias: Option<&str>, field: &str| -> Result<(String, FieldType), String> {
             let field = field.to_string().to_uppercase();
             let field_type = get_type(alias, &field);
@@ -53,6 +53,10 @@ fn main() {
             (self.field_lookup)(alias, field)
         }
 
+        fn translate(&self, source: &ast::Expression) -> translate::Result {
+            default_translate(source, self)
+        }
+
         fn translate_fn_call(
             &self,
             name: &str,
@@ -62,7 +66,7 @@ fn main() {
 
             let arg = |index: usize| {
                 args.get(index)
-                    .map(|a| translate::translate(a, self))
+                    .map(|a| default_translate(a, self))
                     .ok_or(Error::IncorrectArgCount(name.clone(), index))
             };
 
@@ -75,7 +79,7 @@ fn main() {
                     FieldType::Character(8),
                 ))
             } else {
-                default_translate_fn_call(&name, args, self)
+                translate_fn_call(&name, args, self)
             }
         }
     }
@@ -212,7 +216,7 @@ fn to_sql_tests<T: TranslationContext>(cx: &T) {
 
     for test in tests.iter() {
         match parser.parse(test) {
-            Ok(t) => match translate::translate(&t, cx) {
+            Ok(t) => match cx.translate(&t) {
                 Ok(tree) => println!("{test}\n=>\n{}\n", Printer::new(tree.0)),
                 Err(e) => eprintln!("Error translating tree: {e:?}\n:{test}\n"),
             },
