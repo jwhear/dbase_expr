@@ -1,16 +1,54 @@
 use crate::translate::{BinaryOp, Expression, FieldType, UnaryOp};
 use std::fmt::{Display, Formatter, Result};
 
-#[derive(Debug, Clone, Copy)]
-pub struct PrinterConfig {
-    //pretty: bool,
-    //indent: i32,
+pub trait PrinterContext: std::fmt::Debug {
+    fn write_padding(&self, out: &mut Formatter<'_>, inner: &str, width: u32) -> std::fmt::Result;
+    fn box_clone(&self) -> Box<dyn PrinterContext>;
 }
+
+impl Clone for Box<dyn PrinterContext> {
+    fn clone(&self) -> Box<dyn PrinterContext> {
+        self.box_clone()
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct PostgresPrinterContext;
+
+impl PrinterContext for PostgresPrinterContext {
+    fn write_padding(&self, out: &mut Formatter<'_>, inner: &str, width: u32) -> std::fmt::Result {
+        write!(out, "RPAD(COALESCE({}, ''), {}, ' ')", inner, width)
+    }
+    fn box_clone(&self) -> Box<dyn PrinterContext> {
+        Box::new(*self) // requires Copy on PostgresPrinterContext
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SqlitePrinterContext;
+
+impl PrinterContext for SqlitePrinterContext {
+    fn write_padding(&self, out: &mut Formatter<'_>, inner: &str, width: u32) -> std::fmt::Result {
+        let spaces = " ".repeat(width as usize);
+        write!(
+            out,
+            "COALESCE({inner}, '') || SUBSTR('{spaces}', 1, MAX(0, {width} - LENGTH(COALESCE({inner}, ''))))"
+        )
+    }
+    fn box_clone(&self) -> Box<dyn PrinterContext> {
+        Box::new(*self) // requires Copy on PostgresPrinterContext
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PrinterConfig {
+    pub context: Box<dyn PrinterContext>,
+}
+
 impl Default for PrinterConfig {
     fn default() -> Self {
         Self {
-            //pretty: false,
-            //indent: 0,
+            context: Box::new(PostgresPrinterContext),
         }
     }
 }
@@ -21,23 +59,20 @@ pub struct Printer<T> {
 }
 
 impl<T> Printer<T> {
-    pub fn new(tree: T) -> Self {
-        Self {
-            tree,
-            config: PrinterConfig::default(),
-        }
+    pub fn new(tree: T, config: PrinterConfig) -> Self {
+        Self { tree, config }
     }
 }
 
 pub trait ToSQL {
-    fn to_sql(&self, out: &mut Formatter, conf: PrinterConfig) -> Result;
+    fn to_sql(&self, out: &mut Formatter, conf: &PrinterConfig) -> Result;
 }
 
 impl<T> ToSQL for Box<T>
 where
     T: ToSQL,
 {
-    fn to_sql(&self, out: &mut Formatter, conf: PrinterConfig) -> Result {
+    fn to_sql(&self, out: &mut Formatter, conf: &PrinterConfig) -> Result {
         self.as_ref().to_sql(out, conf)
     }
 }
@@ -47,12 +82,12 @@ where
     T: ToSQL,
 {
     fn fmt(&self, f: &mut Formatter) -> Result {
-        self.tree.to_sql(f, self.config)
+        self.tree.to_sql(f, &self.config)
     }
 }
 
 impl ToSQL for BinaryOp {
-    fn to_sql(&self, out: &mut Formatter, _: PrinterConfig) -> Result {
+    fn to_sql(&self, out: &mut Formatter, _: &PrinterConfig) -> Result {
         match self {
             BinaryOp::Add => write!(out, "+"),
             BinaryOp::Sub => write!(out, "-"),
@@ -74,12 +109,7 @@ impl ToSQL for BinaryOp {
 }
 
 impl ToSQL for Expression {
-    fn to_sql(&self, out: &mut Formatter, conf: PrinterConfig) -> Result {
-        // Fixed-length fields may be stored as NULL or right-trimmed. We need
-        //  pad them back out
-        let mut padded =
-            |inner: &str, width: u32| write!(out, "RPAD(COALESCE({inner}, ''), {width}, ' ')");
-
+    fn to_sql(&self, out: &mut Formatter, conf: &PrinterConfig) -> Result {
         match self {
             Expression::BoolLiteral(v) => {
                 write!(out, "{}", if *v { "TRUE" } else { "FALSE" })
@@ -98,7 +128,7 @@ impl ToSQL for Expression {
                     format!("\"{name}\"")
                 };
                 if let FieldType::Character(width) = field_type {
-                    padded(&full_name, *width)
+                    conf.context.write_padding(out, &full_name, *width)
                 } else {
                     out.write_str(&full_name)
                 }

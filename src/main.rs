@@ -1,8 +1,10 @@
 use chrono::NaiveDate;
 use dbase_expr::{
+    codebase_functions::CodebaseFunction,
+    to_sql::PrinterConfig,
     translate::{
-        Error, Expression, FieldType, TranslationContext, postgres::Translator,
-        postgres::translate as default_translate, postgres::translate_fn_call,
+        Error, Expression, FieldType, TranslationContext,
+        postgres::{Translator, translate as default_translate, translate_fn_call},
     },
     *,
 };
@@ -59,18 +61,16 @@ fn main() {
 
         fn translate_fn_call(
             &self,
-            name: &str,
+            name: &CodebaseFunction,
             args: &[Box<ast::Expression>],
         ) -> std::result::Result<(Box<Expression>, FieldType), Error> {
-            let name = name.to_uppercase();
-
             let arg = |index: usize| {
                 args.get(index)
                     .map(|a| default_translate(a, self))
-                    .ok_or(Error::IncorrectArgCount(name.clone(), index))
+                    .ok_or(Error::IncorrectArgCount(format!("{:?}", name), index))
             };
 
-            if name == "DTOS" {
+            if name == &CodebaseFunction::DTOS {
                 Ok((
                     Box::new(Expression::FunctionCall {
                         name: "CB_DATE_TO_TEXT".into(),
@@ -217,7 +217,10 @@ fn to_sql_tests<T: TranslationContext>(cx: &T) {
     for test in tests.iter() {
         match parser.parse(test) {
             Ok(t) => match cx.translate(&t) {
-                Ok(tree) => println!("{test}\n=>\n{}\n", Printer::new(tree.0)),
+                Ok(tree) => println!(
+                    "{test}\n=>\n{}\n",
+                    Printer::new(tree.0, PrinterConfig::default())
+                ),
                 Err(e) => eprintln!("Error translating tree: {e:?}\n:{test}\n"),
             },
 

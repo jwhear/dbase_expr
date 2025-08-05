@@ -5,6 +5,8 @@ use chrono::NaiveDate;
 
 use crate::ast::{BinaryOp, Expression, UnaryOp};
 
+use crate::codebase_functions::CodebaseFunction as F;
+
 #[derive(Clone, PartialEq)]
 pub enum Value {
     Str(String, usize),
@@ -80,33 +82,31 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
         }
 
         Expression::FunctionCall { name, args } => {
-            let name_upper = name.to_uppercase();
-
             let eval_args: Result<Vec<Value>, String> =
                 args.iter().map(|arg| evaluate(arg, get)).collect();
 
             let args = eval_args?;
 
-            match name_upper.as_str() {
-                "LTRIM" => match &args[..] {
+            match name {
+                F::LTRIM => match &args[..] {
                     [Value::Str(s, len)] => Ok(Value::Str(s.trim_start().to_string(), *len)),
                     [Value::Memo(s)] => Ok(Value::Memo(s.trim_start().to_string())),
                     _ => Err("LTRIM expects a single string argument".to_string()),
                 },
 
-                "TRIM" | "RTRIM" => match &args[..] {
+                F::TRIM | F::RTRIM => match &args[..] {
                     [Value::Str(s, len)] => Ok(Value::Str(s.trim_end().to_string(), *len)),
                     [Value::Memo(s)] => Ok(Value::Memo(s.trim_end().to_string())),
                     _ => Err("RTRIM expects a single string argument".to_string()),
                 },
 
-                "ALLTRIM" => match &args[..] {
+                F::ALLTRIM => match &args[..] {
                     [Value::Str(s, len)] => Ok(Value::Str(s.trim().to_string(), *len)),
                     [Value::Memo(s)] => Ok(Value::Memo(s.trim().to_string())),
                     _ => Err("ALLTRIM expects a single string argument".to_string()),
                 },
 
-                "CHR" => match &args[..] {
+                F::CHR => match &args[..] {
                     [Value::Number(n)] => {
                         let ch = (*n as u8) as char;
                         Ok(Value::Str(ch.to_string(), 1))
@@ -114,12 +114,12 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
                     _ => Err("CHR expects a single numeric argument".to_string()),
                 },
 
-                "CTOD" | "STOD" => match &args[..] {
+                F::CTOD | F::STOD => match &args[..] {
                     [Value::Str(s, _len)] => {
                         if s.trim().is_empty() {
                             Ok(Value::Date(None))
                         } else {
-                            let fmt = if name_upper == "CTOD" {
+                            let fmt = if name == &F::CTOD {
                                 "%m/%d/%y"
                             } else {
                                 "%Y%m%d"
@@ -129,12 +129,12 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
                                 .map_err(|e| format!("Date parse error: {}", e))
                         }
                     }
-                    _ => Err(format!("{} expects a single string argument", name)),
+                    _ => Err(format!("{:?} expects a single string argument", name)),
                 },
 
-                "DTOC" | "DTOS" => match &args[..] {
+                F::DTOC | F::DTOS => match &args[..] {
                     [Value::Date(d)] => {
-                        let fmt = if name_upper == "DTOC" {
+                        let fmt = if name == &F::DTOC {
                             "%m/%d/%y"
                         } else {
                             "%Y%m%d"
@@ -143,33 +143,33 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
                             Some(date) => date.format(fmt).to_string(),
                             None => "".to_string(),
                         };
-                        let len = if name_upper == "DTOC" { 10 } else { 8 };
+                        let len = if name == &F::DTOC { 10 } else { 8 };
                         Ok(Value::Str(text, len))
                     }
                     [Value::Null] => {
-                        let len: usize = if name_upper == "DTOC" { 10 } else { 8 };
+                        let len: usize = if name == &F::DTOC { 10 } else { 8 };
                         Ok(Value::Str("".to_string(), len))
                     }
                     _ => Err("DTOC expects a date argument".to_string()),
                 },
 
-                "DAY" | "MONTH" | "YEAR" => match &args[..] {
+                F::DAY | F::MONTH | F::YEAR => match &args[..] {
                     [Value::Date(d)] => match d {
                         Some(date) => {
-                            let result = match name_upper.as_str() {
-                                "DAY" => date.day() as f64,
-                                "MONTH" => date.month() as f64,
-                                "YEAR" => date.year() as f64,
+                            let result = match name {
+                                F::DAY => date.day() as f64,
+                                F::MONTH => date.month() as f64,
+                                F::YEAR => date.year() as f64,
                                 _ => unreachable!(),
                             };
                             Ok(Value::Number(result))
                         }
                         None => Ok(Value::Number(0.0)),
                     },
-                    _ => Err(format!("{} expects a date argument", name_upper)),
+                    _ => Err(format!("{:?} expects a date argument", name)),
                 },
 
-                "LEFT" => match &args[..] {
+                F::LEFT => match &args[..] {
                     [Value::Str(s, _) | Value::Memo(s), Value::Number(n)] => {
                         let n = *n as usize;
                         Ok(Value::Str(s.chars().take(n).collect(), n))
@@ -181,7 +181,7 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
                     _ => Err("LEFT expects (string, number) or (number, number)".to_string()),
                 },
 
-                "RIGHT" => match &args[..] {
+                F::RIGHT => match &args[..] {
                     [Value::Str(s, _) | Value::Memo(s), Value::Number(n)] => {
                         Ok(Value::Str(right_str_n(&s, *n), *n as usize))
                     }
@@ -191,7 +191,7 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
                     _ => Err("RIGHT expects (string, number) or (number, number)".to_string()),
                 },
 
-                "SUBSTR" => match &args[..] {
+                F::SUBSTR => match &args[..] {
                     [
                         Value::Str(s, _) | Value::Memo(s),
                         Value::Number(start),
@@ -205,13 +205,13 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
                     _ => Err("SUBSTR expects (string, start, length)".to_string()),
                 },
 
-                "UPPER" => match &args[..] {
+                F::UPPER => match &args[..] {
                     [Value::Str(s, len)] => Ok(Value::Str(s.to_uppercase(), *len)),
                     [Value::Memo(s)] => Ok(Value::Memo(s.to_uppercase())),
                     _ => Err("UPPER expects a single string argument".to_string()),
                 },
 
-                "STR" => match &args[..] {
+                F::STR => match &args[..] {
                     [Value::Number(n), Value::Number(len), Value::Number(dec)] => {
                         let fmt = format!(
                             "{:width$.prec$}",
@@ -224,7 +224,7 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
                     _ => Err("STR expects (number, len, dec)".to_string()),
                 },
 
-                "VAL" => match &args[..] {
+                F::VAL => match &args[..] {
                     [Value::Str(s, _) | Value::Memo(s)] => match s.trim().parse::<f64>() {
                         Ok(v) => Ok(Value::Number(v)),
                         Err(_) => {
@@ -238,9 +238,9 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
                     _ => Err("VAL expects a string".to_string()),
                 },
 
-                "DATE" => Ok(Value::Date(Some(chrono::Local::now().naive_local().date()))),
+                F::DATE => Ok(Value::Date(Some(chrono::Local::now().naive_local().date()))),
 
-                "IIF" => match &args[..] {
+                F::IIF => match &args[..] {
                     [Value::Bool(cond), when_true, when_false] => Ok(if *cond {
                         when_true.clone()
                     } else {
@@ -250,9 +250,11 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
                 },
 
                 // DELETED() => __deleted
-                "DELETED" => Ok(get("__deleted").unwrap_or(Value::Bool(false))),
+                F::DELETED => Ok(get("__deleted").unwrap_or(Value::Bool(false))),
 
-                _ => Err(format!("Unsupported function: {}", name)),
+                F::RECNO => Ok(get("RECNO5").unwrap_or(Value::Number(0.0))),
+
+                F::Unknown(unsupported) => Err(format!("Unsupported function: {}", unsupported)),
             }
         }
     }

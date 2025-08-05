@@ -1,3 +1,5 @@
+use crate::codebase_functions::CodebaseFunction;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOp {
     Add,
@@ -33,7 +35,7 @@ pub enum Expression {
         name: String,
     },
     FunctionCall {
-        name: String,
+        name: CodebaseFunction,
         args: Vec<Box<Expression>>,
     },
     BinaryOperator(Box<Expression>, BinaryOp, Box<Expression>),
