@@ -253,6 +253,8 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
                 F::DELETED => Ok(get("__deleted").unwrap_or(Value::Bool(false))),
 
                 F::RECNO => Ok(get("RECNO5").unwrap_or(Value::Number(0.0))),
+
+                F::Unknown(unsupported) => Err(format!("Unsupported function: {}", unsupported)),
             }
         }
     }
