@@ -27,7 +27,7 @@ Term: Box<Expression> = {
 	// FIELD
 	Ident => Box::new(Expression::Field{alias: None, name: <>}),
 
-	Call => Box::new(Expression::FunctionCall{name: <>.0, args: <>.1}),
+	Call => Box::new(Expression::FunctionCall{name: <>.0.into(), args: <>.1}),
 	"(" <t:Expr> ")" => t,
 };
 

@@ -1,5 +1,6 @@
 use chrono::NaiveDate;
 use dbase_expr::{
+    codebase_functions::CodebaseFunction,
     to_sql::PrinterConfig,
     translate::{
         Error, Expression, FieldType, TranslationContext,
@@ -60,18 +61,16 @@ fn main() {
 
         fn translate_fn_call(
             &self,
-            name: &str,
+            name: &CodebaseFunction,
             args: &[Box<ast::Expression>],
         ) -> std::result::Result<(Box<Expression>, FieldType), Error> {
-            let name = name.to_uppercase();
-
             let arg = |index: usize| {
                 args.get(index)
                     .map(|a| default_translate(a, self))
-                    .ok_or(Error::IncorrectArgCount(name.clone(), index))
+                    .ok_or(Error::IncorrectArgCount(format!("{:?}", name), index))
             };
 
-            if name == "DTOS" {
+            if name == &CodebaseFunction::DTOS {
                 Ok((
                     Box::new(Expression::FunctionCall {
                         name: "CB_DATE_TO_TEXT".into(),

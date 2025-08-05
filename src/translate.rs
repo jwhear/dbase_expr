@@ -1,4 +1,4 @@
-use crate::ast;
+use crate::{ast, codebase_functions::CodebaseFunction};
 
 pub mod postgres;
 pub mod sqlite;
@@ -206,7 +206,7 @@ pub trait TranslationContext {
     /// On success, returns an expression and the type the expression would return.
     fn translate_fn_call(
         &self,
-        name: &str,
+        name: &CodebaseFunction,
         args: &[Box<ast::Expression>],
     ) -> std::result::Result<(Box<Expression>, FieldType), Error>;
 }
@@ -253,7 +253,7 @@ pub fn string_comp_left(l: Box<Expression>, r: Box<Expression>) -> Box<Expressio
 // The right side of the string comparison should be truncated to the fixed length, no need to evaluate additional characters
 pub fn string_comp_right(r: Box<ast::Expression>, len: u32) -> Box<ast::Expression> {
     let expression = Box::new(ast::Expression::FunctionCall {
-        name: "SUBSTR".into(),
+        name: CodebaseFunction::SUBSTR,
         args: vec![
             r,
             Box::new(ast::Expression::NumberLiteral("1".into())),
