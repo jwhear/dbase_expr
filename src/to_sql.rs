@@ -32,7 +32,8 @@ impl PrinterContext for SqlitePrinterContext {
         let spaces = " ".repeat(width as usize);
         write!(
             out,
-            "COALESCE({inner}, '') || SUBSTR('{spaces}', 1, MAX(0, {width} - LENGTH(COALESCE({inner}, ''))))"
+            "COALESCE({}, '') || SUBSTR('{}', 1, CASE WHEN {} - LENGTH(COALESCE({}, '')) > 0 THEN {} - LENGTH(COALESCE({}, '')) ELSE 0 END)",
+            inner, spaces, width, inner, width, inner
         )
     }
     fn box_clone(&self) -> Box<dyn PrinterContext> {
@@ -118,6 +119,10 @@ impl ToSQL for Expression {
             Expression::NumberLiteral(v) => write!(out, "{v}"),
             Expression::SingleQuoteStringLiteral(v) => write!(out, "'{v}'"),
 
+            Expression::Collate(v, c) => {
+                v.to_sql(out, conf)?;
+                write!(out, " COLLATE {c}")
+            }
             Expression::Field {
                 alias,
                 name,
