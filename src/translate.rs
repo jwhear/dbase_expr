@@ -15,6 +15,7 @@ pub enum BinaryOp {
     Le,
     Gt,
     Ge,
+    Like,
     StartsWith,
     And,
     Or,
@@ -209,6 +210,13 @@ pub trait TranslationContext {
         name: &CodebaseFunction,
         args: &[Box<ast::Expression>],
     ) -> std::result::Result<(Box<Expression>, FieldType), Error>;
+
+    fn translate_binary_op(
+        &self,
+        l: &Box<ast::Expression>,
+        op: &ast::BinaryOp,
+        r: &Box<ast::Expression>,
+    ) -> Result;
 }
 
 //NOTE(justin): This function almost certainly has a bug hiding in it.

@@ -104,6 +104,7 @@ impl ToSQL for BinaryOp {
             BinaryOp::Or => write!(out, " OR "),
             BinaryOp::Concat => write!(out, " || "),
             BinaryOp::StartsWith => write!(out, " ^@ "),
+            BinaryOp::Like => write!(out, " LIKE "),
         }
     }
 }

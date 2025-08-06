@@ -34,6 +34,15 @@ where
         translate(source, self)
     }
 
+    fn translate_binary_op(
+        &self,
+        l: &Box<ast::Expression>,
+        op: &ast::BinaryOp,
+        r: &Box<ast::Expression>,
+    ) -> Result {
+        translate_binary_op(self, l, op, r)
+    }
+
     fn translate_fn_call(
         &self,
         name: &crate::codebase_functions::CodebaseFunction,
@@ -46,8 +55,6 @@ where
 /// Translates dBase expression to a SQL expression.
 pub fn translate<C: TranslationContext>(source: &E, cx: &C) -> Result {
     // helper for creating binary operators
-    let binop = |l, op, r, ty| ok(Expression::BinaryOperator(l, op, translate(r, cx)?.0), ty);
-
     match source {
         E::BoolLiteral(v) => ok(Expression::BoolLiteral(*v), FieldType::Logical),
         E::NumberLiteral(v) => {
@@ -107,235 +114,7 @@ pub fn translate<C: TranslationContext>(source: &E, cx: &C) -> Result {
             // Add, Sub are ambiguous: could be numeric, concat, or days (for dates)
             // We translate the first operand and use its type to determine how
             //  to translate.
-            let (l, ty) = translate(l, cx)?;
-            match (op, ty) {
-                // For these types, simple addition is fine
-                (
-                    ast::BinaryOp::Add,
-                    FieldType::Double
-                    | FieldType::Float
-                    | FieldType::Integer
-                    | FieldType::Numeric { .. }
-                    | FieldType::Date,
-                ) => binop(l, BinaryOp::Add, r, ty),
-                (
-                    ast::BinaryOp::Sub,
-                    FieldType::Double
-                    | FieldType::Float
-                    | FieldType::Integer
-                    | FieldType::Numeric { .. },
-                ) => binop(l, BinaryOp::Sub, r, ty),
-
-                // Subtracting from a date will "just work" but we need to change
-                //  the returned type to numeric (number of days)
-                (ast::BinaryOp::Sub, FieldType::Date) => {
-                    binop(l, BinaryOp::Sub, r, FieldType::Numeric { len: 99, dec: 0 })
-                }
-
-                // Add on a character type maps to CONCAT
-                (ast::BinaryOp::Add, FieldType::Character(_) | FieldType::Memo) => {
-                    binop(l, BinaryOp::Concat, r, FieldType::Memo)
-                }
-                // Sub on a character type also maps to CONCAT but with the
-                //  trailing spaces of the first argument "moved" to the end
-                //  of the result. We can map this as:
-                //
-                // CONCAT(
-                //   RTRIM(l),
-                //   r,
-                //   REPEAT(' ', LENGTH(l) - LENGTH( RTRIM(l) ))
-                // )
-                //
-                (ast::BinaryOp::Sub, FieldType::Character(_) | FieldType::Memo) => {
-                    let without_spaces = Box::new(Expression::FunctionCall {
-                        name: "RTRIM".into(),
-                        args: vec![l.clone()],
-                    });
-                    let length_without_spaces = Box::new(Expression::FunctionCall {
-                        name: "LENGTH".into(),
-                        args: vec![without_spaces.clone()],
-                    });
-                    let length_with_spaces = Box::new(Expression::FunctionCall {
-                        name: "LENGTH".into(),
-                        args: vec![l],
-                    });
-                    let num_spaces = Box::new(Expression::BinaryOperator(
-                        length_with_spaces,
-                        BinaryOp::Sub,
-                        length_without_spaces,
-                    ));
-                    let repeated_spaces = Box::new(Expression::FunctionCall {
-                        name: "REPEAT".into(),
-                        args: vec!["' '".into(), num_spaces],
-                    });
-                    ok(
-                        Expression::FunctionCall {
-                            name: "CONCAT".into(),
-                            args: vec![without_spaces, translate(r, cx)?.0, repeated_spaces],
-                        },
-                        FieldType::Memo,
-                    )
-                }
-
-                // Mul and Div are numeric only
-                (
-                    ast::BinaryOp::Mul,
-                    FieldType::Double
-                    | FieldType::Float
-                    | FieldType::Integer
-                    | FieldType::Numeric { .. },
-                ) => binop(l, BinaryOp::Mul, r, ty),
-                (
-                    ast::BinaryOp::Div,
-                    FieldType::Double
-                    | FieldType::Float
-                    | FieldType::Integer
-                    | FieldType::Numeric { .. },
-                ) => binop(l, BinaryOp::Div, r, ty),
-                // Numbers, bools, and single characters get actual equality
-                (
-                    ast::BinaryOp::Eq,
-                    FieldType::Double
-                    | FieldType::Float
-                    | FieldType::Integer
-                    | FieldType::Logical
-                    | FieldType::Date
-                    | FieldType::Numeric { .. },
-                ) => binop(l, BinaryOp::Eq, r, FieldType::Logical),
-                (
-                    ast::BinaryOp::Ne,
-                    FieldType::Double
-                    | FieldType::Float
-                    | FieldType::Integer
-                    | FieldType::Logical
-                    | FieldType::Date
-                    | FieldType::Numeric { .. },
-                ) => binop(l, BinaryOp::Ne, r, FieldType::Logical),
-                (
-                    ast::BinaryOp::Lt,
-                    FieldType::Double
-                    | FieldType::Float
-                    | FieldType::Integer
-                    | FieldType::Logical
-                    | FieldType::Date
-                    | FieldType::Numeric { .. },
-                ) => binop(l, BinaryOp::Lt, r, FieldType::Logical),
-                (
-                    ast::BinaryOp::Le,
-                    FieldType::Double
-                    | FieldType::Float
-                    | FieldType::Integer
-                    | FieldType::Logical
-                    | FieldType::Date
-                    | FieldType::Numeric { .. },
-                ) => binop(l, BinaryOp::Le, r, FieldType::Logical),
-                (
-                    ast::BinaryOp::Gt,
-                    FieldType::Double
-                    | FieldType::Float
-                    | FieldType::Integer
-                    | FieldType::Logical
-                    | FieldType::Date
-                    | FieldType::Numeric { .. },
-                ) => binop(l, BinaryOp::Gt, r, FieldType::Logical),
-                (
-                    ast::BinaryOp::Ge,
-                    FieldType::Double
-                    | FieldType::Float
-                    | FieldType::Integer
-                    | FieldType::Logical
-                    | FieldType::Date
-                    | FieldType::Numeric { .. },
-                ) => binop(l, BinaryOp::Ge, r, FieldType::Logical),
-
-                // AND and OR are only for Logical
-                (ast::BinaryOp::And, FieldType::Logical) => {
-                    binop(l, BinaryOp::And, r, FieldType::Logical)
-                }
-                (ast::BinaryOp::Or, FieldType::Logical) => {
-                    binop(l, BinaryOp::Or, r, FieldType::Logical)
-                }
-                (ast::BinaryOp::Lt, FieldType::Character(len)) => {
-                    let left = string_comp_left(l, translate(r, cx)?.0);
-                    let right = string_comp_right(r.clone(), len);
-                    binop(left, BinaryOp::Lt, &right, FieldType::Logical)
-                }
-                (ast::BinaryOp::Le, FieldType::Character(len)) => {
-                    let left = string_comp_left(l, translate(r, cx)?.0);
-                    let right = string_comp_right(r.clone(), len);
-                    binop(left, BinaryOp::Le, &right, FieldType::Logical)
-                }
-                (ast::BinaryOp::Gt, FieldType::Character(len)) => {
-                    let left = string_comp_left(l, translate(r, cx)?.0);
-                    let right = string_comp_right(r.clone(), len);
-                    binop(left, BinaryOp::Gt, &right, FieldType::Logical)
-                }
-                (ast::BinaryOp::Ge, FieldType::Character(len)) => {
-                    let left = string_comp_left(l, translate(r, cx)?.0);
-                    let right = string_comp_right(r.clone(), len);
-                    binop(left, BinaryOp::Ge, &right, FieldType::Logical)
-                }
-                (ast::BinaryOp::Lt, FieldType::Memo) => {
-                    let left = string_comp_left(l, translate(r, cx)?.0);
-                    binop(left, BinaryOp::Lt, r, FieldType::Logical)
-                }
-                (ast::BinaryOp::Le, FieldType::Memo) => {
-                    let left = string_comp_left(l, translate(r, cx)?.0);
-                    binop(left, BinaryOp::Le, r, FieldType::Logical)
-                }
-                (ast::BinaryOp::Gt, FieldType::Memo) => {
-                    let left = string_comp_left(l, translate(r, cx)?.0);
-                    binop(left, BinaryOp::Gt, r, FieldType::Logical)
-                }
-                (ast::BinaryOp::Ge, FieldType::Memo) => {
-                    let left = string_comp_left(l, translate(r, cx)?.0);
-                    binop(left, BinaryOp::Ge, r, FieldType::Logical)
-                }
-                (ast::BinaryOp::Eq, FieldType::Character(_) | FieldType::Memo) => {
-                    binop(l, BinaryOp::StartsWith, r, FieldType::Logical)
-                }
-                (ast::BinaryOp::Ne, FieldType::Character(_) | FieldType::Memo) => {
-                    let starts_with =
-                        Expression::BinaryOperator(l, BinaryOp::StartsWith, translate(r, cx)?.0);
-                    ok(
-                        Expression::UnaryOperator(UnaryOp::Not, Box::new(starts_with)),
-                        FieldType::Logical,
-                    )
-                }
-                (
-                    ast::BinaryOp::Eq,
-                    FieldType::CharacterBinary(_) | FieldType::General | FieldType::MemoBinary,
-                ) => binop(l, BinaryOp::Eq, r, FieldType::Logical),
-                (
-                    ast::BinaryOp::Ne,
-                    FieldType::CharacterBinary(_) | FieldType::General | FieldType::MemoBinary,
-                ) => binop(l, BinaryOp::Ne, r, FieldType::Logical),
-
-                // SQL doesn't have an exponentation operator, use the POW function
-                (ast::BinaryOp::Exp, FieldType::Integer) => ok(
-                    Expression::FunctionCall {
-                        name: "POW".to_string(),
-                        args: vec![l, translate(r, cx)?.0],
-                    },
-                    ty,
-                ),
-
-                // SQL doesn't have a contain operator, use the STRPOS function
-                //NOTE(justin): not using LIKE here because the needle might contain
-                // LIKE wildcards (% and _).
-                (ast::BinaryOp::Contain, FieldType::Character(_)) => {
-                    let strpos = Box::new(Expression::FunctionCall {
-                        name: "STRPOS".to_string(),
-                        // Note that in CodeBase the haystack is the right arg
-                        args: vec![translate(r, cx)?.0, l],
-                    });
-                    ok(Expression::Cast(strpos, "bool"), FieldType::Logical)
-                }
-
-                (op, ty) => Err(Error::Other(format!(
-                    "Unsupported operator/type combination: {op:?} and {ty:?}"
-                ))),
-            }
+            cx.translate_binary_op(l, op, r)
         }
         E::FunctionCall { name, args } => cx.translate_fn_call(name, args),
     }
@@ -609,6 +388,231 @@ pub fn translate_fn_call(
         ),
 
         F::Unknown(unsupported) => Err(Error::UnsupportedFunction(unsupported.clone())),
+    }
+}
+
+pub fn translate_binary_op<T: TranslationContext>(
+    cx: &T,
+    l: &Box<ast::Expression>,
+    op: &ast::BinaryOp,
+    r: &Box<ast::Expression>,
+) -> Result {
+    let binop = |l, op, r, ty| ok(Expression::BinaryOperator(l, op, translate(r, cx)?.0), ty);
+    let (l, ty) = translate(l, cx)?;
+    match (op, ty) {
+        // For these types, simple addition is fine
+        (
+            ast::BinaryOp::Add,
+            FieldType::Double
+            | FieldType::Float
+            | FieldType::Integer
+            | FieldType::Numeric { .. }
+            | FieldType::Date,
+        ) => binop(l, BinaryOp::Add, r, ty),
+        (
+            ast::BinaryOp::Sub,
+            FieldType::Double | FieldType::Float | FieldType::Integer | FieldType::Numeric { .. },
+        ) => binop(l, BinaryOp::Sub, r, ty),
+
+        // Subtracting from a date will "just work" but we need to change
+        //  the returned type to numeric (number of days)
+        (ast::BinaryOp::Sub, FieldType::Date) => {
+            binop(l, BinaryOp::Sub, r, FieldType::Numeric { len: 99, dec: 0 })
+        }
+
+        // Add on a character type maps to CONCAT
+        (ast::BinaryOp::Add, FieldType::Character(_) | FieldType::Memo) => {
+            binop(l, BinaryOp::Concat, r, FieldType::Memo)
+        }
+        // Sub on a character type also maps to CONCAT but with the
+        //  trailing spaces of the first argument "moved" to the end
+        //  of the result. We can map this as:
+        //
+        // CONCAT(
+        //   RTRIM(l),
+        //   r,
+        //   REPEAT(' ', LENGTH(l) - LENGTH( RTRIM(l) ))
+        // )
+        //
+        (ast::BinaryOp::Sub, FieldType::Character(_) | FieldType::Memo) => {
+            let without_spaces = Box::new(Expression::FunctionCall {
+                name: "RTRIM".into(),
+                args: vec![l.clone()],
+            });
+            let length_without_spaces = Box::new(Expression::FunctionCall {
+                name: "LENGTH".into(),
+                args: vec![without_spaces.clone()],
+            });
+            let length_with_spaces = Box::new(Expression::FunctionCall {
+                name: "LENGTH".into(),
+                args: vec![l],
+            });
+            let num_spaces = Box::new(Expression::BinaryOperator(
+                length_with_spaces,
+                BinaryOp::Sub,
+                length_without_spaces,
+            ));
+            let repeated_spaces = Box::new(Expression::FunctionCall {
+                name: "REPEAT".into(),
+                args: vec!["' '".into(), num_spaces],
+            });
+            ok(
+                Expression::FunctionCall {
+                    name: "CONCAT".into(),
+                    args: vec![without_spaces, translate(r, cx)?.0, repeated_spaces],
+                },
+                FieldType::Memo,
+            )
+        }
+
+        // Mul and Div are numeric only
+        (
+            ast::BinaryOp::Mul,
+            FieldType::Double | FieldType::Float | FieldType::Integer | FieldType::Numeric { .. },
+        ) => binop(l, BinaryOp::Mul, r, ty),
+        (
+            ast::BinaryOp::Div,
+            FieldType::Double | FieldType::Float | FieldType::Integer | FieldType::Numeric { .. },
+        ) => binop(l, BinaryOp::Div, r, ty),
+        // Numbers, bools, and single characters get actual equality
+        (
+            ast::BinaryOp::Eq,
+            FieldType::Double
+            | FieldType::Float
+            | FieldType::Integer
+            | FieldType::Logical
+            | FieldType::Date
+            | FieldType::Numeric { .. },
+        ) => binop(l, BinaryOp::Eq, r, FieldType::Logical),
+        (
+            ast::BinaryOp::Ne,
+            FieldType::Double
+            | FieldType::Float
+            | FieldType::Integer
+            | FieldType::Logical
+            | FieldType::Date
+            | FieldType::Numeric { .. },
+        ) => binop(l, BinaryOp::Ne, r, FieldType::Logical),
+        (
+            ast::BinaryOp::Lt,
+            FieldType::Double
+            | FieldType::Float
+            | FieldType::Integer
+            | FieldType::Logical
+            | FieldType::Date
+            | FieldType::Numeric { .. },
+        ) => binop(l, BinaryOp::Lt, r, FieldType::Logical),
+        (
+            ast::BinaryOp::Le,
+            FieldType::Double
+            | FieldType::Float
+            | FieldType::Integer
+            | FieldType::Logical
+            | FieldType::Date
+            | FieldType::Numeric { .. },
+        ) => binop(l, BinaryOp::Le, r, FieldType::Logical),
+        (
+            ast::BinaryOp::Gt,
+            FieldType::Double
+            | FieldType::Float
+            | FieldType::Integer
+            | FieldType::Logical
+            | FieldType::Date
+            | FieldType::Numeric { .. },
+        ) => binop(l, BinaryOp::Gt, r, FieldType::Logical),
+        (
+            ast::BinaryOp::Ge,
+            FieldType::Double
+            | FieldType::Float
+            | FieldType::Integer
+            | FieldType::Logical
+            | FieldType::Date
+            | FieldType::Numeric { .. },
+        ) => binop(l, BinaryOp::Ge, r, FieldType::Logical),
+
+        // AND and OR are only for Logical
+        (ast::BinaryOp::And, FieldType::Logical) => binop(l, BinaryOp::And, r, FieldType::Logical),
+        (ast::BinaryOp::Or, FieldType::Logical) => binop(l, BinaryOp::Or, r, FieldType::Logical),
+        (ast::BinaryOp::Lt, FieldType::Character(len)) => {
+            let left = string_comp_left(l, translate(r, cx)?.0);
+            let right = string_comp_right(r.clone(), len);
+            binop(left, BinaryOp::Lt, &right, FieldType::Logical)
+        }
+        (ast::BinaryOp::Le, FieldType::Character(len)) => {
+            let left = string_comp_left(l, translate(r, cx)?.0);
+            let right = string_comp_right(r.clone(), len);
+            binop(left, BinaryOp::Le, &right, FieldType::Logical)
+        }
+        (ast::BinaryOp::Gt, FieldType::Character(len)) => {
+            let left = string_comp_left(l, translate(r, cx)?.0);
+            let right = string_comp_right(r.clone(), len);
+            binop(left, BinaryOp::Gt, &right, FieldType::Logical)
+        }
+        (ast::BinaryOp::Ge, FieldType::Character(len)) => {
+            let left = string_comp_left(l, translate(r, cx)?.0);
+            let right = string_comp_right(r.clone(), len);
+            binop(left, BinaryOp::Ge, &right, FieldType::Logical)
+        }
+        (ast::BinaryOp::Lt, FieldType::Memo) => {
+            let left = string_comp_left(l, translate(r, cx)?.0);
+            binop(left, BinaryOp::Lt, r, FieldType::Logical)
+        }
+        (ast::BinaryOp::Le, FieldType::Memo) => {
+            let left = string_comp_left(l, translate(r, cx)?.0);
+            binop(left, BinaryOp::Le, r, FieldType::Logical)
+        }
+        (ast::BinaryOp::Gt, FieldType::Memo) => {
+            let left = string_comp_left(l, translate(r, cx)?.0);
+            binop(left, BinaryOp::Gt, r, FieldType::Logical)
+        }
+        (ast::BinaryOp::Ge, FieldType::Memo) => {
+            let left = string_comp_left(l, translate(r, cx)?.0);
+            binop(left, BinaryOp::Ge, r, FieldType::Logical)
+        }
+        (ast::BinaryOp::Eq, FieldType::Character(_) | FieldType::Memo) => {
+            binop(l, BinaryOp::StartsWith, r, FieldType::Logical)
+        }
+        (ast::BinaryOp::Ne, FieldType::Character(_) | FieldType::Memo) => {
+            let starts_with =
+                Expression::BinaryOperator(l, BinaryOp::StartsWith, translate(r, cx)?.0);
+            ok(
+                Expression::UnaryOperator(UnaryOp::Not, Box::new(starts_with)),
+                FieldType::Logical,
+            )
+        }
+        (
+            ast::BinaryOp::Eq,
+            FieldType::CharacterBinary(_) | FieldType::General | FieldType::MemoBinary,
+        ) => binop(l, BinaryOp::Eq, r, FieldType::Logical),
+        (
+            ast::BinaryOp::Ne,
+            FieldType::CharacterBinary(_) | FieldType::General | FieldType::MemoBinary,
+        ) => binop(l, BinaryOp::Ne, r, FieldType::Logical),
+
+        // SQL doesn't have an exponentation operator, use the POW function
+        (ast::BinaryOp::Exp, FieldType::Integer) => ok(
+            Expression::FunctionCall {
+                name: "POW".to_string(),
+                args: vec![l, translate(r, cx)?.0],
+            },
+            ty,
+        ),
+
+        // SQL doesn't have a contain operator, use the STRPOS function
+        //NOTE(justin): not using LIKE here because the needle might contain
+        // LIKE wildcards (% and _).
+        (ast::BinaryOp::Contain, FieldType::Character(_)) => {
+            let strpos = Box::new(Expression::FunctionCall {
+                name: "STRPOS".to_string(),
+                // Note that in CodeBase the haystack is the right arg
+                args: vec![translate(r, cx)?.0, l],
+            });
+            ok(Expression::Cast(strpos, "bool"), FieldType::Logical)
+        }
+
+        (op, ty) => Err(Error::Other(format!(
+            "Unsupported operator/type combination: {op:?} and {ty:?}"
+        ))),
     }
 }
 

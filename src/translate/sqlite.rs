@@ -2,8 +2,11 @@ use crate::{
     ast,
     codebase_functions::CodebaseFunction as F,
     translate::{
-        Error, Expression, FieldType, Result, TranslationContext, ok,
-        postgres::{self, get_all_args, get_arg, translate as default_translate, wrong_type},
+        BinaryOp, Error, Expression, FieldType, Result, TranslationContext, UnaryOp, ok,
+        postgres::{
+            self, get_all_args, get_arg, translate as default_translate, translate_binary_op,
+            wrong_type,
+        },
     },
 };
 
@@ -36,6 +39,50 @@ where
         args: &[Box<ast::Expression>],
     ) -> std::result::Result<(Box<Expression>, FieldType), Error> {
         translate_fn_call(name, args, self)
+    }
+
+    fn translate_binary_op(
+        &self,
+        l: &Box<ast::Expression>,
+        op: &ast::BinaryOp,
+        r: &Box<ast::Expression>,
+    ) -> Result {
+        let binop_translated = |l, op, r, ty| ok(Expression::BinaryOperator(l, op, r), ty);
+        let (translated_l, ty) = self.translate(l)?;
+        match (op, ty) {
+            (ast::BinaryOp::Eq, FieldType::Character(_) | FieldType::Memo) => {
+                let translated_r = self.translate(r)?.0;
+                let escaped_r = make_escaped_like_pattern(&translated_r, "%");
+                binop_translated(translated_l, BinaryOp::Like, escaped_r, FieldType::Logical)
+            }
+            (ast::BinaryOp::Ne, FieldType::Character(_) | FieldType::Memo) => {
+                let translated_r = self.translate(r)?.0;
+                let escaped_r = make_escaped_like_pattern(&translated_r, "%");
+                let starts_with =
+                    Expression::BinaryOperator(translated_l, BinaryOp::Like, escaped_r);
+                ok(
+                    Expression::UnaryOperator(UnaryOp::Not, Box::new(starts_with)),
+                    FieldType::Logical,
+                )
+            }
+            _ => translate_binary_op(self, l, op, r),
+        }
+    }
+}
+
+fn make_escaped_like_pattern(expression: &Box<Expression>, suffix: &str) -> Box<Expression> {
+    match expression.as_ref() {
+        Expression::SingleQuoteStringLiteral(s) => {
+            let escaped = s
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_");
+            Box::new(Expression::SingleQuoteStringLiteral(format!(
+                "{}{}",
+                escaped, suffix
+            )))
+        }
+        _ => expression.clone(),
     }
 }
 
