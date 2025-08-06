@@ -25,15 +25,22 @@ impl PrinterContext for PostgresPrinterContext {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct SqlitePrinterContext;
+pub struct SqlitePrinterContext {
+    pub pad_strings: bool,
+}
 
 impl PrinterContext for SqlitePrinterContext {
     fn write_padding(&self, out: &mut Formatter<'_>, inner: &str, width: u32) -> std::fmt::Result {
-        let spaces = " ".repeat(width as usize);
-        write!(
-            out,
-            "COALESCE({inner}, '') || SUBSTR('{spaces}', 1, MAX(0, {width} - LENGTH(COALESCE({inner}, ''))))"
-        )
+        if self.pad_strings {
+            let spaces = " ".repeat(width as usize);
+            write!(
+                out,
+                "COALESCE({}, '') || SUBSTR('{}', 1, CASE WHEN {} - LENGTH(COALESCE({}, '')) > 0 THEN {} - LENGTH(COALESCE({}, '')) ELSE 0 END)",
+                inner, spaces, width, inner, width, inner
+            )
+        } else {
+            write!(out, "{}", inner)
+        }
     }
     fn box_clone(&self) -> Box<dyn PrinterContext> {
         Box::new(*self) // requires Copy on PostgresPrinterContext
@@ -104,6 +111,8 @@ impl ToSQL for BinaryOp {
             BinaryOp::Or => write!(out, " OR "),
             BinaryOp::Concat => write!(out, " || "),
             BinaryOp::StartsWith => write!(out, " ^@ "),
+            BinaryOp::Between => write!(out, " BETWEEN "),
+            BinaryOp::NotBetween => write!(out, " NOT BETWEEN "),
         }
     }
 }
@@ -142,15 +151,12 @@ impl ToSQL for Expression {
                 exp.to_sql(out, conf)?;
                 write!(out, ")")
             }
-            Expression::BinaryOperator(l, op, r) => {
-                //TODO(justin): order of operations is preserved by parenthesizing
-                // everything.  It'd be nice to analyze precedence to only do so
-                // when necessary.
-                write!(out, "(")?;
+            Expression::BinaryOperator(l, op, r, p) => {
+                p.open(out)?;
                 l.to_sql(out, conf)?;
                 op.to_sql(out, conf)?;
                 r.to_sql(out, conf)?;
-                write!(out, ")")
+                p.close(out)
             }
             Expression::FunctionCall { name, args } => {
                 write!(out, "{name}(")?;

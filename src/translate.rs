@@ -1,3 +1,5 @@
+use std::fmt::Formatter;
+
 use crate::{ast, codebase_functions::CodebaseFunction};
 
 pub mod postgres;
@@ -15,6 +17,8 @@ pub enum BinaryOp {
     Le,
     Gt,
     Ge,
+    NotBetween,
+    Between,
     StartsWith,
     And,
     Or,
@@ -25,6 +29,30 @@ pub enum BinaryOp {
 pub enum UnaryOp {
     Not,
     Neg,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Parenthesize {
+    #[default]
+    Yes,
+    No,
+}
+
+impl Parenthesize {
+    //this is dumb but I like it
+    pub fn open(&self, out: &mut Formatter) -> std::result::Result<(), std::fmt::Error> {
+        self.write(out, "(")
+    }
+    pub fn close(&self, out: &mut Formatter) -> std::result::Result<(), std::fmt::Error> {
+        self.write(out, ")")
+    }
+    fn write(&self, out: &mut Formatter, str: &str) -> std::result::Result<(), std::fmt::Error> {
+        if self == &Parenthesize::Yes {
+            write!(out, "{}", str)
+        } else {
+            Ok(())
+        }
+    }
 }
 
 /// This is the output type of translation: a Codebase AST goes in, a SQL AST
@@ -43,7 +71,7 @@ pub enum Expression {
         name: String,
         args: Vec<Box<Expression>>,
     },
-    BinaryOperator(Box<Expression>, BinaryOp, Box<Expression>),
+    BinaryOperator(Box<Expression>, BinaryOp, Box<Expression>, Parenthesize),
     UnaryOperator(UnaryOp, Box<Expression>),
     Cast(Box<Expression>, &'static str),
     Iif {
@@ -213,6 +241,13 @@ pub trait TranslationContext {
         name: &CodebaseFunction,
         args: &[Box<ast::Expression>],
     ) -> std::result::Result<(Box<Expression>, FieldType), Error>;
+
+    fn translate_binary_op(
+        &self,
+        l: &Box<ast::Expression>,
+        op: &ast::BinaryOp,
+        r: &Box<ast::Expression>,
+    ) -> Result;
 }
 
 //NOTE(justin): This function almost certainly has a bug hiding in it.

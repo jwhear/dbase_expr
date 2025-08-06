@@ -2,8 +2,11 @@ use crate::{
     ast,
     codebase_functions::CodebaseFunction as F,
     translate::{
-        Error, Expression, FieldType, Result, TranslationContext, ok,
-        postgres::{self, get_all_args, get_arg, translate as default_translate, wrong_type},
+        BinaryOp, Error, Expression, FieldType, Parenthesize, Result, TranslationContext, ok,
+        postgres::{
+            self, get_all_args, get_arg, translate as default_translate, translate_binary_op,
+            wrong_type,
+        },
     },
 };
 
@@ -37,6 +40,51 @@ where
     ) -> std::result::Result<(Box<Expression>, FieldType), Error> {
         translate_fn_call(name, args, self)
     }
+
+    fn translate_binary_op(
+        &self,
+        l: &Box<ast::Expression>,
+        op: &ast::BinaryOp,
+        r: &Box<ast::Expression>,
+    ) -> Result {
+        let (translated_l, ty) = self.translate(l)?;
+        match (op, ty) {
+            (
+                op @ (ast::BinaryOp::Eq | ast::BinaryOp::Ne),
+                FieldType::Character(_) | FieldType::Memo,
+            ) => {
+                let translated_r = self.translate(r)?.0;
+                let modified_r = expr_between_right_side(translated_r);
+                let binop = match op {
+                    ast::BinaryOp::Eq => BinaryOp::Between,
+                    ast::BinaryOp::Ne => BinaryOp::NotBetween,
+                    _ => unreachable!(),
+                };
+                ok(
+                    Expression::BinaryOperator(translated_l, binop, modified_r, Parenthesize::Yes),
+                    FieldType::Logical,
+                )
+            }
+            _ => translate_binary_op(self, l, op, r),
+        }
+    }
+}
+
+fn expr_between_right_side(expression: Box<Expression>) -> Box<Expression> {
+    let char = Expression::BareFunctionCall("char(0xFFFF)".to_string());
+    let appended = Expression::BinaryOperator(
+        expression.clone(),
+        BinaryOp::Concat,
+        Box::new(char),
+        Parenthesize::No,
+    );
+    let combined = Expression::BinaryOperator(
+        expression,
+        BinaryOp::And,
+        Box::new(appended),
+        Parenthesize::No,
+    );
+    Box::new(combined)
 }
 
 pub fn translate_fn_call(

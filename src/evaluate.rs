@@ -353,8 +353,14 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Str
             _ => Err("Exp: incompatible types".to_string()),
         },
 
-        BinaryOp::Eq => Ok(Bool(left == right)),
-        BinaryOp::Ne => Ok(Bool(left != right)),
+        BinaryOp::Eq => Ok(Bool(match (left, right) {
+            (Str(l, _) | Memo(l), Str(r, _) | Memo(r)) => l.starts_with(&r),
+            (l, r) => l == r,
+        })),
+        BinaryOp::Ne => Ok(Bool(match (left, right) {
+            (Str(l, _) | Memo(l), Str(r, _) | Memo(r)) => !l.starts_with(&r),
+            (l, r) => l != r,
+        })),
         BinaryOp::Lt => match (left, right) {
             (Number(a), Number(b)) => Ok(Bool(a < b)),
             (Str(a, _) | Memo(a), Str(b, len)) => {
