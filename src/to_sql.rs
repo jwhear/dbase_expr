@@ -1,4 +1,4 @@
-use crate::translate::{BinaryOp, Expression, FieldType, Parenthesize, UnaryOp};
+use crate::translate::{BinaryOp, Expression, FieldType, UnaryOp};
 use std::fmt::{Display, Formatter, Result};
 
 pub trait PrinterContext: std::fmt::Debug {
