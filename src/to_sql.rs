@@ -25,16 +25,22 @@ impl PrinterContext for PostgresPrinterContext {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct SqlitePrinterContext;
+pub struct SqlitePrinterContext {
+    pad_strings: bool,
+}
 
 impl PrinterContext for SqlitePrinterContext {
     fn write_padding(&self, out: &mut Formatter<'_>, inner: &str, width: u32) -> std::fmt::Result {
-        let spaces = " ".repeat(width as usize);
-        write!(
-            out,
-            "COALESCE({}, '') || SUBSTR('{}', 1, CASE WHEN {} - LENGTH(COALESCE({}, '')) > 0 THEN {} - LENGTH(COALESCE({}, '')) ELSE 0 END)",
-            inner, spaces, width, inner, width, inner
-        )
+        if self.pad_strings {
+            let spaces = " ".repeat(width as usize);
+            write!(
+                out,
+                "COALESCE({}, '') || SUBSTR('{}', 1, CASE WHEN {} - LENGTH(COALESCE({}, '')) > 0 THEN {} - LENGTH(COALESCE({}, '')) ELSE 0 END)",
+                inner, spaces, width, inner, width, inner
+            )
+        } else {
+            write!(out, "{}", inner)
+        }
     }
     fn box_clone(&self) -> Box<dyn PrinterContext> {
         Box::new(*self) // requires Copy on PostgresPrinterContext
