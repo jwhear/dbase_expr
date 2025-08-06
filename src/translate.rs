@@ -148,9 +148,10 @@ impl FieldType {
 ///  translator but intercept anything that needs to be handled differently:
 ///
 /// ```rust
+/// # use dbase_expr::{ast, translate::{self, Expression, FieldType, TranslationContext, Error}, codebase_functions::CodebaseFunction,};
 /// struct MyCustomTranslator
 /// {
-///     my_state: SomeState,
+///     my_state: std::collections::HashMap<String, FieldType>,
 /// }
 ///
 /// impl TranslationContext for MyCustomTranslator
@@ -160,10 +161,13 @@ impl FieldType {
 ///         alias: Option<&str>,
 ///         field: &str,
 ///     ) -> std::result::Result<(String, FieldType), String> {
-///         //TODO use self.my_state
+///         let norm = field.to_uppercase();
+///         self.my_state.get(&norm)
+///             .map(|t| (norm, *t))
+///             .ok_or(format!("No field named {field}"))
 ///     }
 ///     
-///     fn translate(&self, source: &ast::Expression) -> Result {
+///     fn translate(&self, source: &ast::Expression) -> std::result::Result<(Box<Expression>, FieldType), Error> {
 ///         //TODO handle specific cases which are different from Postgres,
 ///         // including cases which should be errors
 ///
@@ -173,14 +177,14 @@ impl FieldType {
 ///     
 ///     fn translate_fn_call(
 ///         &self,
-///         name: &str,
+///         name: &CodebaseFunction,
 ///         args: &[Box<ast::Expression>],
 ///     ) -> std::result::Result<(Box<Expression>, FieldType), Error> {
 ///         //TODO similar pattern: most function calls probably resolve to the
 ///         // same thing that Postgres uses but handle the differences here
 ///
 ///         // and delegate the rest...
-///         translate_fn_call(name, args, self)
+///         translate::postgres::translate_fn_call(name, args, self)
 ///     }
 /// }
 ///
@@ -226,11 +230,7 @@ fn escape_single_quotes(s: &str) -> String {
 
     let mut is_escaped = false;
     for c in s.chars() {
-        if c == '\\' && !is_escaped {
-            is_escaped = true;
-        } else {
-            is_escaped = false;
-        }
+        is_escaped = c == '\\' && !is_escaped;
 
         if c == '\'' && !is_escaped {
             res.push('\\');
@@ -247,28 +247,26 @@ pub fn string_comp_left(l: Box<Expression>, r: Box<Expression>) -> Box<Expressio
         name: "LENGTH".into(),
         args: vec![r],
     });
-    let left_side = Box::new(Expression::FunctionCall {
+    Box::new(Expression::FunctionCall {
         name: "SUBSTR".into(),
         args: vec![
             l,
             Box::new(Expression::NumberLiteral("1".into())),
             right_side_len_expression,
         ],
-    });
-    left_side
+    })
 }
 
 // The right side of the string comparison should be truncated to the fixed length, no need to evaluate additional characters
 pub fn string_comp_right(r: Box<ast::Expression>, len: u32) -> Box<ast::Expression> {
-    let expression = Box::new(ast::Expression::FunctionCall {
+    Box::new(ast::Expression::FunctionCall {
         name: CodebaseFunction::SUBSTR,
         args: vec![
             r,
             Box::new(ast::Expression::NumberLiteral("1".into())),
-            Box::new(ast::Expression::NumberLiteral(len.to_string().into())),
+            Box::new(ast::Expression::NumberLiteral(len.to_string())),
         ],
-    });
-    expression
+    })
 }
 
 #[cfg(test)]

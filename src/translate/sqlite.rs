@@ -166,10 +166,8 @@ pub fn translate_fn_call(
 
         F::RIGHT => {
             let (x, ty) = arg(0)??;
-            let n = match arg(1)??.0.as_ref() {
-                Expression::NumberLiteral(v) => {
-                    u32::from_str_radix(&v, 10).map_err(|_| wrong_type(1))
-                }
+            let n: u32 = match arg(1)??.0.as_ref() {
+                Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(1)),
                 _ => Err(wrong_type(1)),
             }?;
             let out_ty = match ty {
@@ -179,7 +177,7 @@ pub fn translate_fn_call(
             ok(
                 Expression::FunctionCall {
                     name: "SUBSTR".into(),
-                    args: vec![x, (-i64::try_from(n).unwrap()).into()],
+                    args: vec![x, (-i64::from(n)).into()],
                 },
                 out_ty,
             )
@@ -214,16 +212,12 @@ pub fn translate_fn_call(
         }
 
         F::STR => {
-            let len = match arg(1)??.0.as_ref() {
-                Expression::NumberLiteral(v) => {
-                    i64::from_str_radix(&v, 10).map_err(|_| wrong_type(1))
-                }
+            let len: i64 = match arg(1)??.0.as_ref() {
+                Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(1)),
                 _ => Err(wrong_type(1)),
             }?;
-            let dec = match arg(2)??.0.as_ref() {
-                Expression::NumberLiteral(v) => {
-                    i64::from_str_radix(&v, 10).map_err(|_| wrong_type(2))
-                }
+            let dec: i64 = match arg(2)??.0.as_ref() {
+                Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(2)),
                 _ => Err(wrong_type(2)),
             }?;
             let fmt = format!("%{}.{}f", len, dec); // e.g. "%.2f"

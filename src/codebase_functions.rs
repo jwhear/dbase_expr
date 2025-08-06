@@ -29,7 +29,7 @@ pub enum CodebaseFunction {
 
 impl From<String> for CodebaseFunction {
     fn from(s: String) -> Self {
-        s.parse().unwrap_or_else(|_| CodebaseFunction::Unknown(s))
+        s.parse().unwrap_or(CodebaseFunction::Unknown(s))
     }
 }
 

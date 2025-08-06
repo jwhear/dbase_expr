@@ -79,7 +79,7 @@ fn main() {
                     FieldType::Character(8),
                 ))
             } else {
-                translate_fn_call(&name, args, self)
+                translate_fn_call(name, args, self)
             }
         }
     }
