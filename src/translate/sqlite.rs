@@ -2,7 +2,7 @@ use crate::{
     ast,
     codebase_functions::CodebaseFunction as F,
     translate::{
-        BinaryOp, Error, Expression, FieldType, Result, TranslationContext, ok,
+        BinaryOp, Error, Expression, FieldType, Parenthesize, Result, TranslationContext, ok,
         postgres::{
             self, get_all_args, get_arg, translate as default_translate, translate_binary_op,
             wrong_type,
@@ -61,7 +61,7 @@ where
                     _ => unreachable!(),
                 };
                 ok(
-                    Expression::BinaryOperator(translated_l, binop, modified_r, true),
+                    Expression::BinaryOperator(translated_l, binop, modified_r, Parenthesize::Yes),
                     FieldType::Logical,
                 )
             }
@@ -72,9 +72,18 @@ where
 
 fn expr_between_right_side(expression: Box<Expression>) -> Box<Expression> {
     let char = Expression::BareFunctionCall("char(0xFFFF)".to_string());
-    let appended =
-        Expression::BinaryOperator(expression.clone(), BinaryOp::Concat, Box::new(char), false);
-    let combined = Expression::BinaryOperator(expression, BinaryOp::And, Box::new(appended), false);
+    let appended = Expression::BinaryOperator(
+        expression.clone(),
+        BinaryOp::Concat,
+        Box::new(char),
+        Parenthesize::No,
+    );
+    let combined = Expression::BinaryOperator(
+        expression,
+        BinaryOp::And,
+        Box::new(appended),
+        Parenthesize::No,
+    );
     Box::new(combined)
 }
 

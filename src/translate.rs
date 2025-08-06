@@ -1,3 +1,5 @@
+use std::fmt::Formatter;
+
 use crate::{ast, codebase_functions::CodebaseFunction};
 
 pub mod postgres;
@@ -29,6 +31,30 @@ pub enum UnaryOp {
     Neg,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Parenthesize {
+    #[default]
+    Yes,
+    No,
+}
+
+impl Parenthesize {
+    //this is dumb but I like it
+    pub fn open(&self, out: &mut Formatter) -> std::result::Result<(), std::fmt::Error> {
+        self.write(out, "(")
+    }
+    pub fn close(&self, out: &mut Formatter) -> std::result::Result<(), std::fmt::Error> {
+        self.write(out, ")")
+    }
+    fn write(&self, out: &mut Formatter, str: &str) -> std::result::Result<(), std::fmt::Error> {
+        if self == &Parenthesize::Yes {
+            write!(out, "{}", str)
+        } else {
+            Ok(())
+        }
+    }
+}
+
 /// This is the output type of translation: a Codebase AST goes in, a SQL AST
 ///  comes out.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,7 +71,7 @@ pub enum Expression {
         name: String,
         args: Vec<Box<Expression>>,
     },
-    BinaryOperator(Box<Expression>, BinaryOp, Box<Expression>, bool),
+    BinaryOperator(Box<Expression>, BinaryOp, Box<Expression>, Parenthesize),
     UnaryOperator(UnaryOp, Box<Expression>),
     Cast(Box<Expression>, &'static str),
     Iif {

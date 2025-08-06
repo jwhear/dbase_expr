@@ -1,4 +1,4 @@
-use crate::translate::{BinaryOp, Expression, FieldType, UnaryOp};
+use crate::translate::{BinaryOp, Expression, FieldType, Parenthesize, UnaryOp};
 use std::fmt::{Display, Formatter, Result};
 
 pub trait PrinterContext: std::fmt::Debug {
@@ -152,16 +152,11 @@ impl ToSQL for Expression {
                 write!(out, ")")
             }
             Expression::BinaryOperator(l, op, r, p) => {
-                if *p {
-                    write!(out, "(")?;
-                }
+                p.open(out)?;
                 l.to_sql(out, conf)?;
                 op.to_sql(out, conf)?;
                 r.to_sql(out, conf)?;
-                if *p {
-                    write!(out, ")")?;
-                }
-                Ok(())
+                p.close(out)
             }
             Expression::FunctionCall { name, args } => {
                 write!(out, "{name}(")?;

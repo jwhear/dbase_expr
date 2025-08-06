@@ -5,6 +5,7 @@ use super::{
 use crate::{
     ast::{self, Expression as E},
     codebase_functions::CodebaseFunction as F,
+    translate::Parenthesize,
 };
 
 /// This type provides default function translation for Postgres. You can
@@ -394,7 +395,7 @@ pub fn translate_binary_op<T: TranslationContext>(
         // everything.  It'd be nice to analyze precedence to only do so
         // when necessary.
         ok(
-            Expression::BinaryOperator(l, op, translate(r, cx)?.0, true),
+            Expression::BinaryOperator(l, op, translate(r, cx)?.0, Parenthesize::Yes),
             ty,
         )
     };
@@ -451,7 +452,7 @@ pub fn translate_binary_op<T: TranslationContext>(
                 length_with_spaces,
                 BinaryOp::Sub,
                 length_without_spaces,
-                false,
+                Parenthesize::No,
             ));
             let repeated_spaces = Box::new(Expression::FunctionCall {
                 name: "REPEAT".into(),
@@ -574,8 +575,12 @@ pub fn translate_binary_op<T: TranslationContext>(
             binop(l, BinaryOp::StartsWith, r, FieldType::Logical)
         }
         (ast::BinaryOp::Ne, FieldType::Character(_) | FieldType::Memo) => {
-            let starts_with =
-                Expression::BinaryOperator(l, BinaryOp::StartsWith, translate(r, cx)?.0, true);
+            let starts_with = Expression::BinaryOperator(
+                l,
+                BinaryOp::StartsWith,
+                translate(r, cx)?.0,
+                Parenthesize::Yes,
+            );
             ok(
                 Expression::UnaryOperator(UnaryOp::Not, Box::new(starts_with)),
                 FieldType::Logical,
