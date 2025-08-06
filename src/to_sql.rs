@@ -152,9 +152,6 @@ impl ToSQL for Expression {
                 write!(out, ")")
             }
             Expression::BinaryOperator(l, op, r, p) => {
-                //TODO(justin): order of operations is preserved by parenthesizing
-                // everything.  It'd be nice to analyze precedence to only do so
-                // when necessary.
                 if *p {
                     write!(out, "(")?;
                 }

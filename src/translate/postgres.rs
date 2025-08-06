@@ -390,6 +390,9 @@ pub fn translate_binary_op<T: TranslationContext>(
     r: &Box<ast::Expression>,
 ) -> Result {
     let binop = |l, op, r, ty| {
+        //TODO(justin): order of operations is preserved by parenthesizing
+        // everything.  It'd be nice to analyze precedence to only do so
+        // when necessary.
         ok(
             Expression::BinaryOperator(l, op, translate(r, cx)?.0, true),
             ty,
@@ -448,7 +451,7 @@ pub fn translate_binary_op<T: TranslationContext>(
                 length_with_spaces,
                 BinaryOp::Sub,
                 length_without_spaces,
-                true,
+                false,
             ));
             let repeated_spaces = Box::new(Expression::FunctionCall {
                 name: "REPEAT".into(),
