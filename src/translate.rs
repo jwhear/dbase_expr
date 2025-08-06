@@ -15,7 +15,8 @@ pub enum BinaryOp {
     Le,
     Gt,
     Ge,
-    Like,
+    NotBetween,
+    Between,
     StartsWith,
     And,
     Or,
@@ -44,7 +45,7 @@ pub enum Expression {
         name: String,
         args: Vec<Box<Expression>>,
     },
-    BinaryOperator(Box<Expression>, BinaryOp, Box<Expression>),
+    BinaryOperator(Box<Expression>, BinaryOp, Box<Expression>, bool),
     UnaryOperator(UnaryOp, Box<Expression>),
     Cast(Box<Expression>, &'static str),
     Iif {

@@ -389,7 +389,12 @@ pub fn translate_binary_op<T: TranslationContext>(
     op: &ast::BinaryOp,
     r: &Box<ast::Expression>,
 ) -> Result {
-    let binop = |l, op, r, ty| ok(Expression::BinaryOperator(l, op, translate(r, cx)?.0), ty);
+    let binop = |l, op, r, ty| {
+        ok(
+            Expression::BinaryOperator(l, op, translate(r, cx)?.0, true),
+            ty,
+        )
+    };
     let (l, ty) = translate(l, cx)?;
     match (op, ty) {
         // For these types, simple addition is fine
@@ -443,6 +448,7 @@ pub fn translate_binary_op<T: TranslationContext>(
                 length_with_spaces,
                 BinaryOp::Sub,
                 length_without_spaces,
+                true,
             ));
             let repeated_spaces = Box::new(Expression::FunctionCall {
                 name: "REPEAT".into(),
@@ -566,7 +572,7 @@ pub fn translate_binary_op<T: TranslationContext>(
         }
         (ast::BinaryOp::Ne, FieldType::Character(_) | FieldType::Memo) => {
             let starts_with =
-                Expression::BinaryOperator(l, BinaryOp::StartsWith, translate(r, cx)?.0);
+                Expression::BinaryOperator(l, BinaryOp::StartsWith, translate(r, cx)?.0, true);
             ok(
                 Expression::UnaryOperator(UnaryOp::Not, Box::new(starts_with)),
                 FieldType::Logical,

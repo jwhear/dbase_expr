@@ -4,7 +4,9 @@ use dbase_expr::{
     to_sql::PrinterConfig,
     translate::{
         Error, Expression, FieldType, TranslationContext,
-        postgres::{Translator, translate as default_translate, translate_fn_call},
+        postgres::{
+            Translator, translate as default_translate, translate_binary_op, translate_fn_call,
+        },
     },
     *,
 };
@@ -81,6 +83,15 @@ fn main() {
             } else {
                 translate_fn_call(name, args, self)
             }
+        }
+
+        fn translate_binary_op(
+            &self,
+            l: &Box<ast::Expression>,
+            op: &ast::BinaryOp,
+            r: &Box<ast::Expression>,
+        ) -> translate::Result {
+            translate_binary_op(self, l, op, r)
         }
     }
     let cx = CustomTranslator {

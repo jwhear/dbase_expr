@@ -48,37 +48,34 @@ where
         r: &Box<ast::Expression>,
     ) -> Result {
         let (translated_l, ty) = self.translate(l)?;
-
-        let binop_translated = |l, op, r, ty| ok(Expression::BinaryOperator(l, op, r), ty);
-        let starts_with = |op| {
-            let translated_r = self.translate(r)?.0;
-            let length_r = Expression::FunctionCall {
-                name: "LENGTH".to_string(),
-                args: vec![translated_r.clone()],
-            };
-
-            let substr_l = Expression::FunctionCall {
-                name: "SUBSTR".to_string(),
-                args: vec![
-                    translated_l.clone(),
-                    Box::new(Expression::NumberLiteral("1".to_string())),
-                    Box::new(length_r),
-                ],
-            };
-
-            binop_translated(translated_r, op, Box::new(substr_l), FieldType::Logical)
-        };
-
         match (op, ty) {
-            (ast::BinaryOp::Eq, FieldType::Character(_) | FieldType::Memo) => {
-                starts_with(BinaryOp::Eq)
-            }
-            (ast::BinaryOp::Ne, FieldType::Character(_) | FieldType::Memo) => {
-                starts_with(BinaryOp::Ne)
+            (
+                op @ (ast::BinaryOp::Eq | ast::BinaryOp::Ne),
+                FieldType::Character(_) | FieldType::Memo,
+            ) => {
+                let translated_r = self.translate(r)?.0;
+                let modified_r = expr_between_right_side(translated_r);
+                let binop = match op {
+                    ast::BinaryOp::Eq => BinaryOp::Between,
+                    ast::BinaryOp::Ne => BinaryOp::NotBetween,
+                    _ => unreachable!(),
+                };
+                ok(
+                    Expression::BinaryOperator(translated_l, binop, modified_r, true),
+                    FieldType::Logical,
+                )
             }
             _ => translate_binary_op(self, l, op, r),
         }
     }
+}
+
+fn expr_between_right_side(expression: Box<Expression>) -> Box<Expression> {
+    let char = Expression::BareFunctionCall("char(0xFFFF)".to_string());
+    let appended =
+        Expression::BinaryOperator(expression.clone(), BinaryOp::Concat, Box::new(char), false);
+    let combined = Expression::BinaryOperator(expression, BinaryOp::And, Box::new(appended), false);
+    Box::new(combined)
 }
 
 pub fn translate_fn_call(

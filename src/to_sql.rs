@@ -105,7 +105,8 @@ impl ToSQL for BinaryOp {
             BinaryOp::Or => write!(out, " OR "),
             BinaryOp::Concat => write!(out, " || "),
             BinaryOp::StartsWith => write!(out, " ^@ "),
-            BinaryOp::Like => write!(out, " LIKE "),
+            BinaryOp::Between => write!(out, " BETWEEN "),
+            BinaryOp::NotBetween => write!(out, " NOT BETWEEN "),
         }
     }
 }
@@ -148,15 +149,20 @@ impl ToSQL for Expression {
                 exp.to_sql(out, conf)?;
                 write!(out, ")")
             }
-            Expression::BinaryOperator(l, op, r) => {
+            Expression::BinaryOperator(l, op, r, p) => {
                 //TODO(justin): order of operations is preserved by parenthesizing
                 // everything.  It'd be nice to analyze precedence to only do so
                 // when necessary.
-                write!(out, "(")?;
+                if *p {
+                    write!(out, "(")?;
+                }
                 l.to_sql(out, conf)?;
                 op.to_sql(out, conf)?;
                 r.to_sql(out, conf)?;
-                write!(out, ")")
+                if *p {
+                    write!(out, ")")?;
+                }
+                Ok(())
             }
             Expression::FunctionCall { name, args } => {
                 write!(out, "{name}(")?;
