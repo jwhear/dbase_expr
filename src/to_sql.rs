@@ -26,7 +26,7 @@ impl PrinterContext for PostgresPrinterContext {
 
 #[derive(Debug, Clone, Copy)]
 pub struct SqlitePrinterContext {
-    pad_strings: bool,
+    pub pad_strings: bool,
 }
 
 impl PrinterContext for SqlitePrinterContext {
