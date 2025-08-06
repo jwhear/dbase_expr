@@ -56,7 +56,6 @@ pub enum Expression {
     // used for things like "CURRENT_DATE" which are functions but don't
     //  allow the parentheses.
     BareFunctionCall(String),
-    Collate(Box<Expression>, String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

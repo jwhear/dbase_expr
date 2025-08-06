@@ -126,10 +126,6 @@ impl ToSQL for Expression {
             Expression::NumberLiteral(v) => write!(out, "{v}"),
             Expression::SingleQuoteStringLiteral(v) => write!(out, "'{v}'"),
 
-            Expression::Collate(v, c) => {
-                v.to_sql(out, conf)?;
-                write!(out, " COLLATE {c}")
-            }
             Expression::Field {
                 alias,
                 name,
