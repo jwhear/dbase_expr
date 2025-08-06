@@ -2,7 +2,7 @@ use crate::{
     ast,
     codebase_functions::CodebaseFunction as F,
     translate::{
-        BinaryOp, Error, Expression, FieldType, Result, TranslationContext, UnaryOp, ok,
+        BinaryOp, Error, Expression, FieldType, Result, TranslationContext, ok,
         postgres::{
             self, get_all_args, get_arg, translate as default_translate, translate_binary_op,
             wrong_type,
@@ -47,42 +47,37 @@ where
         op: &ast::BinaryOp,
         r: &Box<ast::Expression>,
     ) -> Result {
-        let binop_translated = |l, op, r, ty| ok(Expression::BinaryOperator(l, op, r), ty);
         let (translated_l, ty) = self.translate(l)?;
+
+        let binop_translated = |l, op, r, ty| ok(Expression::BinaryOperator(l, op, r), ty);
+        let starts_with = |op| {
+            let translated_r = self.translate(r)?.0;
+            let length_r = Expression::FunctionCall {
+                name: "LENGTH".to_string(),
+                args: vec![translated_r.clone()],
+            };
+
+            let substr_l = Expression::FunctionCall {
+                name: "SUBSTR".to_string(),
+                args: vec![
+                    translated_l.clone(),
+                    Box::new(Expression::NumberLiteral("1".to_string())),
+                    Box::new(length_r),
+                ],
+            };
+
+            binop_translated(translated_r, op, Box::new(substr_l), FieldType::Logical)
+        };
+
         match (op, ty) {
             (ast::BinaryOp::Eq, FieldType::Character(_) | FieldType::Memo) => {
-                let translated_r = self.translate(r)?.0;
-                let escaped_r = make_escaped_like_pattern(&translated_r, "%");
-                binop_translated(translated_l, BinaryOp::Like, escaped_r, FieldType::Logical)
+                starts_with(BinaryOp::Eq)
             }
             (ast::BinaryOp::Ne, FieldType::Character(_) | FieldType::Memo) => {
-                let translated_r = self.translate(r)?.0;
-                let escaped_r = make_escaped_like_pattern(&translated_r, "%");
-                let starts_with =
-                    Expression::BinaryOperator(translated_l, BinaryOp::Like, escaped_r);
-                ok(
-                    Expression::UnaryOperator(UnaryOp::Not, Box::new(starts_with)),
-                    FieldType::Logical,
-                )
+                starts_with(BinaryOp::Ne)
             }
             _ => translate_binary_op(self, l, op, r),
         }
-    }
-}
-
-fn make_escaped_like_pattern(expression: &Box<Expression>, suffix: &str) -> Box<Expression> {
-    match expression.as_ref() {
-        Expression::SingleQuoteStringLiteral(s) => {
-            let escaped = s
-                .replace('\\', "\\\\")
-                .replace('%', "\\%")
-                .replace('_', "\\_");
-            Box::new(Expression::SingleQuoteStringLiteral(format!(
-                "{}{}",
-                escaped, suffix
-            )))
-        }
-        _ => expression.clone(),
     }
 }
 
