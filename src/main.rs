@@ -119,8 +119,8 @@ fn expr_tests() {
         "a .and. d",
         "B_T .or. B_F",
         ".T..AND..FALSE.",
-        r#""double \" quote""#,
-        r#"'single \' quote'"#,
+        r#""double quote""#,
+        r#"'single quote'"#,
         r#"VAL('10.123')"#,
         "SUBSTR('hello', 2, 3)",
         "IIF (B_T, ID, L_NAME)", //TODO: this should return length of 100 since we should assume the larger of the potential values
@@ -152,6 +152,8 @@ fn expr_tests() {
          SHIP_DATE < date() + 14 -
          ((DATE() - STOD('20000102')) -
          VAL(STR((DATE() - STOD('20000102'))/7 - 0.5,6,0))*7)",
+        // Precision test
+        "STR(0.1 + 1/3, 17, 15)",
     ];
 
     let value_lookup = |field_name: &str| -> Option<evaluate::Value> {
@@ -204,8 +206,8 @@ fn to_sql_tests<T: TranslationContext>(cx: &T) {
         "(a + b) * c",
         "left((a), -b + -c)",
         ".T..AND..FALSE.",
-        r#""double \" quote""#,
-        r#"'single \' quote'"#,
+        r#""double quote""#,
+        r#"'single quote'"#,
         r#"VAL('10.123')"#,
         "SUBSTR('hello', 2, 3)",
         "DTOS(DATE())",

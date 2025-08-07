@@ -41,17 +41,3 @@ pub enum Expression {
     BinaryOperator(Box<Expression>, BinaryOp, Box<Expression>),
     UnaryOperator(UnaryOp, Box<Expression>),
 }
-
-pub fn apply_string_escapes(s: &str) -> String {
-    let mut res = String::new();
-    let mut is_escaped = false;
-    for c in s.chars() {
-        if c == '\\' && !is_escaped {
-            is_escaped = true;
-        } else {
-            res.push(c);
-            is_escaped = false;
-        }
-    }
-    res
-}
