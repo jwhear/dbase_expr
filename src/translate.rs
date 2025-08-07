@@ -2,6 +2,7 @@ use std::fmt::Formatter;
 
 use crate::{ast, codebase_functions::CodebaseFunction};
 
+pub mod mssql;
 pub mod postgres;
 pub mod sqlite;
 

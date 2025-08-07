@@ -14,3 +14,7 @@ lalrpop = "0.20.2"
 
 [features]
 serde = ["dep:serde"]
+
+[[example]]
+name = "mssql_test"
+path = "src/main_test_mssql.rs"
