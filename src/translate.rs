@@ -145,6 +145,7 @@ fn ok(exp: Expression, ty: FieldType) -> Result {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(u8)]
 pub enum FieldType {
     //Binary = b'B',
