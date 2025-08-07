@@ -87,9 +87,9 @@ fn main() {
 
         fn translate_binary_op(
             &self,
-            l: &Box<ast::Expression>,
+            l: &ast::Expression,
             op: &ast::BinaryOp,
-            r: &Box<ast::Expression>,
+            r: &ast::Expression,
         ) -> translate::Result {
             translate_binary_op(self, l, op, r)
         }
@@ -154,7 +154,9 @@ fn expr_tests() {
          VAL(STR((DATE() - STOD('20000102'))/7 - 0.5,6,0))*7)",
         // Precision test
         "STR(0.1 + 1/3, 17, 15)",
-        // Recursion test
+        // Simplify test
+        "a+b+c",
+        "'hello' + chr(32) + LEFT('world', 3) + 'ld'",
         "a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c",
     ];
 

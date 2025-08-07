@@ -37,9 +37,9 @@ where
 
     fn translate_binary_op(
         &self,
-        l: &Box<ast::Expression>,
+        l: &ast::Expression,
         op: &ast::BinaryOp,
-        r: &Box<ast::Expression>,
+        r: &ast::Expression,
     ) -> Result {
         translate_binary_op(self, l, op, r)
     }
@@ -403,9 +403,9 @@ pub fn translate_fn_call(
 
 pub fn translate_binary_op<T: TranslationContext>(
     cx: &T,
-    l: &Box<ast::Expression>,
+    l: &ast::Expression,
     op: &ast::BinaryOp,
-    r: &Box<ast::Expression>,
+    r: &ast::Expression,
 ) -> Result {
     let binop = |l, op, r, ty| {
         //TODO(justin): order of operations is preserved by parenthesizing
@@ -554,22 +554,22 @@ pub fn translate_binary_op<T: TranslationContext>(
         (ast::BinaryOp::Or, FieldType::Logical) => binop(l, BinaryOp::Or, r, FieldType::Logical),
         (ast::BinaryOp::Lt, FieldType::Character(len)) => {
             let left = string_comp_left(l, translate(r, cx)?.0);
-            let right = string_comp_right(r.clone(), len);
+            let right = string_comp_right(Box::new(r.clone()), len);
             binop(left, BinaryOp::Lt, &right, FieldType::Logical)
         }
         (ast::BinaryOp::Le, FieldType::Character(len)) => {
             let left = string_comp_left(l, translate(r, cx)?.0);
-            let right = string_comp_right(r.clone(), len);
+            let right = string_comp_right(Box::new(r.clone()), len);
             binop(left, BinaryOp::Le, &right, FieldType::Logical)
         }
         (ast::BinaryOp::Gt, FieldType::Character(len)) => {
             let left = string_comp_left(l, translate(r, cx)?.0);
-            let right = string_comp_right(r.clone(), len);
+            let right = string_comp_right(Box::new(r.clone()), len);
             binop(left, BinaryOp::Gt, &right, FieldType::Logical)
         }
         (ast::BinaryOp::Ge, FieldType::Character(len)) => {
             let left = string_comp_left(l, translate(r, cx)?.0);
-            let right = string_comp_right(r.clone(), len);
+            let right = string_comp_right(Box::new(r.clone()), len);
             binop(left, BinaryOp::Ge, &right, FieldType::Logical)
         }
         (ast::BinaryOp::Lt, FieldType::Memo) => {
