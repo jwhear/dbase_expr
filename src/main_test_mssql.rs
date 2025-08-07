@@ -1,0 +1,83 @@
+use dbase_expr::{
+    to_sql::PrinterConfig,
+    translate::{FieldType, TranslationContext, mssql::MssqlTranslator},
+    *,
+};
+use to_sql::Printer;
+
+fn main() {
+    println!("Running MSSQL translator tests...");
+
+    let get_type = |alias: Option<&str>, field: &str| match (alias, field) {
+        (_, "A" | "B" | "C") => FieldType::Integer,
+        (_, "BINDATAFIELD") => FieldType::MemoBinary,
+        (_, "SHIP_DATE") => FieldType::Date,
+        (_, "DATE") => FieldType::Date,
+        (_, "ID") => FieldType::Character(1),
+        (_, "L_NAME") => FieldType::Character(20),
+        (_, "C_TYPE") => FieldType::Numeric { len: 2, dec: 0 },
+
+        (Some(alias), _) => panic!("unknown field: {alias}.{field}"),
+        (None, _) => panic!("unknown field: {field}"),
+    };
+
+    let mssql_cx = MssqlTranslator {
+        field_lookup: |alias: Option<&str>, field: &str| -> Result<(String, FieldType), String> {
+            let field = field.to_string().to_uppercase();
+            let field_type = get_type(alias, &field);
+            Ok((field, field_type))
+        },
+    };
+
+    let parser = grammar::ExprParser::new();
+    let tests = [
+        // Focus on date arithmetic which is different in MSSQL
+        "SHIP_DATE - DATE()",
+        "(DATE() + 1) - STOD(\"20240731\")",
+        "SHIP_DATE - STOD(\"20240630\")",
+        // Test the complex expression
+        "date() + 7 - ((DATE() - STOD('20000102')) - VAL(STR((DATE() - STOD('20000102'))/7 - 0.5,6,0))*7)",
+        "DATE >= date() + 7-
+        ((DATE() - STOD('20000102')) -
+        VAL(STR((DATE() - STOD('20000102'))/7 - 0.5,6,0))*7)
+        .and.
+         DATE < date() + 14 -
+         ((DATE() - STOD('20000102')) -
+         VAL(STR((DATE() - STOD('20000102'))/7 - 0.5,6,0))*7)",
+        // Also test some functions that are different
+        "CHR(65)",
+        "CTOD(\"07/04/24\")",
+        "DTOC(SHIP_DATE)",
+        "DTOS(SHIP_DATE)",
+        "DAY(SHIP_DATE)",
+        "MONTH(SHIP_DATE)",
+        "YEAR(SHIP_DATE)",
+        "RIGHT(ID, 3)",
+        "STR(A, 5, 2)",
+        "VAL(\"123.45\")",
+        "IIF(C_TYPE=0,'Service',IIF(C_TYPE=1,'No Count',IIF(C_TYPE=2,'Track Count',IIF(C_TYPE=3,'Serialized',IIF(C_TYPE=4,'Special',IIF(C_TYPE=5,'Rental',IIF(C_TYPE=6,'Percentage Price',IIF(C_TYPE=7,'Non-inventory Serialized',IIF(C_TYPE=8,'Rental',IIF(C_TYPE=9,'Average-Cost Lot',IIF(C_TYPE=10,'Discount',IIF(C_TYPE=11,'Tracked-Cost Lot',IIF(C_TYPE=12,'Gift Card','')))))))))))))",
+    ];
+
+    for test in tests.iter() {
+        match parser.parse(test) {
+            Ok(t) => match mssql_cx.translate(&t) {
+                Ok(tree) => println!(
+                    "{test}\n=>\n{}\n",
+                    Printer::new(tree.0, PrinterConfig::default())
+                ),
+                Err(e) => eprintln!("Error translating tree: {e:?}\n:{test}\n"),
+            },
+
+            // The parse failed with an unexpected token: show the approximate
+            //  position in the source
+            Err(lalrpop_util::ParseError::InvalidToken { location }) => {
+                let end = test.len().min(location + 10);
+                println!("Failed: {}\nError near here: {}", test, unsafe {
+                    test.get_unchecked(location..end)
+                })
+            }
+            // Any other kind of error, just print it
+            Err(e) => println!("{:?}", e),
+        };
+    }
+}
