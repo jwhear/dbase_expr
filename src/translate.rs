@@ -6,6 +6,8 @@ pub mod mssql;
 pub mod postgres;
 pub mod sqlite;
 
+pub const COALESCE_DATE: &str = "0001-01-01";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOp {
     Add,

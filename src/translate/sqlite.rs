@@ -2,7 +2,8 @@ use crate::{
     ast,
     codebase_functions::CodebaseFunction as F,
     translate::{
-        BinaryOp, Error, Expression, FieldType, Parenthesize, Result, TranslationContext, ok,
+        BinaryOp, COALESCE_DATE, Error, Expression, FieldType, Parenthesize, Result,
+        TranslationContext, ok,
         postgres::{
             self, get_all_args, get_arg, translate as default_translate, translate_binary_op,
             wrong_type,
@@ -106,13 +107,30 @@ pub fn translate_fn_call(
             FieldType::Character(1),
         ),
 
-        F::CTOD => ok(
-            Expression::FunctionCall {
-                name: "DATE".to_string(),
-                args: vec![arg(0)??.0], // assumes date in ISO 8601 or needs pre-processing
-            },
-            FieldType::Date,
-        ),
+        F::CTOD => {
+            //COALESCE(DATE(NULLIF(TRIM(x),''),'0001-01-01')
+            let trim = Expression::FunctionCall {
+                name: "TRIM".into(),
+                args: vec![arg(0)??.0],
+            };
+            let null_if = Expression::FunctionCall {
+                name: "NULLIF".into(),
+                args: vec![Box::new(trim), "".into()],
+            };
+            // Convert format -> 'YYYY-MM-DD' using SUBSTR
+            let date = Expression::FunctionCall {
+                name: "DATE".into(),
+                args: vec![Box::new(Expression::FunctionCall {
+                    name: "printf".into(),
+                    args: vec![Box::new(null_if)], // assumes date in ISO 8601 or needs pre-processing
+                })],
+            };
+            let coalesce = Expression::FunctionCall {
+                name: "COALESCE".into(),
+                args: vec![Box::new(date), COALESCE_DATE.into()],
+            };
+            ok(coalesce, FieldType::Date)
+        }
 
         F::DAY => ok(
             Expression::FunctionCall {
@@ -183,35 +201,36 @@ pub fn translate_fn_call(
                 out_ty,
             )
         }
-
         F::STOD => {
-            // Convert 'YYYYMMDD' -> 'YYYY-MM-DD' using SUBSTR
-            ok(
-                Expression::FunctionCall {
-                    name: "DATE".into(),
-                    args: vec![Box::new(Expression::FunctionCall {
-                        name: "printf".into(),
-                        args: vec![
-                            "'%s-%s-%s'".into(),
-                            Box::new(Expression::FunctionCall {
-                                name: "SUBSTR".into(),
-                                args: vec![arg(0)??.0.clone(), 1.into(), 4.into()],
-                            }),
-                            Box::new(Expression::FunctionCall {
-                                name: "SUBSTR".into(),
-                                args: vec![arg(0)??.0.clone(), 5.into(), 2.into()],
-                            }),
-                            Box::new(Expression::FunctionCall {
-                                name: "SUBSTR".into(),
-                                args: vec![arg(0)??.0, 7.into(), 2.into()],
-                            }),
-                        ],
-                    })],
-                },
-                FieldType::Date,
-            )
+            //COALESCE(DATE(SUBSTR(TRIM(x),1,4),SUBSTR(TRIM(x),5,2),SUBSTR(TRIM(x),7,2)),'0001-01-01')
+            let trim = Expression::FunctionCall {
+                name: "TRIM".into(),
+                args: vec![arg(0)??.0],
+            };
+            // Convert format -> 'YYYY-MM-DD' using SUBSTR
+            let date = Expression::FunctionCall {
+                name: "DATE".into(),
+                args: vec![
+                    Box::new(Expression::FunctionCall {
+                        name: "SUBSTR".into(),
+                        args: vec![Box::new(trim.clone()), 1.into(), 4.into()],
+                    }),
+                    Box::new(Expression::FunctionCall {
+                        name: "SUBSTR".into(),
+                        args: vec![Box::new(trim.clone()), 5.into(), 2.into()],
+                    }),
+                    Box::new(Expression::FunctionCall {
+                        name: "SUBSTR".into(),
+                        args: vec![Box::new(trim), 7.into(), 2.into()],
+                    }),
+                ],
+            };
+            let coalesce = Expression::FunctionCall {
+                name: "COALESCE".into(),
+                args: vec![Box::new(date), COALESCE_DATE.into()],
+            };
+            ok(coalesce, FieldType::Date)
         }
-
         F::STR => {
             let len: i64 = match arg(1)??.0.as_ref() {
                 Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(1)),
