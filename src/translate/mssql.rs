@@ -40,9 +40,9 @@ where
 
     fn translate_binary_op(
         &self,
-        l: &Box<ast::Expression>,
+        l: &ast::Expression,
         op: &ast::BinaryOp,
-        r: &Box<ast::Expression>,
+        r: &ast::Expression,
     ) -> Result {
         translate_binary_op(self, l, op, r)
     }
@@ -50,9 +50,9 @@ where
 
 pub fn translate_binary_op<T: TranslationContext>(
     cx: &T,
-    l: &Box<ast::Expression>,
+    l: &ast::Expression,
     op: &ast::BinaryOp,
-    r: &Box<ast::Expression>,
+    r: &ast::Expression,
 ) -> Result {
     let (translated_l, ty_l) = cx.translate(l)?;
     let (translated_r, ty_r) = cx.translate(r)?;

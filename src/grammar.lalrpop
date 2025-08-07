@@ -1,4 +1,4 @@
-use crate::ast::{Expression, BinaryOp, UnaryOp, apply_string_escapes};
+use crate::ast::{Expression, BinaryOp, UnaryOp};
 
 grammar;
 
@@ -42,8 +42,8 @@ Field: Box<Expression> = {
 	
 };
 
-DoubleQuoteString: String = <l:r#""(\\\\|\\"|[^"\\])*""#> => apply_string_escapes(&l[1..l.len()-1]);
-SingleQuoteString: String = <l:r#"'(\\\\|\\'|[^'\\])*'"#> => apply_string_escapes(&l[1..l.len()-1]);
+DoubleQuoteString: String = <l:r#""[^"]*""#> => (&l[1..l.len()-1]).to_string();
+SingleQuoteString: String = <l:r#"'[^']*'"#> => (&l[1..l.len()-1]).to_string();
 
 ExpOp: BinaryOp = {
 	"**" => BinaryOp::Exp,
@@ -86,9 +86,6 @@ NotOp: UnaryOp = {
 NegOp: UnaryOp = {
 	"-" => UnaryOp::Neg,
 }
-
-
-
 
 // Utility macros
 //-------------------------------------------------------

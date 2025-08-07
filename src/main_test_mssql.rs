@@ -1,4 +1,5 @@
 use dbase_expr::{
+    ast::simplify,
     to_sql::PrinterConfig,
     translate::{FieldType, TranslationContext, mssql::MssqlTranslator},
     *,
@@ -60,13 +61,16 @@ fn main() {
 
     for test in tests.iter() {
         match parser.parse(test) {
-            Ok(t) => match mssql_cx.translate(&t) {
-                Ok(tree) => println!(
-                    "{test}\n=>\n{}\n",
-                    Printer::new(tree.0, PrinterConfig::default())
-                ),
-                Err(e) => eprintln!("Error translating tree: {e:?}\n:{test}\n"),
-            },
+            Ok(t) => {
+                let t = simplify(*t);
+                match mssql_cx.translate(&t) {
+                    Ok(tree) => println!(
+                        "{test}\n=>\n{}\n",
+                        Printer::new(tree.0, PrinterConfig::default())
+                    ),
+                    Err(e) => eprintln!("Error translating tree: {e:?}\n:{test}\n"),
+                }
+            }
 
             // The parse failed with an unexpected token: show the approximate
             //  position in the source
