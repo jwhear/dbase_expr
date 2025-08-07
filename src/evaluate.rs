@@ -39,224 +39,305 @@ impl Debug for Value {
 pub type FieldValueGetter<'a> = &'a dyn Fn(&str) -> Option<Value>;
 
 pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, String> {
-    match expr {
-        Expression::BoolLiteral(b) => Ok(Value::Bool(*b)),
+    #[derive(Debug)]
+    enum EvalState<'a> {
+        Expr(&'a Expression),
+        Unary {
+            op: UnaryOp,
+        },
+        BinaryLeft {
+            op: BinaryOp,
+            rhs: &'a Expression,
+        },
+        BinaryRight {
+            op: BinaryOp,
+            left: Value,
+        },
+        Function {
+            name: &'a F,
+            args: std::slice::Iter<'a, Box<Expression>>,
+            collected: Vec<Value>,
+            total: usize,
+        },
+    }
 
-        Expression::NumberLiteral(s) => s
-            .parse::<f64>()
-            .map(Value::Number)
-            .map_err(|e| e.to_string()),
+    let mut stack: Vec<EvalState> = vec![EvalState::Expr(expr)];
+    let mut results: Vec<Value> = vec![];
 
-        Expression::SingleQuoteStringLiteral(s) | Expression::DoubleQuoteStringLiteral(s) => {
-            Ok(Value::Str(s.clone(), s.len()))
-        }
+    while let Some(state) = stack.pop() {
+        match state {
+            EvalState::Expr(e) => match e {
+                Expression::BoolLiteral(b) => results.push(Value::Bool(*b)),
 
-        Expression::Field { name, .. } => match get(name) {
-            Some(Value::Str(s, len)) => {
-                let padded = if s.len() < len {
-                    let mut padded = s.to_string();
-                    padded.extend(std::iter::repeat_n(' ', len - s.len()));
-                    padded
-                } else {
-                    s.chars().take(len).collect()
+                Expression::NumberLiteral(s) => results.push(
+                    s.parse::<f64>()
+                        .map(Value::Number)
+                        .map_err(|e| e.to_string())?,
+                ),
+
+                Expression::SingleQuoteStringLiteral(s)
+                | Expression::DoubleQuoteStringLiteral(s) => {
+                    results.push(Value::Str(s.clone(), s.len()))
+                }
+
+                Expression::Field { name, .. } => match get(name) {
+                    Some(Value::Str(s, len)) => {
+                        let padded = if s.len() < len {
+                            let mut padded = s.to_string();
+                            padded.extend(std::iter::repeat_n(' ', len - s.len()));
+                            padded
+                        } else {
+                            s.chars().take(len).collect()
+                        };
+                        results.push(Value::Str(padded, len))
+                    }
+                    Some(v) => results.push(v),
+                    None => return Err(format!("Field '{}' not found in row", name)),
+                },
+
+                Expression::UnaryOperator(op, expr) => {
+                    stack.push(EvalState::Unary { op: *op });
+                    stack.push(EvalState::Expr(expr));
+                }
+
+                Expression::BinaryOperator(lhs, op, rhs) => {
+                    stack.push(EvalState::BinaryLeft { op: *op, rhs: rhs });
+                    stack.push(EvalState::Expr(lhs));
+                }
+
+                Expression::FunctionCall { name, args } => {
+                    stack.push(EvalState::Function {
+                        name,
+                        args: args.iter(),
+                        collected: vec![],
+                        total: args.len(),
+                    });
+                }
+            },
+
+            EvalState::Unary { op } => {
+                let val = results.pop().unwrap();
+                let result = match (op, val) {
+                    (UnaryOp::Not, Value::Bool(b)) => Value::Bool(!b),
+                    (UnaryOp::Neg, Value::Number(n)) => Value::Number(-n),
+                    _ => return Err("Invalid unary operation".to_string()),
                 };
-                Ok(Value::Str(padded, len))
+                results.push(result);
             }
-            Some(v) => Ok(v),
-            None => Err(format!("Field '{}' not found in row", name)),
+
+            EvalState::BinaryLeft { op, rhs } => {
+                let left = results.pop().unwrap();
+                stack.push(EvalState::BinaryRight { op, left });
+                stack.push(EvalState::Expr(rhs));
+            }
+
+            EvalState::BinaryRight { op, left } => {
+                let right = results.pop().unwrap();
+                results.push(eval_binary_op(&op, left, right)?);
+            }
+
+            EvalState::Function {
+                name,
+                mut args,
+                mut collected,
+                total,
+            } => {
+                if let Some(next) = args.next() {
+                    // Push back function call with updated state
+                    stack.push(EvalState::Function {
+                        name,
+                        args,
+                        collected,
+                        total,
+                    });
+                    stack.push(EvalState::Expr(next));
+                } else {
+                    // All args evaluated, now apply function
+                    for _ in 0..total {
+                        collected.push(results.pop().unwrap());
+                    }
+                    collected.reverse(); // restore original order
+
+                    let result = eval_function(name, &collected, get)?;
+                    results.push(result);
+                }
+            }
+        }
+    }
+
+    assert_eq!(results.len(), 1);
+    Ok(results.pop().unwrap())
+}
+
+fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Value, String> {
+    match name {
+        F::LTRIM => match &args[..] {
+            [Value::Str(s, len)] => Ok(Value::Str(s.trim_start().to_string(), *len)),
+            [Value::Memo(s)] => Ok(Value::Memo(s.trim_start().to_string())),
+            _ => Err("LTRIM expects a single string argument".to_string()),
         },
 
-        Expression::UnaryOperator(op, expr) => {
-            let v = evaluate(expr, get)?;
-            match (op, v) {
-                (UnaryOp::Not, Value::Bool(b)) => Ok(Value::Bool(!b)),
-                (UnaryOp::Neg, Value::Number(n)) => Ok(Value::Number(-n)),
-                _ => Err("Invalid unary operation".to_string()),
+        F::TRIM | F::RTRIM => match &args[..] {
+            [Value::Str(s, len)] => Ok(Value::Str(s.trim_end().to_string(), *len)),
+            [Value::Memo(s)] => Ok(Value::Memo(s.trim_end().to_string())),
+            _ => Err("RTRIM expects a single string argument".to_string()),
+        },
+
+        F::ALLTRIM => match &args[..] {
+            [Value::Str(s, len)] => Ok(Value::Str(s.trim().to_string(), *len)),
+            [Value::Memo(s)] => Ok(Value::Memo(s.trim().to_string())),
+            _ => Err("ALLTRIM expects a single string argument".to_string()),
+        },
+
+        F::CHR => match &args[..] {
+            [Value::Number(n)] => {
+                let ch = (*n as u8) as char;
+                Ok(Value::Str(ch.to_string(), 1))
             }
-        }
+            _ => Err("CHR expects a single numeric argument".to_string()),
+        },
 
-        Expression::BinaryOperator(lhs, op, rhs) => {
-            let left = evaluate(lhs, get)?;
-            let right = evaluate(rhs, get)?;
-            eval_binary_op(op, left, right)
-        }
-
-        Expression::FunctionCall { name, args } => {
-            let eval_args: Result<Vec<Value>, String> =
-                args.iter().map(|arg| evaluate(arg, get)).collect();
-
-            let args = eval_args?;
-
-            match name {
-                F::LTRIM => match &args[..] {
-                    [Value::Str(s, len)] => Ok(Value::Str(s.trim_start().to_string(), *len)),
-                    [Value::Memo(s)] => Ok(Value::Memo(s.trim_start().to_string())),
-                    _ => Err("LTRIM expects a single string argument".to_string()),
-                },
-
-                F::TRIM | F::RTRIM => match &args[..] {
-                    [Value::Str(s, len)] => Ok(Value::Str(s.trim_end().to_string(), *len)),
-                    [Value::Memo(s)] => Ok(Value::Memo(s.trim_end().to_string())),
-                    _ => Err("RTRIM expects a single string argument".to_string()),
-                },
-
-                F::ALLTRIM => match &args[..] {
-                    [Value::Str(s, len)] => Ok(Value::Str(s.trim().to_string(), *len)),
-                    [Value::Memo(s)] => Ok(Value::Memo(s.trim().to_string())),
-                    _ => Err("ALLTRIM expects a single string argument".to_string()),
-                },
-
-                F::CHR => match &args[..] {
-                    [Value::Number(n)] => {
-                        let ch = (*n as u8) as char;
-                        Ok(Value::Str(ch.to_string(), 1))
-                    }
-                    _ => Err("CHR expects a single numeric argument".to_string()),
-                },
-
-                F::CTOD | F::STOD => match &args[..] {
-                    [Value::Str(s, _len)] => {
-                        if s.trim().is_empty() {
-                            Ok(Value::Date(None))
-                        } else {
-                            let fmt = if name == &F::CTOD {
-                                "%m/%d/%y"
-                            } else {
-                                "%Y%m%d"
-                            };
-                            chrono::NaiveDate::parse_from_str(s, fmt)
-                                .map(|d| Value::Date(Some(d)))
-                                .map_err(|e| format!("Date parse error: {}", e))
-                        }
-                    }
-                    _ => Err(format!("{:?} expects a single string argument", name)),
-                },
-
-                F::DTOC | F::DTOS => match &args[..] {
-                    [Value::Date(d)] => {
-                        let fmt = if name == &F::DTOC {
-                            "%m/%d/%y"
-                        } else {
-                            "%Y%m%d"
-                        };
-                        let text = match d {
-                            Some(date) => date.format(fmt).to_string(),
-                            None => "".to_string(),
-                        };
-                        let len = if name == &F::DTOC { 10 } else { 8 };
-                        Ok(Value::Str(text, len))
-                    }
-                    [Value::Null] => {
-                        let len: usize = if name == &F::DTOC { 10 } else { 8 };
-                        Ok(Value::Str("".to_string(), len))
-                    }
-                    _ => Err("DTOC expects a date argument".to_string()),
-                },
-
-                F::DAY | F::MONTH | F::YEAR => match &args[..] {
-                    [Value::Date(d)] => match d {
-                        Some(date) => {
-                            let result = match name {
-                                F::DAY => date.day() as f64,
-                                F::MONTH => date.month() as f64,
-                                F::YEAR => date.year() as f64,
-                                _ => unreachable!(),
-                            };
-                            Ok(Value::Number(result))
-                        }
-                        None => Ok(Value::Number(0.0)),
-                    },
-                    _ => Err(format!("{:?} expects a date argument", name)),
-                },
-
-                F::LEFT => match &args[..] {
-                    [Value::Str(s, _) | Value::Memo(s), Value::Number(n)] => {
-                        let n = *n as usize;
-                        Ok(Value::Str(s.chars().take(n).collect(), n))
-                    }
-                    [Value::Number(v), Value::Number(n)] => {
-                        let n = *n as usize;
-                        Ok(Value::Str(v.to_string().chars().take(n).collect(), n))
-                    }
-                    _ => Err("LEFT expects (string, number) or (number, number)".to_string()),
-                },
-
-                F::RIGHT => match &args[..] {
-                    [Value::Str(s, _) | Value::Memo(s), Value::Number(n)] => {
-                        Ok(Value::Str(right_str_n(s, *n), *n as usize))
-                    }
-                    [Value::Number(v), Value::Number(n)] => {
-                        Ok(Value::Str(right_str_n(&v.to_string(), *n), *n as usize))
-                    }
-                    _ => Err("RIGHT expects (string, number) or (number, number)".to_string()),
-                },
-
-                F::SUBSTR => match &args[..] {
-                    [
-                        Value::Str(s, _) | Value::Memo(s),
-                        Value::Number(start),
-                        Value::Number(len),
-                    ] => {
-                        let start = (*start as usize).saturating_sub(1);
-                        let len = *len as usize;
-                        let substr: String = s.chars().skip(start).take(len).collect();
-                        Ok(Value::Str(substr, len))
-                    }
-                    _ => Err("SUBSTR expects (string, start, length)".to_string()),
-                },
-
-                F::UPPER => match &args[..] {
-                    [Value::Str(s, len)] => Ok(Value::Str(s.to_uppercase(), *len)),
-                    [Value::Memo(s)] => Ok(Value::Memo(s.to_uppercase())),
-                    _ => Err("UPPER expects a single string argument".to_string()),
-                },
-
-                F::STR => match &args[..] {
-                    [Value::Number(n), Value::Number(len), Value::Number(dec)] => {
-                        let fmt = format!(
-                            "{:width$.prec$}",
-                            n,
-                            width = *len as usize,
-                            prec = *dec as usize
-                        );
-                        Ok(Value::Str(fmt.trim_end().to_string(), *len as usize))
-                    }
-                    _ => Err("STR expects (number, len, dec)".to_string()),
-                },
-
-                F::VAL => match &args[..] {
-                    [Value::Str(s, _) | Value::Memo(s)] => match s.trim().parse::<f64>() {
-                        Ok(v) => Ok(Value::Number(v)),
-                        Err(_) => {
-                            if s.trim().chars().all(|c| c == 'F' || c == 'f') {
-                                Ok(Value::Number(0.0)) // these are placeholders for float, we'll just use 0.0
-                            } else {
-                                Err(format!("VAL could not parse '{}' to a numeric value", s))
-                            }
-                        }
-                    },
-                    _ => Err("VAL expects a string".to_string()),
-                },
-
-                F::DATE => Ok(Value::Date(Some(chrono::Local::now().naive_local().date()))),
-
-                F::IIF => match &args[..] {
-                    [Value::Bool(cond), when_true, when_false] => Ok(if *cond {
-                        when_true.clone()
+        F::CTOD | F::STOD => match &args[..] {
+            [Value::Str(s, _len)] => {
+                if s.trim().is_empty() {
+                    Ok(Value::Date(None))
+                } else {
+                    let fmt = if name == &F::CTOD {
+                        "%m/%d/%y"
                     } else {
-                        when_false.clone()
-                    }),
-                    _ => Err("IIF expects (boolean, true, false)".to_string()),
-                },
-
-                // DELETED() => __deleted
-                F::DELETED => Ok(get("__deleted").unwrap_or(Value::Bool(false))),
-
-                F::RECNO => Ok(get("RECNO5").unwrap_or(Value::Number(0.0))),
-
-                F::Unknown(unsupported) => Err(format!("Unsupported function: {}", unsupported)),
+                        "%Y%m%d"
+                    };
+                    chrono::NaiveDate::parse_from_str(s, fmt)
+                        .map(|d| Value::Date(Some(d)))
+                        .map_err(|e| format!("Date parse error: {}", e))
+                }
             }
-        }
+            _ => Err(format!("{:?} expects a single string argument", name)),
+        },
+
+        F::DTOC | F::DTOS => match &args[..] {
+            [Value::Date(d)] => {
+                let fmt = if name == &F::DTOC {
+                    "%m/%d/%y"
+                } else {
+                    "%Y%m%d"
+                };
+                let text = match d {
+                    Some(date) => date.format(fmt).to_string(),
+                    None => "".to_string(),
+                };
+                let len = if name == &F::DTOC { 10 } else { 8 };
+                Ok(Value::Str(text, len))
+            }
+            [Value::Null] => {
+                let len: usize = if name == &F::DTOC { 10 } else { 8 };
+                Ok(Value::Str("".to_string(), len))
+            }
+            _ => Err("DTOC expects a date argument".to_string()),
+        },
+
+        F::DAY | F::MONTH | F::YEAR => match &args[..] {
+            [Value::Date(d)] => match d {
+                Some(date) => {
+                    let result = match name {
+                        F::DAY => date.day() as f64,
+                        F::MONTH => date.month() as f64,
+                        F::YEAR => date.year() as f64,
+                        _ => unreachable!(),
+                    };
+                    Ok(Value::Number(result))
+                }
+                None => Ok(Value::Number(0.0)),
+            },
+            _ => Err(format!("{:?} expects a date argument", name)),
+        },
+
+        F::LEFT => match &args[..] {
+            [Value::Str(s, _) | Value::Memo(s), Value::Number(n)] => {
+                let n = *n as usize;
+                Ok(Value::Str(s.chars().take(n).collect(), n))
+            }
+            [Value::Number(v), Value::Number(n)] => {
+                let n = *n as usize;
+                Ok(Value::Str(v.to_string().chars().take(n).collect(), n))
+            }
+            _ => Err("LEFT expects (string, number) or (number, number)".to_string()),
+        },
+
+        F::RIGHT => match &args[..] {
+            [Value::Str(s, _) | Value::Memo(s), Value::Number(n)] => {
+                Ok(Value::Str(right_str_n(s, *n), *n as usize))
+            }
+            [Value::Number(v), Value::Number(n)] => {
+                Ok(Value::Str(right_str_n(&v.to_string(), *n), *n as usize))
+            }
+            _ => Err("RIGHT expects (string, number) or (number, number)".to_string()),
+        },
+
+        F::SUBSTR => match &args[..] {
+            [
+                Value::Str(s, _) | Value::Memo(s),
+                Value::Number(start),
+                Value::Number(len),
+            ] => {
+                let start = (*start as usize).saturating_sub(1);
+                let len = *len as usize;
+                let substr: String = s.chars().skip(start).take(len).collect();
+                Ok(Value::Str(substr, len))
+            }
+            _ => Err("SUBSTR expects (string, start, length)".to_string()),
+        },
+
+        F::UPPER => match &args[..] {
+            [Value::Str(s, len)] => Ok(Value::Str(s.to_uppercase(), *len)),
+            [Value::Memo(s)] => Ok(Value::Memo(s.to_uppercase())),
+            _ => Err("UPPER expects a single string argument".to_string()),
+        },
+
+        F::STR => match &args[..] {
+            [Value::Number(n), Value::Number(len), Value::Number(dec)] => {
+                let fmt = format!(
+                    "{:width$.prec$}",
+                    n,
+                    width = *len as usize,
+                    prec = *dec as usize
+                );
+                Ok(Value::Str(fmt.trim_end().to_string(), *len as usize))
+            }
+            _ => Err("STR expects (number, len, dec)".to_string()),
+        },
+
+        F::VAL => match &args[..] {
+            [Value::Str(s, _) | Value::Memo(s)] => match s.trim().parse::<f64>() {
+                Ok(v) => Ok(Value::Number(v)),
+                Err(_) => {
+                    if s.trim().chars().all(|c| c == 'F' || c == 'f') {
+                        Ok(Value::Number(0.0)) // these are placeholders for float, we'll just use 0.0
+                    } else {
+                        Err(format!("VAL could not parse '{}' to a numeric value", s))
+                    }
+                }
+            },
+            _ => Err("VAL expects a string".to_string()),
+        },
+
+        F::DATE => Ok(Value::Date(Some(chrono::Local::now().naive_local().date()))),
+
+        F::IIF => match &args[..] {
+            [Value::Bool(cond), when_true, when_false] => Ok(if *cond {
+                when_true.clone()
+            } else {
+                when_false.clone()
+            }),
+            _ => Err("IIF expects (boolean, true, false)".to_string()),
+        },
+
+        // DELETED() => __deleted
+        F::DELETED => Ok(get("__deleted").unwrap_or(Value::Bool(false))),
+
+        F::RECNO => Ok(get("RECNO5").unwrap_or(Value::Number(0.0))),
+
+        F::Unknown(unsupported) => Err(format!("Unsupported function: {}", unsupported)),
     }
 }
 
