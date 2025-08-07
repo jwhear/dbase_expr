@@ -72,6 +72,11 @@ pub enum Expression {
         args: Vec<Box<Expression>>,
     },
     BinaryOperator(Box<Expression>, BinaryOp, Box<Expression>, Parenthesize),
+    // This is an optimization of BinaryOperator for things like:
+    //   a + b + c + d
+    // OR
+    //   a || b || c
+    BinaryOperatorSequence(BinaryOp, Vec<Expression>),
     UnaryOperator(UnaryOp, Box<Expression>),
     Cast(Box<Expression>, &'static str),
     Iif {
@@ -140,6 +145,7 @@ fn ok(exp: Expression, ty: FieldType) -> Result {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(u8)]
 pub enum FieldType {
     //Binary = b'B',
@@ -244,9 +250,9 @@ pub trait TranslationContext {
 
     fn translate_binary_op(
         &self,
-        l: &Box<ast::Expression>,
+        l: &ast::Expression,
         op: &ast::BinaryOp,
-        r: &Box<ast::Expression>,
+        r: &ast::Expression,
     ) -> Result;
 }
 

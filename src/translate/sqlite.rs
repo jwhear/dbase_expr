@@ -43,9 +43,9 @@ where
 
     fn translate_binary_op(
         &self,
-        l: &Box<ast::Expression>,
+        l: &ast::Expression,
         op: &ast::BinaryOp,
-        r: &Box<ast::Expression>,
+        r: &ast::Expression,
     ) -> Result {
         let (translated_l, ty) = self.translate(l)?;
         match (op, ty) {

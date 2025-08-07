@@ -101,8 +101,17 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
                 }
 
                 Expression::BinaryOperator(lhs, op, rhs) => {
-                    stack.push(EvalState::BinaryLeft { op: *op, rhs: rhs });
+                    stack.push(EvalState::BinaryLeft { op: *op, rhs });
                     stack.push(EvalState::Expr(lhs));
+                }
+                Expression::AddSequence(exprs) => {
+                    // Evaluate the whole expression and push it to the stack
+                    let mut accum = evaluate(&exprs[0], get)?;
+                    for e in &exprs[1..] {
+                        let e = evaluate(e, get)?;
+                        accum = eval_binary_op(&BinaryOp::Add, accum, e)?;
+                    }
+                    results.push(accum);
                 }
 
                 Expression::FunctionCall { name, args } => {
@@ -171,25 +180,25 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
 
 fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Value, String> {
     match name {
-        F::LTRIM => match &args[..] {
+        F::LTRIM => match args {
             [Value::Str(s, len)] => Ok(Value::Str(s.trim_start().to_string(), *len)),
             [Value::Memo(s)] => Ok(Value::Memo(s.trim_start().to_string())),
             _ => Err("LTRIM expects a single string argument".to_string()),
         },
 
-        F::TRIM | F::RTRIM => match &args[..] {
+        F::TRIM | F::RTRIM => match args {
             [Value::Str(s, len)] => Ok(Value::Str(s.trim_end().to_string(), *len)),
             [Value::Memo(s)] => Ok(Value::Memo(s.trim_end().to_string())),
             _ => Err("RTRIM expects a single string argument".to_string()),
         },
 
-        F::ALLTRIM => match &args[..] {
+        F::ALLTRIM => match args {
             [Value::Str(s, len)] => Ok(Value::Str(s.trim().to_string(), *len)),
             [Value::Memo(s)] => Ok(Value::Memo(s.trim().to_string())),
             _ => Err("ALLTRIM expects a single string argument".to_string()),
         },
 
-        F::CHR => match &args[..] {
+        F::CHR => match args {
             [Value::Number(n)] => {
                 let ch = (*n as u8) as char;
                 Ok(Value::Str(ch.to_string(), 1))
@@ -197,7 +206,7 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
             _ => Err("CHR expects a single numeric argument".to_string()),
         },
 
-        F::CTOD | F::STOD => match &args[..] {
+        F::CTOD | F::STOD => match args {
             [Value::Str(s, _len)] => {
                 if s.trim().is_empty() {
                     Ok(Value::Date(None))
@@ -215,7 +224,7 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
             _ => Err(format!("{:?} expects a single string argument", name)),
         },
 
-        F::DTOC | F::DTOS => match &args[..] {
+        F::DTOC | F::DTOS => match args {
             [Value::Date(d)] => {
                 let fmt = if name == &F::DTOC {
                     "%m/%d/%y"
@@ -236,7 +245,7 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
             _ => Err("DTOC expects a date argument".to_string()),
         },
 
-        F::DAY | F::MONTH | F::YEAR => match &args[..] {
+        F::DAY | F::MONTH | F::YEAR => match args {
             [Value::Date(d)] => match d {
                 Some(date) => {
                     let result = match name {
@@ -252,7 +261,7 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
             _ => Err(format!("{:?} expects a date argument", name)),
         },
 
-        F::LEFT => match &args[..] {
+        F::LEFT => match args {
             [Value::Str(s, _) | Value::Memo(s), Value::Number(n)] => {
                 let n = *n as usize;
                 Ok(Value::Str(s.chars().take(n).collect(), n))
@@ -264,7 +273,7 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
             _ => Err("LEFT expects (string, number) or (number, number)".to_string()),
         },
 
-        F::RIGHT => match &args[..] {
+        F::RIGHT => match args {
             [Value::Str(s, _) | Value::Memo(s), Value::Number(n)] => {
                 Ok(Value::Str(right_str_n(s, *n), *n as usize))
             }
@@ -274,7 +283,7 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
             _ => Err("RIGHT expects (string, number) or (number, number)".to_string()),
         },
 
-        F::SUBSTR => match &args[..] {
+        F::SUBSTR => match args {
             [
                 Value::Str(s, _) | Value::Memo(s),
                 Value::Number(start),
@@ -288,13 +297,13 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
             _ => Err("SUBSTR expects (string, start, length)".to_string()),
         },
 
-        F::UPPER => match &args[..] {
+        F::UPPER => match args {
             [Value::Str(s, len)] => Ok(Value::Str(s.to_uppercase(), *len)),
             [Value::Memo(s)] => Ok(Value::Memo(s.to_uppercase())),
             _ => Err("UPPER expects a single string argument".to_string()),
         },
 
-        F::STR => match &args[..] {
+        F::STR => match args {
             [Value::Number(n), Value::Number(len), Value::Number(dec)] => {
                 let fmt = format!(
                     "{:width$.prec$}",
@@ -307,7 +316,7 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
             _ => Err("STR expects (number, len, dec)".to_string()),
         },
 
-        F::VAL => match &args[..] {
+        F::VAL => match args {
             [Value::Str(s, _) | Value::Memo(s)] => match s.trim().parse::<f64>() {
                 Ok(v) => Ok(Value::Number(v)),
                 Err(_) => {
@@ -323,7 +332,7 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
 
         F::DATE => Ok(Value::Date(Some(chrono::Local::now().naive_local().date()))),
 
-        F::IIF => match &args[..] {
+        F::IIF => match args {
             [Value::Bool(cond), when_true, when_false] => Ok(if *cond {
                 when_true.clone()
             } else {

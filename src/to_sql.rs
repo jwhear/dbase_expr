@@ -158,6 +158,16 @@ impl ToSQL for Expression {
                 r.to_sql(out, conf)?;
                 p.close(out)
             }
+            Expression::BinaryOperatorSequence(op, exprs) => {
+                assert!(exprs.len() >= 2);
+                write!(out, "(")?;
+                exprs[0].to_sql(out, conf)?;
+                for e in &exprs[1..] {
+                    op.to_sql(out, conf)?;
+                    e.to_sql(out, conf)?;
+                }
+                write!(out, ")")
+            }
             Expression::FunctionCall { name, args } => {
                 write!(out, "{name}(")?;
                 let mut is_first = true;
