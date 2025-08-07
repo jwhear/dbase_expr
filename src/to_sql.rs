@@ -1,8 +1,9 @@
-use crate::translate::{BinaryOp, Expression, FieldType, UnaryOp};
+use crate::translate::{BinaryOp, COALESCE_DATE, Expression, FieldType, UnaryOp};
 use std::fmt::{Display, Formatter, Result};
 
 pub trait PrinterContext: std::fmt::Debug {
     fn write_padding(&self, out: &mut Formatter<'_>, inner: &str, width: u32) -> std::fmt::Result;
+    fn coalesce_date(&self, out: &mut Formatter<'_>, inner: &str) -> std::fmt::Result;
     fn box_clone(&self) -> Box<dyn PrinterContext>;
 }
 
@@ -18,6 +19,9 @@ pub struct PostgresPrinterContext;
 impl PrinterContext for PostgresPrinterContext {
     fn write_padding(&self, out: &mut Formatter<'_>, inner: &str, width: u32) -> std::fmt::Result {
         write!(out, "RPAD(COALESCE({}, ''), {}, ' ')", inner, width)
+    }
+    fn coalesce_date(&self, out: &mut Formatter<'_>, inner: &str) -> std::fmt::Result {
+        write!(out, "COALESCE({}, DATE '{}')", inner, COALESCE_DATE)
     }
     fn box_clone(&self) -> Box<dyn PrinterContext> {
         Box::new(*self) // requires Copy on PostgresPrinterContext
@@ -41,6 +45,9 @@ impl PrinterContext for SqlitePrinterContext {
         } else {
             write!(out, "{}", inner)
         }
+    }
+    fn coalesce_date(&self, out: &mut Formatter<'_>, inner: &str) -> std::fmt::Result {
+        write!(out, "COALESCE({}, DATE('{}'))", inner, COALESCE_DATE)
     }
     fn box_clone(&self) -> Box<dyn PrinterContext> {
         Box::new(*self) // requires Copy on PostgresPrinterContext
@@ -100,7 +107,6 @@ impl ToSQL for BinaryOp {
             BinaryOp::Sub => write!(out, "-"),
             BinaryOp::Mul => write!(out, "*"),
             BinaryOp::Div => write!(out, "/"),
-
             BinaryOp::Eq => write!(out, "="),
             BinaryOp::Ne => write!(out, "!="),
             BinaryOp::Lt => write!(out, "<"),
@@ -138,6 +144,8 @@ impl ToSQL for Expression {
                 };
                 if let FieldType::Character(width) = field_type {
                     conf.context.write_padding(out, &full_name, *width)
+                } else if let FieldType::Date = field_type {
+                    conf.context.coalesce_date(out, &full_name)
                 } else {
                     out.write_str(&full_name)
                 }

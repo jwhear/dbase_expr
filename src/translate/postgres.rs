@@ -5,7 +5,7 @@ use super::{
 use crate::{
     ast::{self, Expression as E},
     codebase_functions::CodebaseFunction as F,
-    translate::Parenthesize,
+    translate::{COALESCE_DATE, Parenthesize},
 };
 
 /// This type provides default function translation for Postgres. You can
@@ -132,6 +132,26 @@ pub fn translate_fn_call(
     let arg = |index: usize| get_arg(index, args, cx, name);
     let all_args = || get_all_args(args, cx);
     let wrong_type = |index| wrong_type(index, name, args);
+    let date = |format: &str| {
+        //this translates blank strings into the coalesce date so that it can be properly compared
+        let trim = Expression::FunctionCall {
+            name: "TRIM".into(),
+            args: vec![arg(0)??.0],
+        };
+        let null_if = Expression::FunctionCall {
+            name: "NULLIF".into(),
+            args: vec![Box::new(trim), "".into()],
+        };
+        let to_date = Expression::FunctionCall {
+            name: "TO_DATE".into(),
+            args: vec![Box::new(null_if), format.into()],
+        };
+        let coalesce = Expression::FunctionCall {
+            name: "COALESCE".into(),
+            args: vec![Box::new(to_date), COALESCE_DATE.into()],
+        };
+        ok(coalesce, FieldType::Date)
+    };
 
     match name {
         // ALLTRIM(x) => TRIM(x)
@@ -150,18 +170,8 @@ pub fn translate_fn_call(
             },
             FieldType::Character(1),
         ),
-        // CTOD(x) => TO_DATE(x, 'MM/DD/YY')
-        F::CTOD => ok(
-            Expression::FunctionCall {
-                name: "TO_DATE".into(),
-                args: vec![
-                    arg(0)??.0,
-                    //TODO the date format can be changed on the Codebase object
-                    "MM/DD/YY".into(),
-                ],
-            },
-            FieldType::Date,
-        ),
+        // CTOD(x) => COALESCE(TO_DATE(NULLIF(TRIM(x),''),'MM/DD/YY'),'0001-01-01')
+        F::CTOD => date("MM/DD/YY"), //TODO the date format can be changed on the Codebase object
         // DATE() => CURRENT_DATE
         F::DATE => ok(
             //TODO do we need to format as a string here?
@@ -295,14 +305,8 @@ pub fn translate_fn_call(
             FieldType::Memo,
         ),
 
-        // STOD(x) => TO_DATE(x, 'YYYYMMDD')
-        F::STOD => ok(
-            Expression::FunctionCall {
-                name: "TO_DATE".to_string(),
-                args: vec![arg(0)??.0, "YYYYMMDD".into()],
-            },
-            FieldType::Date,
-        ),
+        // STOD(x) => COALESCE(TO_DATE(NULLIF(TRIM(x),''),'YYYYMMDD'),'0001-01-01')
+        F::STOD => date("YYYYMMDD"),
         // STR(num, len, dec) => PRINTF("%{len}.{dec}f", num)
         F::STR => {
             // `len` and dec` must be constants according to CB docs, so we can
