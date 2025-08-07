@@ -81,6 +81,15 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
             eval_binary_op(op, left, right)
         }
 
+        Expression::AddSequence(operands) => {
+            let op = &BinaryOp::Add;
+            let mut accum = evaluate(&operands[0], get)?;
+            for operand in &operands[1..] {
+                accum = eval_binary_op(op, accum, evaluate(operand, get)?)?;
+            }
+            Ok(accum)
+        }
+
         Expression::FunctionCall { name, args } => {
             let eval_args: Result<Vec<Value>, String> =
                 args.iter().map(|arg| evaluate(arg, get)).collect();

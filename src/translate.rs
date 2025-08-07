@@ -72,6 +72,11 @@ pub enum Expression {
         args: Vec<Box<Expression>>,
     },
     BinaryOperator(Box<Expression>, BinaryOp, Box<Expression>, Parenthesize),
+    // This is an optimization of BinaryOperator for things like:
+    //   a + b + c + d
+    // OR
+    //   a || b || c
+    BinaryOperatorSequence(BinaryOp, Vec<Expression>),
     UnaryOperator(UnaryOp, Box<Expression>),
     Cast(Box<Expression>, &'static str),
     Iif {

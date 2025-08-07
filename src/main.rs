@@ -154,6 +154,8 @@ fn expr_tests() {
          VAL(STR((DATE() - STOD('20000102'))/7 - 0.5,6,0))*7)",
         // Precision test
         "STR(0.1 + 1/3, 17, 15)",
+        // Recursion test
+        "a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c",
     ];
 
     let value_lookup = |field_name: &str| -> Option<evaluate::Value> {
@@ -176,10 +178,15 @@ fn expr_tests() {
 
     for test in tests.iter() {
         match parser.parse(test) {
-            Ok(t) => match evaluate::evaluate(&t, &value_lookup) {
-                Ok(tree) => println!("{test} => {tree:?}\n"),
-                Err(e) => eprintln!("{test} => Error translating tree: {e:?}\n:{test}\n"),
-            },
+            Ok(t) => {
+                //println!("{t:?}");
+                let t = ast::simplify(*t);
+                //println!("{t:?}");
+                match evaluate::evaluate(&t, &value_lookup) {
+                    Ok(tree) => println!("{test} => {tree:?}\n"),
+                    Err(e) => eprintln!("{test} => Error translating tree: {e:?}\n:{test}\n"),
+                }
+            }
             // The parse failed with an unexpected token: show the approximate
             //  position in the source
             Err(lalrpop_util::ParseError::InvalidToken { location }) => {
@@ -225,17 +232,22 @@ fn to_sql_tests<T: TranslationContext>(cx: &T) {
          SHIP_DATE < date() + 14 -
          ((DATE() - STOD('20000102')) -
           VAL(STR((DATE() - STOD('20000102'))/7 - 0.5,6,0))*7)",
+        // Simplification test
+        "a + b + c + a + b",
     ];
 
     for test in tests.iter() {
         match parser.parse(test) {
-            Ok(t) => match cx.translate(&t) {
-                Ok(tree) => println!(
-                    "{test}\n=>\n{}\n",
-                    Printer::new(tree.0, PrinterConfig::default())
-                ),
-                Err(e) => eprintln!("Error translating tree: {e:?}\n:{test}\n"),
-            },
+            Ok(t) => {
+                let t = ast::simplify(*t);
+                match cx.translate(&t) {
+                    Ok(tree) => println!(
+                        "{test}\n=>\n{}\n",
+                        Printer::new(tree.0, PrinterConfig::default())
+                    ),
+                    Err(e) => eprintln!("Error translating tree: {e:?}\n:{test}\n"),
+                }
+            }
 
             // The parse failed with an unexpected token: show the approximate
             //  position in the source
