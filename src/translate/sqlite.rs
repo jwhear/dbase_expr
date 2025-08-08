@@ -149,7 +149,7 @@ pub fn translate_fn_call(
                 ok(
                     Expression::FunctionCall {
                         name: "STRFTIME".into(),
-                        args: vec!["'%Y%m%d'".into(), arg(0)??.0],
+                        args: vec!["%Y%m%d".into(), arg(0)??.0],
                     },
                     FieldType::Character(8),
                 )
@@ -167,7 +167,7 @@ pub fn translate_fn_call(
         F::DTOS => ok(
             Expression::FunctionCall {
                 name: "STRFTIME".into(),
-                args: vec!["'%Y%m%d'".into(), arg(0)??.0],
+                args: vec!["%Y%m%d".into(), arg(0)??.0],
             },
             FieldType::Character(8),
         ),
