@@ -49,25 +49,76 @@ pub enum Expression {
 
 /// Applies simplifications to the AST.
 pub fn simplify(expr: Expression) -> Expression {
-    if let Expression::BinaryOperator(l, BinaryOp::Add, r) = expr {
-        // Trees nest to the left: a + b + c => ((a + b) + c)
-        // We'll build up our vector in a loop like so:
-        //  [c]
-        //  [c, b]
-        //  [c, b, a]
-        // Then reverse it at the end. For addition proper it's not a big deal
-        //  but '+' is also used for concatenation and order is very important
-        let mut v = vec![r];
-        let mut tree = l;
-        while let Expression::BinaryOperator(l, BinaryOp::Add, r) = *tree {
-            v.push(r);
-            tree = l;
+    let mut expr = expr;
+    loop {
+        let (new_expr, changed) = simplify_impl(expr);
+        if !changed {
+            break new_expr;
         }
-        v.push(tree);
-        v.reverse();
-        Expression::AddSequence(v)
-    } else {
-        // Leave expression untouched
-        expr
+        expr = new_expr;
+    }
+}
+
+pub fn simplify_impl(expr: Expression) -> (Expression, bool) {
+    match expr {
+        // Non-composite types can't be simplified
+        Expression::BoolLiteral(_)
+        | Expression::NumberLiteral(_)
+        | Expression::DoubleQuoteStringLiteral(_)
+        | Expression::SingleQuoteStringLiteral(_)
+        | Expression::Field { .. } => (expr, false),
+
+        // Attempt to simplify a chain of BinaryOp(Add) to an AddSequence
+        Expression::BinaryOperator(l, BinaryOp::Add, r) => {
+            // Trees nest to the left: a + b + c => ((a + b) + c)
+            // We'll build up our vector in a loop like so:
+            //  [c]
+            //  [c, b]
+            //  [c, b, a]
+            // Then reverse it at the end. For addition proper it's not a big deal
+            //  but '+' is also used for concatenation and order is very important
+            //TODO simplify elements?
+            let mut v = vec![r];
+            let mut tree = l;
+            while let Expression::BinaryOperator(l, BinaryOp::Add, r) = *tree {
+                v.push(r);
+                tree = l;
+            }
+            v.push(tree);
+            v.reverse();
+            return (Expression::AddSequence(v), true);
+        }
+
+        // Recursively simplify operands
+        Expression::FunctionCall { name, args } => {
+            let mut args_changed = false;
+            let mut simple_args = Vec::new();
+            for arg in args {
+                let (arg, changed) = simplify_impl(*arg);
+                simple_args.push(Box::new(arg));
+                args_changed |= changed;
+            }
+            (
+                Expression::FunctionCall {
+                    name,
+                    args: simple_args,
+                },
+                args_changed,
+            )
+        }
+        Expression::BinaryOperator(left, op, right) => {
+            let (left, left_changed) = simplify_impl(*left);
+            let (right, right_changed) = simplify_impl(*right);
+            (
+                Expression::BinaryOperator(Box::new(left), op, Box::new(right)),
+                left_changed | right_changed,
+            )
+        }
+        Expression::UnaryOperator(op, right) => {
+            let (right, changed) = simplify_impl(*right);
+            (Expression::UnaryOperator(op, Box::new(right)), changed)
+        }
+        // Already simplified
+        Expression::AddSequence(v) => (Expression::AddSequence(v), false),
     }
 }
