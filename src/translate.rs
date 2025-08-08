@@ -56,6 +56,13 @@ impl Parenthesize {
     }
 }
 
+/// A WHEN branch for CASE
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct When {
+    pub cond: Box<Expression>,
+    pub then: Box<Expression>,
+}
+
 /// This is the output type of translation: a Codebase AST goes in, a SQL AST
 ///  comes out.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,6 +91,10 @@ pub enum Expression {
         cond: Box<Expression>,
         when_true: Box<Expression>,
         when_false: Box<Expression>,
+    },
+    Case {
+        branches: Vec<When>,
+        r#else: Box<Expression>,
     },
     // used for things like "CURRENT_DATE" which are functions but don't
     //  allow the parentheses.

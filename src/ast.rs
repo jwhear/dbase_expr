@@ -89,6 +89,8 @@ pub fn simplify_impl(expr: Expression) -> (Expression, bool) {
             return (Expression::AddSequence(v), true);
         }
 
+        // No optimizations below this line: simply recursively simplify operands
+
         // Recursively simplify operands
         Expression::FunctionCall { name, args } => {
             let mut args_changed = false;
