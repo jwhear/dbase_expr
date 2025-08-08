@@ -246,18 +246,49 @@ pub fn translate_fn_call(
             FieldType::Character(8),
         ),
 
-        // IIF(x, y, z) => Iif expression
+        // Translate nested IIFs to a flat CASE WHEN. This optimization is
+        //  important because some databases (looking at you, SQL Server) have
+        //  a limit how deeply nested control flow like CASE and IIF can go.
+        //
+        // Note that this:
+        //   IIF(cond_a, v1, IIF(cond_b, v2, v3))
+        // is always structurally equivalent to:
+        //   CASE WHEN cond_a THEN v1 WHEN cond_b THEN v2 ELSE v3 END
         F::IIF => {
             // The result type will be the type of the when_true expression
-            let (when_true, ty) = arg(1)??;
-            ok(
-                Expression::Iif {
-                    cond: arg(0)??.0,
-                    when_true,
-                    when_false: arg(2)??.0,
-                },
-                ty,
-            )
+            let (_, ty) = arg(1)??;
+
+            let mut branches = Vec::new();
+            // We have to take ownership of args for the loop to work
+            //TODO(justin): come back and try to rework this
+            let mut inner_args = Vec::from(args);
+
+            // Add this IIF as a When branch. If when_false is an IIF, traverse
+            //  into it and repeat. We'll eventually encounter a when_false that
+            //  is not an IIF: that will become our ELSE value.
+            let r#else = loop {
+                match inner_args.as_slice() {
+                    [cond, when_true, when_false] => {
+                        // Convert this IIF to a WHEN
+                        branches.push(super::When {
+                            cond: cx.translate(cond)?.0,
+                            then: cx.translate(when_true)?.0,
+                        });
+
+                        //TODO there's probably a way to work around this clone
+                        let expr: ast::Expression = (**when_false).clone();
+                        if let ast::Expression::FunctionCall { name: F::IIF, args } = expr {
+                            inner_args = args.clone();
+                        } else {
+                            break when_false;
+                        }
+                    }
+                    _ => panic!("IIF should always have three arguments"),
+                }
+            };
+            let (r#else, _) = cx.translate(r#else)?;
+
+            ok(Expression::Case { branches, r#else }, ty)
         }
         // LEFT(x, n) => SUBSTR(x, 1, n)
         F::LEFT => ok(
