@@ -261,8 +261,8 @@ pub fn translate_fn_call(
                     [cond, when_true, when_false] => {
                         // Convert this IIF to a WHEN
                         branches.push(super::When {
-                            cond: cx.translate(&cond)?.0,
-                            then: cx.translate(&when_true)?.0,
+                            cond: cx.translate(cond)?.0,
+                            then: cx.translate(when_true)?.0,
                         });
 
                         //TODO there's probably a way to work around this clone
@@ -276,7 +276,7 @@ pub fn translate_fn_call(
                     _ => panic!("IIF should always have three arguments"),
                 }
             };
-            let (r#else, _) = cx.translate(&r#else)?;
+            let (r#else, _) = cx.translate(r#else)?;
 
             ok(Expression::Case { branches, r#else }, ty)
         }

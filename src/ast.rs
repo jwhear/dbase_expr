@@ -86,7 +86,7 @@ pub fn simplify_impl(expr: Expression) -> (Expression, bool) {
             }
             v.push(tree);
             v.reverse();
-            return (Expression::AddSequence(v), true);
+            (Expression::AddSequence(v), true)
         }
 
         // No optimizations below this line: simply recursively simplify operands
