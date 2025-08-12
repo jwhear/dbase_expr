@@ -1,0 +1,23 @@
+[package]
+name = "dbase_expr-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+arbitrary = "1.4.1"
+chrono = { version = "0.4.41", features = ["serde"] }
+libfuzzer-sys = "0.4"
+
+[dependencies.dbase_expr]
+path = ".."
+
+[[bin]]
+name = "fuzz_expr"
+path = "fuzz_targets/fuzz_expr.rs"
+test = false
+doc = false
+bench = false
