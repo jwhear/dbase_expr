@@ -118,7 +118,7 @@ pub fn translate<C: TranslationContext>(source: &E, cx: &C) -> Result {
             cx.translate_binary_op(l, op, r)
         }
         E::FunctionCall { name, args } => cx.translate_fn_call(name, args),
-        E::AddSequence(operands) => {
+        E::Sequence(operands, op) => {
             // We'll inspect the type of the first operand and use that to
             //  either emit a '+' or a '||'
             let (_, ty) = cx.translate(&operands[0])?;
@@ -126,12 +126,14 @@ pub fn translate<C: TranslationContext>(source: &E, cx: &C) -> Result {
                 .iter()
                 .map(|op| cx.translate(op).map(|(e, _ty)| *e))
                 .collect::<std::result::Result<Vec<Expression>, Error>>()?;
-            let operator = match ty {
-                FieldType::Character(_) | FieldType::Memo | FieldType::MemoBinary => {
-                    BinaryOp::Concat
-                }
 
-                _ => BinaryOp::Add,
+            let operator = match (op, ty) {
+                (
+                    &ast::ConcatOp::Add,
+                    FieldType::Character(_) | FieldType::Memo | FieldType::MemoBinary,
+                ) => BinaryOp::Concat,
+                (&ast::ConcatOp::Add, _) => BinaryOp::Add,
+                (&ast::ConcatOp::Sub, _) => BinaryOp::Sub,
             };
             ok(Expression::BinaryOperatorSequence(operator, exprs), ty)
         }
