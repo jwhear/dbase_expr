@@ -305,13 +305,13 @@ pub fn string_comp_left(l: Box<Expression>, r: Box<Expression>) -> Box<Expressio
 }
 
 // The right side of the string comparison should be truncated to the fixed length, no need to evaluate additional characters
-pub fn string_comp_right(r: Box<ast::Expression>, len: u32) -> Box<ast::Expression> {
-    Box::new(ast::Expression::FunctionCall {
-        name: CodebaseFunction::SUBSTR,
+pub fn string_comp_right(r: Box<Expression>, len: u32) -> Box<Expression> {
+    Box::new(Expression::FunctionCall {
+        name: "SUBSTR".into(),
         args: vec![
             r,
-            Box::new(ast::Expression::NumberLiteral("1".into())),
-            Box::new(ast::Expression::NumberLiteral(len.to_string())),
+            Box::new(Expression::NumberLiteral("1".into())),
+            Box::new(Expression::NumberLiteral(len.to_string())),
         ],
     })
 }
