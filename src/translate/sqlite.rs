@@ -203,33 +203,25 @@ pub fn translate_fn_call(
         }
         F::STOD => {
             //COALESCE(DATE(SUBSTR(TRIM(x),1,4),SUBSTR(TRIM(x),5,2),SUBSTR(TRIM(x),7,2)),'0001-01-01')
-            let trim = Expression::FunctionCall {
+            let trim = expr_ref(Expression::FunctionCall {
                 name: "TRIM".into(),
                 args: vec![arg(0)??.0],
-            };
+            });
             // Convert format -> 'YYYY-MM-DD' using SUBSTR
             let date = Expression::FunctionCall {
                 name: "DATE".into(),
                 args: vec![
                     expr_ref(Expression::FunctionCall {
                         name: "SUBSTR".into(),
-                        args: vec![
-                            expr_ref(trim.clone()),
-                            expr_ref(1.into()),
-                            expr_ref(4.into()),
-                        ],
+                        args: vec![trim.clone(), expr_ref(1.into()), expr_ref(4.into())],
                     }),
                     expr_ref(Expression::FunctionCall {
                         name: "SUBSTR".into(),
-                        args: vec![
-                            expr_ref(trim.clone()),
-                            expr_ref(5.into()),
-                            expr_ref(2.into()),
-                        ],
+                        args: vec![trim.clone(), expr_ref(5.into()), expr_ref(2.into())],
                     }),
                     expr_ref(Expression::FunctionCall {
                         name: "SUBSTR".into(),
-                        args: vec![expr_ref(trim), expr_ref(7.into()), expr_ref(2.into())],
+                        args: vec![trim, expr_ref(7.into()), expr_ref(2.into())],
                     }),
                 ],
             };

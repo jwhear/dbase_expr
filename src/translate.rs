@@ -65,7 +65,7 @@ impl Parenthesize {
 }
 
 /// A WHEN branch for CASE
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct When {
     pub cond: ExprRef,
     pub then: ExprRef,
@@ -73,7 +73,7 @@ pub struct When {
 
 /// This is the output type of translation: a Codebase AST goes in, a SQL AST
 ///  comes out.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Expression {
     BoolLiteral(bool),
     NumberLiteral(String),
