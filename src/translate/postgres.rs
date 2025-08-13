@@ -5,7 +5,7 @@ use super::{
 use crate::{
     ast::{self, Expression as E},
     codebase_functions::CodebaseFunction as F,
-    translate::{COALESCE_DATE, Parenthesize},
+    translate::{COALESCE_DATE, ExprRef, Parenthesize, expr_ref},
 };
 
 /// This type provides default function translation for Postgres. You can
@@ -48,7 +48,7 @@ where
         &self,
         name: &crate::codebase_functions::CodebaseFunction,
         args: &[Box<ast::Expression>],
-    ) -> std::result::Result<(Box<Expression>, FieldType), Error> {
+    ) -> std::result::Result<(ExprRef, FieldType), Error> {
         translate_fn_call(name, args, self)
     }
 }
@@ -122,11 +122,11 @@ pub fn translate<C: TranslationContext>(source: &E, cx: &C) -> Result {
             // We'll inspect the type of the first operand and use that to
             //  either emit a '+' or a '||'
             let (first_expr, ty) = cx.translate(&operands[0])?;
-            let first_expr = *first_expr;
+            let first_expr = first_expr;
             let mut exprs = Vec::with_capacity(operands.len());
             exprs.push(first_expr);
             for operand in &operands[1..] {
-                let expr = *cx.translate(operand)?.0;
+                let expr = cx.translate(operand)?.0;
                 exprs.push(expr);
             }
 
@@ -150,7 +150,7 @@ pub fn translate_fn_call(
     name: &F,
     args: &[Box<ast::Expression>],
     cx: &impl TranslationContext,
-) -> std::result::Result<(Box<Expression>, FieldType), Error> {
+) -> std::result::Result<(ExprRef, FieldType), Error> {
     let arg = |index: usize| get_arg(index, args, cx, name);
     let all_args = || get_all_args(args, cx);
     let wrong_type = |index| wrong_type(index, name, args);
@@ -162,15 +162,15 @@ pub fn translate_fn_call(
         };
         let null_if = Expression::FunctionCall {
             name: "NULLIF".into(),
-            args: vec![Box::new(trim), "".into()],
+            args: vec![expr_ref(trim), expr_ref("".into())],
         };
         let to_date = Expression::FunctionCall {
             name: "TO_DATE".into(),
-            args: vec![Box::new(null_if), format.into()],
+            args: vec![expr_ref(null_if), expr_ref(format.into())],
         };
         let coalesce = Expression::FunctionCall {
             name: "COALESCE".into(),
-            args: vec![Box::new(to_date), COALESCE_DATE.into()],
+            args: vec![expr_ref(to_date), expr_ref(COALESCE_DATE.into())],
         };
         ok(coalesce, FieldType::Date)
     };
@@ -204,7 +204,7 @@ pub fn translate_fn_call(
         F::DAY => ok(
             Expression::FunctionCall {
                 name: "DATE_PART".into(),
-                args: vec!["DAY".into(), arg(0)??.0],
+                args: vec![expr_ref("DAY".into()), arg(0)??.0],
             },
             FieldType::Double,
         ),
@@ -225,7 +225,7 @@ pub fn translate_fn_call(
                 ok(
                     Expression::FunctionCall {
                         name: "TO_CHAR".into(),
-                        args: vec![arg(0)??.0, "YYYYMMDD".into()],
+                        args: vec![arg(0)??.0, expr_ref("YYYYMMDD".into())],
                     },
                     FieldType::Character(8),
                 )
@@ -236,7 +236,7 @@ pub fn translate_fn_call(
                         args: vec![
                             arg(0)??.0,
                             //TODO this is controlled by the Code4
-                            "MM/DD/YY".into(),
+                            expr_ref("MM/DD/YY".into()),
                         ],
                     },
                     FieldType::Character(8),
@@ -246,7 +246,7 @@ pub fn translate_fn_call(
         F::DTOS => ok(
             Expression::FunctionCall {
                 name: "TO_CHAR".into(),
-                args: vec![arg(0)??.0, "YYYYMMDD".into()],
+                args: vec![arg(0)??.0, expr_ref("YYYYMMDD".into())],
             },
             FieldType::Character(8),
         ),
@@ -299,7 +299,7 @@ pub fn translate_fn_call(
         F::LEFT => ok(
             Expression::FunctionCall {
                 name: "SUBSTR".to_string(),
-                args: vec![arg(0)??.0, 1.into(), arg(1)??.0],
+                args: vec![arg(0)??.0, expr_ref(1.into()), arg(1)??.0],
             },
             FieldType::Memo,
         ),
@@ -315,7 +315,7 @@ pub fn translate_fn_call(
         F::MONTH => ok(
             Expression::FunctionCall {
                 name: "DATE_PART".into(),
-                args: vec!["MONTH".into(), arg(0)??.0],
+                args: vec![expr_ref("MONTH".into()), arg(0)??.0],
             },
             FieldType::Double,
         ),
@@ -333,7 +333,7 @@ pub fn translate_fn_call(
         // RIGHT(x, n) => RIGHT(x, n)
         F::RIGHT => {
             let (x, ty) = arg(0)??;
-            let n = match arg(1)??.0.as_ref() {
+            let n = match &*arg(1)??.0.borrow() {
                 Expression::NumberLiteral(v) => v.parse::<u32>().map_err(|_| wrong_type(1)),
                 _ => Err(wrong_type(1)),
             }?;
@@ -364,11 +364,11 @@ pub fn translate_fn_call(
         F::STR => {
             // `len` and dec` must be constants according to CB docs, so we can
             //   get them and convert to integers, then mix up a printf call
-            let len: i64 = match arg(1)??.0.as_ref() {
+            let len: i64 = match &*arg(1)??.0.borrow() {
                 Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(1)),
                 _ => Err(wrong_type(1)),
             }?;
-            let dec: i64 = match arg(2)??.0.as_ref() {
+            let dec: i64 = match &*arg(2)??.0.borrow() {
                 Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(2)),
                 _ => Err(wrong_type(2)),
             }?;
@@ -386,14 +386,14 @@ pub fn translate_fn_call(
                     name: "TO_CHAR".to_string(),
                     args: vec![
                         arg(0)??.0, // value to be formatted
-                        fmt.into(),
+                        expr_ref(fmt.into()),
                     ],
                 },
                 FieldType::Character(len as u32),
             )
         }
         F::SUBSTR => {
-            let len: u32 = match arg(2)??.0.as_ref() {
+            let len: u32 = match &*arg(2)??.0.borrow() {
                 Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(2)),
                 _ => Err(wrong_type(2)),
             }?;
@@ -432,7 +432,7 @@ pub fn translate_fn_call(
         F::YEAR => ok(
             Expression::FunctionCall {
                 name: "DATE_PART".into(),
-                args: vec!["YEAR".into(), arg(0)??.0],
+                args: vec![expr_ref("YEAR".into()), arg(0)??.0],
             },
             FieldType::Double,
         ),
@@ -492,27 +492,27 @@ pub fn translate_binary_op<T: TranslationContext>(
         // )
         //
         (ast::BinaryOp::Sub, FieldType::Character(_) | FieldType::Memo) => {
-            let without_spaces = Box::new(Expression::FunctionCall {
+            let without_spaces = expr_ref(Expression::FunctionCall {
                 name: "RTRIM".into(),
                 args: vec![l.clone()],
             });
-            let length_without_spaces = Box::new(Expression::FunctionCall {
+            let length_without_spaces = expr_ref(Expression::FunctionCall {
                 name: "LENGTH".into(),
                 args: vec![without_spaces.clone()],
             });
-            let length_with_spaces = Box::new(Expression::FunctionCall {
+            let length_with_spaces = expr_ref(Expression::FunctionCall {
                 name: "LENGTH".into(),
                 args: vec![l],
             });
-            let num_spaces = Box::new(Expression::BinaryOperator(
+            let num_spaces = expr_ref(Expression::BinaryOperator(
                 length_with_spaces,
                 BinaryOp::Sub,
                 length_without_spaces,
                 Parenthesize::No,
             ));
-            let repeated_spaces = Box::new(Expression::FunctionCall {
+            let repeated_spaces = expr_ref(Expression::FunctionCall {
                 name: "REPEAT".into(),
-                args: vec!["' '".into(), num_spaces],
+                args: vec![expr_ref("' '".into()), num_spaces],
             });
             ok(
                 Expression::FunctionCall {
@@ -642,7 +642,7 @@ pub fn translate_binary_op<T: TranslationContext>(
                 Parenthesize::Yes,
             );
             ok(
-                Expression::UnaryOperator(UnaryOp::Not, Box::new(starts_with)),
+                Expression::UnaryOperator(UnaryOp::Not, expr_ref(starts_with)),
                 FieldType::Logical,
             )
         }
@@ -668,7 +668,7 @@ pub fn translate_binary_op<T: TranslationContext>(
         //NOTE(justin): not using LIKE here because the needle might contain
         // LIKE wildcards (% and _).
         (ast::BinaryOp::Contain, FieldType::Character(_)) => {
-            let strpos = Box::new(Expression::FunctionCall {
+            let strpos = expr_ref(Expression::FunctionCall {
                 name: "STRPOS".to_string(),
                 // Note that in CodeBase the haystack is the right arg
                 args: vec![translate(r, cx)?.0, l],
@@ -687,7 +687,7 @@ pub fn get_arg(
     args: &[Box<ast::Expression>],
     cx: &impl TranslationContext,
     name: &F,
-) -> std::result::Result<std::result::Result<(Box<Expression>, FieldType), Error>, Error> {
+) -> std::result::Result<std::result::Result<(ExprRef, FieldType), Error>, Error> {
     args.get(index)
         .map(|a| translate(a, cx))
         .ok_or(Error::IncorrectArgCount(format!("{name:?}"), index))
@@ -696,7 +696,7 @@ pub fn get_arg(
 pub fn get_all_args(
     args: &[Box<ast::Expression>],
     cx: &impl TranslationContext,
-) -> std::result::Result<Vec<Box<Expression>>, Error> {
+) -> std::result::Result<Vec<ExprRef>, Error> {
     args.iter().map(|a| translate(a, cx).map(|r| r.0)).collect()
 }
 

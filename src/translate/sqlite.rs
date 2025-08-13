@@ -2,8 +2,8 @@ use crate::{
     ast,
     codebase_functions::CodebaseFunction as F,
     translate::{
-        BinaryOp, COALESCE_DATE, Error, Expression, FieldType, Parenthesize, Result,
-        TranslationContext, ok,
+        BinaryOp, COALESCE_DATE, Error, ExprRef, Expression, FieldType, Parenthesize, Result,
+        TranslationContext, expr_ref, ok,
         postgres::{
             self, get_all_args, get_arg, translate as default_translate, translate_binary_op,
             wrong_type,
@@ -38,7 +38,7 @@ where
         &self,
         name: &crate::codebase_functions::CodebaseFunction,
         args: &[Box<ast::Expression>],
-    ) -> std::result::Result<(Box<Expression>, FieldType), Error> {
+    ) -> std::result::Result<(ExprRef, FieldType), Error> {
         translate_fn_call(name, args, self)
     }
 
@@ -71,28 +71,28 @@ where
     }
 }
 
-fn expr_between_right_side(expression: Box<Expression>) -> Box<Expression> {
+fn expr_between_right_side(expression: ExprRef) -> ExprRef {
     let char = Expression::BareFunctionCall("char(0xFFFF)".to_string());
     let appended = Expression::BinaryOperator(
         expression.clone(),
         BinaryOp::Concat,
-        Box::new(char),
+        expr_ref(char),
         Parenthesize::No,
     );
     let combined = Expression::BinaryOperator(
         expression,
         BinaryOp::And,
-        Box::new(appended),
+        expr_ref(appended),
         Parenthesize::No,
     );
-    Box::new(combined)
+    expr_ref(combined)
 }
 
 pub fn translate_fn_call(
     name: &F,
     args: &[Box<ast::Expression>],
     cx: &impl TranslationContext,
-) -> std::result::Result<(Box<Expression>, FieldType), Error> {
+) -> std::result::Result<(ExprRef, FieldType), Error> {
     let arg = |index: usize| get_arg(index, args, cx, name);
     let all_args = || get_all_args(args, cx);
     let wrong_type = |index| wrong_type(index, name, args);
@@ -115,19 +115,19 @@ pub fn translate_fn_call(
             };
             let null_if = Expression::FunctionCall {
                 name: "NULLIF".into(),
-                args: vec![Box::new(trim), "".into()],
+                args: vec![expr_ref(trim), expr_ref("".into())],
             };
             // Convert format -> 'YYYY-MM-DD' using SUBSTR
             let date = Expression::FunctionCall {
                 name: "DATE".into(),
-                args: vec![Box::new(Expression::FunctionCall {
+                args: vec![expr_ref(Expression::FunctionCall {
                     name: "printf".into(),
-                    args: vec![Box::new(null_if)], // assumes date in ISO 8601 or needs pre-processing
+                    args: vec![expr_ref(null_if)], // assumes date in ISO 8601 or needs pre-processing
                 })],
             };
             let coalesce = Expression::FunctionCall {
                 name: "COALESCE".into(),
-                args: vec![Box::new(date), COALESCE_DATE.into()],
+                args: vec![expr_ref(date), expr_ref(COALESCE_DATE.into())],
             };
             ok(coalesce, FieldType::Date)
         }
@@ -135,9 +135,9 @@ pub fn translate_fn_call(
         F::DAY => ok(
             Expression::FunctionCall {
                 name: "CAST".to_string(),
-                args: vec![Box::new(Expression::FunctionCall {
+                args: vec![expr_ref(Expression::FunctionCall {
                     name: "STRFTIME".to_string(),
-                    args: vec!["'%d'".into(), arg(0)??.0],
+                    args: vec![expr_ref("'%d'".into()), arg(0)??.0],
                 })],
             },
             FieldType::Double,
@@ -149,7 +149,7 @@ pub fn translate_fn_call(
                 ok(
                     Expression::FunctionCall {
                         name: "STRFTIME".into(),
-                        args: vec!["%Y%m%d".into(), arg(0)??.0],
+                        args: vec![expr_ref("%Y%m%d".into()), arg(0)??.0],
                     },
                     FieldType::Character(8),
                 )
@@ -157,7 +157,7 @@ pub fn translate_fn_call(
                 ok(
                     Expression::FunctionCall {
                         name: "STRFTIME".into(),
-                        args: vec!["'%m/%d/%y'".into(), arg(0)??.0],
+                        args: vec![expr_ref("'%m/%d/%y'".into()), arg(0)??.0],
                     },
                     FieldType::Character(8),
                 )
@@ -167,7 +167,7 @@ pub fn translate_fn_call(
         F::DTOS => ok(
             Expression::FunctionCall {
                 name: "STRFTIME".into(),
-                args: vec!["%Y%m%d".into(), arg(0)??.0],
+                args: vec![expr_ref("%Y%m%d".into()), arg(0)??.0],
             },
             FieldType::Character(8),
         ),
@@ -175,9 +175,9 @@ pub fn translate_fn_call(
         F::MONTH => ok(
             Expression::FunctionCall {
                 name: "CAST".to_string(),
-                args: vec![Box::new(Expression::FunctionCall {
+                args: vec![expr_ref(Expression::FunctionCall {
                     name: "STRFTIME".into(),
-                    args: vec!["'%m'".into(), arg(0)??.0],
+                    args: vec![expr_ref("'%m'".into()), arg(0)??.0],
                 })],
             },
             FieldType::Double,
@@ -185,7 +185,7 @@ pub fn translate_fn_call(
 
         F::RIGHT => {
             let (x, ty) = arg(0)??;
-            let n: u32 = match arg(1)??.0.as_ref() {
+            let n: u32 = match &*arg(1)??.0.borrow() {
                 Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(1)),
                 _ => Err(wrong_type(1)),
             }?;
@@ -196,47 +196,47 @@ pub fn translate_fn_call(
             ok(
                 Expression::FunctionCall {
                     name: "SUBSTR".into(),
-                    args: vec![x, (-i64::from(n)).into()],
+                    args: vec![x, expr_ref((-i64::from(n)).into())],
                 },
                 out_ty,
             )
         }
         F::STOD => {
             //COALESCE(DATE(SUBSTR(TRIM(x),1,4),SUBSTR(TRIM(x),5,2),SUBSTR(TRIM(x),7,2)),'0001-01-01')
-            let trim = Expression::FunctionCall {
+            let trim = expr_ref(Expression::FunctionCall {
                 name: "TRIM".into(),
                 args: vec![arg(0)??.0],
-            };
+            });
             // Convert format -> 'YYYY-MM-DD' using SUBSTR
             let date = Expression::FunctionCall {
                 name: "DATE".into(),
                 args: vec![
-                    Box::new(Expression::FunctionCall {
+                    expr_ref(Expression::FunctionCall {
                         name: "SUBSTR".into(),
-                        args: vec![Box::new(trim.clone()), 1.into(), 4.into()],
+                        args: vec![trim.clone(), expr_ref(1.into()), expr_ref(4.into())],
                     }),
-                    Box::new(Expression::FunctionCall {
+                    expr_ref(Expression::FunctionCall {
                         name: "SUBSTR".into(),
-                        args: vec![Box::new(trim.clone()), 5.into(), 2.into()],
+                        args: vec![trim.clone(), expr_ref(5.into()), expr_ref(2.into())],
                     }),
-                    Box::new(Expression::FunctionCall {
+                    expr_ref(Expression::FunctionCall {
                         name: "SUBSTR".into(),
-                        args: vec![Box::new(trim), 7.into(), 2.into()],
+                        args: vec![trim, expr_ref(7.into()), expr_ref(2.into())],
                     }),
                 ],
             };
             let coalesce = Expression::FunctionCall {
                 name: "COALESCE".into(),
-                args: vec![Box::new(date), COALESCE_DATE.into()],
+                args: vec![expr_ref(date), expr_ref(COALESCE_DATE.into())],
             };
             ok(coalesce, FieldType::Date)
         }
         F::STR => {
-            let len: i64 = match arg(1)??.0.as_ref() {
+            let len: i64 = match &*arg(1)??.0.borrow() {
                 Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(1)),
                 _ => Err(wrong_type(1)),
             }?;
-            let dec: i64 = match arg(2)??.0.as_ref() {
+            let dec: i64 = match &*arg(2)??.0.borrow() {
                 Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(2)),
                 _ => Err(wrong_type(2)),
             }?;
@@ -244,7 +244,7 @@ pub fn translate_fn_call(
             ok(
                 Expression::FunctionCall {
                     name: "PRINTF".to_string(),
-                    args: vec![fmt.into(), arg(0)??.0],
+                    args: vec![expr_ref(fmt.into()), arg(0)??.0],
                 },
                 FieldType::Character(len as u32),
             )
@@ -258,9 +258,9 @@ pub fn translate_fn_call(
         F::YEAR => ok(
             Expression::FunctionCall {
                 name: "CAST".to_string(),
-                args: vec![Box::new(Expression::FunctionCall {
+                args: vec![expr_ref(Expression::FunctionCall {
                     name: "STRFTIME".into(),
-                    args: vec!["'%Y'".into(), arg(0)??.0],
+                    args: vec![expr_ref("'%Y'".into()), arg(0)??.0],
                 })],
             },
             FieldType::Double,

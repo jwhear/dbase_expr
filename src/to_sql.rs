@@ -1,5 +1,9 @@
 use crate::translate::{BinaryOp, COALESCE_DATE, Expression, FieldType, UnaryOp};
-use std::fmt::{Display, Formatter, Result};
+use std::{
+    cell::RefCell,
+    fmt::{Display, Formatter, Result},
+    rc::Rc,
+};
 
 pub trait PrinterContext: std::fmt::Debug {
     fn write_padding(&self, out: &mut Formatter<'_>, inner: &str, width: u32) -> std::fmt::Result;
@@ -88,6 +92,15 @@ where
 {
     fn to_sql(&self, out: &mut Formatter, conf: &PrinterConfig) -> Result {
         self.as_ref().to_sql(out, conf)
+    }
+}
+
+impl<T> ToSQL for Rc<RefCell<T>>
+where
+    T: ToSQL,
+{
+    fn to_sql(&self, out: &mut Formatter, conf: &PrinterConfig) -> Result {
+        self.as_ref().borrow().to_sql(out, conf)
     }
 }
 

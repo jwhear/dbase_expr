@@ -1,4 +1,4 @@
-use std::fmt::Formatter;
+use std::{cell::RefCell, fmt::Formatter, rc::Rc};
 
 use crate::{ast, codebase_functions::CodebaseFunction};
 
@@ -7,6 +7,12 @@ pub mod postgres;
 pub mod sqlite;
 
 pub const COALESCE_DATE: &str = "0001-01-01";
+
+pub type ExprRef = Rc<RefCell<Expression>>;
+
+pub fn expr_ref(expr: Expression) -> ExprRef {
+    Rc::new(RefCell::new(expr))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOp {
@@ -59,15 +65,15 @@ impl Parenthesize {
 }
 
 /// A WHEN branch for CASE
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct When {
-    pub cond: Box<Expression>,
-    pub then: Box<Expression>,
+    pub cond: ExprRef,
+    pub then: ExprRef,
 }
 
 /// This is the output type of translation: a Codebase AST goes in, a SQL AST
 ///  comes out.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Expression {
     BoolLiteral(bool),
     NumberLiteral(String),
@@ -79,24 +85,24 @@ pub enum Expression {
     },
     FunctionCall {
         name: String,
-        args: Vec<Box<Expression>>,
+        args: Vec<ExprRef>,
     },
-    BinaryOperator(Box<Expression>, BinaryOp, Box<Expression>, Parenthesize),
+    BinaryOperator(ExprRef, BinaryOp, ExprRef, Parenthesize),
     // This is an optimization of BinaryOperator for things like:
     //   a + b + c + d
     // OR
     //   a || b || c
-    BinaryOperatorSequence(BinaryOp, Vec<Expression>),
-    UnaryOperator(UnaryOp, Box<Expression>),
-    Cast(Box<Expression>, &'static str),
+    BinaryOperatorSequence(BinaryOp, Vec<ExprRef>),
+    UnaryOperator(UnaryOp, ExprRef),
+    Cast(ExprRef, &'static str),
     Iif {
-        cond: Box<Expression>,
-        when_true: Box<Expression>,
-        when_false: Box<Expression>,
+        cond: ExprRef,
+        when_true: ExprRef,
+        when_false: ExprRef,
     },
     Case {
         branches: Vec<When>,
-        r#else: Box<Expression>,
+        r#else: ExprRef,
     },
     // used for things like "CURRENT_DATE" which are functions but don't
     //  allow the parentheses.
@@ -137,25 +143,25 @@ impl std::fmt::Display for Error {
 impl std::error::Error for Error {}
 
 // These From implementations help the translation implementation
-impl From<&str> for Box<Expression> {
+impl From<&str> for Expression {
     fn from(s: &str) -> Self {
-        Box::new(Expression::SingleQuoteStringLiteral(s.to_string()))
+        Expression::SingleQuoteStringLiteral(s.to_string())
     }
 }
-impl From<String> for Box<Expression> {
+impl From<String> for Expression {
     fn from(s: String) -> Self {
-        Box::new(Expression::SingleQuoteStringLiteral(s))
+        Expression::SingleQuoteStringLiteral(s)
     }
 }
-impl From<i64> for Box<Expression> {
+impl From<i64> for Expression {
     fn from(s: i64) -> Self {
-        Box::new(Expression::NumberLiteral(s.to_string()))
+        Expression::NumberLiteral(s.to_string())
     }
 }
-pub type Result = std::result::Result<(Box<Expression>, FieldType), Error>;
+pub type Result = std::result::Result<(ExprRef, FieldType), Error>;
 
 fn ok(exp: Expression, ty: FieldType) -> Result {
-    Ok((Box::new(exp), ty))
+    Ok((expr_ref(exp), ty))
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -214,7 +220,7 @@ impl FieldType {
 ///             .ok_or(format!("No field named {field}"))
 ///     }
 ///     
-///     fn translate(&self, source: &ast::Expression) -> std::result::Result<(Box<Expression>, FieldType), Error> {
+///     fn translate(&self, source: &ast::Expression) -> std::result::Result<(ExprRef, FieldType), Error> {
 ///         //TODO handle specific cases which are different from Postgres,
 ///         // including cases which should be errors
 ///
@@ -226,7 +232,7 @@ impl FieldType {
 ///         &self,
 ///         name: &CodebaseFunction,
 ///         args: &[Box<ast::Expression>],
-///     ) -> std::result::Result<(Box<Expression>, FieldType), Error> {
+///     ) -> std::result::Result<(ExprRef, FieldType), Error> {
 ///         //TODO similar pattern: most function calls probably resolve to the
 ///         // same thing that Postgres uses but handle the differences here
 ///
@@ -260,7 +266,7 @@ pub trait TranslationContext {
         &self,
         name: &CodebaseFunction,
         args: &[Box<ast::Expression>],
-    ) -> std::result::Result<(Box<Expression>, FieldType), Error>;
+    ) -> std::result::Result<(ExprRef, FieldType), Error>;
 
     fn translate_binary_op(
         &self,
@@ -289,29 +295,29 @@ fn escape_single_quotes(s: &str) -> String {
 }
 
 // The left side of the string comparison should be truncated to the length of the right side (basically a startswith compare)
-pub fn string_comp_left(l: Box<Expression>, r: Box<Expression>) -> Box<Expression> {
-    let right_side_len_expression = Box::new(Expression::FunctionCall {
+pub fn string_comp_left(l: ExprRef, r: ExprRef) -> ExprRef {
+    let right_side_len_expression = expr_ref(Expression::FunctionCall {
         name: "LENGTH".into(),
         args: vec![r],
     });
-    Box::new(Expression::FunctionCall {
+    expr_ref(Expression::FunctionCall {
         name: "SUBSTR".into(),
         args: vec![
             l,
-            Box::new(Expression::NumberLiteral("1".into())),
+            expr_ref(Expression::NumberLiteral("1".into())),
             right_side_len_expression,
         ],
     })
 }
 
 // The right side of the string comparison should be truncated to the fixed length, no need to evaluate additional characters
-pub fn string_comp_right(r: Box<Expression>, len: u32) -> Box<Expression> {
-    Box::new(Expression::FunctionCall {
+pub fn string_comp_right(r: ExprRef, len: u32) -> ExprRef {
+    expr_ref(Expression::FunctionCall {
         name: "SUBSTR".into(),
         args: vec![
             r,
-            Box::new(Expression::NumberLiteral("1".into())),
-            Box::new(Expression::NumberLiteral(len.to_string())),
+            expr_ref(Expression::NumberLiteral("1".into())),
+            expr_ref(Expression::NumberLiteral(len.to_string())),
         ],
     })
 }
