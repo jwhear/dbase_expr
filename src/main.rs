@@ -3,7 +3,7 @@ use dbase_expr::{
     codebase_functions::CodebaseFunction,
     to_sql::PrinterConfig,
     translate::{
-        Error, Expression, FieldType, TranslationContext,
+        Error, ExprRef, Expression, FieldType, TranslationContext, expr_ref,
         postgres::{
             Translator, translate as default_translate, translate_binary_op, translate_fn_call,
         },
@@ -65,7 +65,7 @@ fn main() {
             &self,
             name: &CodebaseFunction,
             args: &[Box<ast::Expression>],
-        ) -> std::result::Result<(Box<Expression>, FieldType), Error> {
+        ) -> std::result::Result<(ExprRef, FieldType), Error> {
             let arg = |index: usize| {
                 args.get(index)
                     .map(|a| default_translate(a, self))
@@ -74,9 +74,9 @@ fn main() {
 
             if name == &CodebaseFunction::DTOS {
                 Ok((
-                    Box::new(Expression::FunctionCall {
+                    expr_ref(Expression::FunctionCall {
                         name: "CB_DATE_TO_TEXT".into(),
-                        args: vec![arg(0)??.0, "YYYYMMDD".into()],
+                        args: vec![arg(0)??.0, expr_ref("YYYYMMDD".into())],
                     }),
                     FieldType::Character(8),
                 ))
