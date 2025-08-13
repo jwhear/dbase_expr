@@ -19,6 +19,21 @@ pub enum BinaryOp {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConcatOp {
+    Add,
+    Sub,
+}
+
+impl ConcatOp {
+    pub fn get_op(&self) -> &BinaryOp {
+        match self {
+            ConcatOp::Add => &BinaryOp::Add,
+            ConcatOp::Sub => &BinaryOp::Sub,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOp {
     Not,
     Neg,
@@ -44,7 +59,7 @@ pub enum Expression {
     /// These sequences result in a deep tree of BinaryOps that can cause the
     ///  translate and evaluation code to blow out their stacks. We can simplify
     ///  to a Vec.
-    AddSequence(Vec<Box<Expression>>),
+    Sequence(Vec<Box<Expression>>, ConcatOp),
 }
 
 /// Applies simplifications to the AST.
@@ -68,29 +83,13 @@ pub fn simplify_impl(expr: Expression) -> (Expression, bool) {
         | Expression::SingleQuoteStringLiteral(_)
         | Expression::Field { .. } => (expr, false),
 
-        // Attempt to simplify a chain of BinaryOp(Add) to an AddSequence
-        Expression::BinaryOperator(l, BinaryOp::Add, r) => {
-            // Trees nest to the left: a + b + c => ((a + b) + c)
-            // We'll build up our vector in a loop like so:
-            //  [c]
-            //  [c, b]
-            //  [c, b, a]
-            // Then reverse it at the end. For addition proper it's not a big deal
-            //  but '+' is also used for concatenation and order is very important
-            //TODO simplify elements?
-            let mut v = vec![r];
-            let mut tree = l;
-            while let Expression::BinaryOperator(l, BinaryOp::Add, r) = *tree {
-                v.push(r);
-                tree = l;
-            }
-            v.push(tree);
-            v.reverse();
-            (Expression::AddSequence(v), true)
-        }
+        // Attempt to simplify a chain of BinaryOp(Add) to a sequence of operators
+        Expression::BinaryOperator(l, BinaryOp::Add, r) => (concat(l, ConcatOp::Add, r), true),
+
+        // Attempt to simplify a chain of BinaryOp(Sub) to a sequence
+        Expression::BinaryOperator(l, BinaryOp::Sub, r) => (concat(l, ConcatOp::Sub, r), true),
 
         // No optimizations below this line: simply recursively simplify operands
-
         // Recursively simplify operands
         Expression::FunctionCall { name, args } => {
             let mut args_changed = false;
@@ -121,6 +120,31 @@ pub fn simplify_impl(expr: Expression) -> (Expression, bool) {
             (Expression::UnaryOperator(op, Box::new(right)), changed)
         }
         // Already simplified
-        Expression::AddSequence(v) => (Expression::AddSequence(v), false),
+        Expression::Sequence(v, op) => (Expression::Sequence(v, op), false),
     }
+}
+
+fn concat(l: Box<Expression>, op: ConcatOp, r: Box<Expression>) -> Expression {
+    // Trees nest to the left: a + b + c => ((a + b) + c)
+    // We'll build up our vector in a loop like so:
+    //  [c]
+    //  [c, b]
+    //  [c, b, a]
+    // Then reverse it at the end. For addition proper it's not a big deal
+    //  but '+' is also used for concatenation and order is very important
+    //TODO simplify elements?
+
+    let expected_op = op.get_op();
+    let mut v = vec![r];
+    let mut tree = l;
+    while let Expression::BinaryOperator(l, binop, r) = *tree {
+        tree = l;
+        if &binop != expected_op {
+            break;
+        }
+        v.push(r);
+    }
+    v.push(tree);
+    v.reverse();
+    Expression::Sequence(v, op)
 }

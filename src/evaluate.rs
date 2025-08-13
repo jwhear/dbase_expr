@@ -104,12 +104,12 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
                     stack.push(EvalState::BinaryLeft { op: *op, rhs });
                     stack.push(EvalState::Expr(lhs));
                 }
-                Expression::AddSequence(exprs) => {
+                Expression::Sequence(exprs, op) => {
                     // Evaluate the whole expression and push it to the stack
                     let mut accum = evaluate(&exprs[0], get)?;
                     for e in &exprs[1..] {
                         let e = evaluate(e, get)?;
-                        accum = eval_binary_op(&BinaryOp::Add, accum, e)?;
+                        accum = eval_binary_op(op.get_op(), accum, e)?;
                     }
                     results.push(accum);
                 }
