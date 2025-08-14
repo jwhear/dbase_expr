@@ -7,7 +7,7 @@ use crate::{
 
 // Simple value lookup for evaluation
 fn value_lookup<'a>() -> impl Fn(&str) -> Option<Value> {
-    let value_lookup = |field_name: &str| -> Option<Value> {
+    |field_name: &str| -> Option<Value> {
         match field_name.to_uppercase().as_str() {
             "B_T" => Some(Value::Bool(true)),
             "B_F" => Some(Value::Bool(false)),
@@ -23,8 +23,22 @@ fn value_lookup<'a>() -> impl Fn(&str) -> Option<Value> {
             "__DELETED" => Some(Value::Bool(false)),
             _ => None,
         }
-    };
-    value_lookup
+    }
+}
+
+fn field_lookup<'a>() -> impl Fn(Option<&str>, &str) -> Result<(String, FieldType), String> {
+    |_alias: Option<&str>, field: &str| -> Result<(String, FieldType), String> {
+        let field = field.to_string().to_uppercase();
+        let field_type = match field.as_str() {
+            "A" | "B" | "C" => FieldType::Integer,
+            "BINDATAFIELD" => FieldType::MemoBinary,
+            "SHIP_DATE" => FieldType::Date,
+            "ID" => FieldType::Character(1),
+            "L_NAME" => FieldType::Character(20),
+            _ => FieldType::Character(10),
+        };
+        Ok((field, field_type))
+    }
 }
 
 pub fn translate_expr(expr: &str) {
@@ -36,20 +50,7 @@ pub fn translate_expr(expr: &str) {
         let _ = evaluate::evaluate(&simplified, &value_lookup());
 
         let translator = Translator {
-            field_lookup: |_alias: Option<&str>,
-                           field: &str|
-             -> Result<(String, FieldType), String> {
-                let field = field.to_string().to_uppercase();
-                let field_type = match field.as_str() {
-                    "A" | "B" | "C" => FieldType::Integer,
-                    "BINDATAFIELD" => FieldType::MemoBinary,
-                    "SHIP_DATE" => FieldType::Date,
-                    "ID" => FieldType::Character(1),
-                    "L_NAME" => FieldType::Character(20),
-                    _ => FieldType::Character(10),
-                };
-                Ok((field, field_type))
-            },
+            field_lookup: field_lookup(),
         };
         _ = translator.translate(&simplified);
     }
@@ -61,18 +62,7 @@ pub fn translate_ast(expr: ast::Expression) {
     let _ = evaluate::evaluate(&simplified, &value_lookup());
 
     let translator = Translator {
-        field_lookup: |_alias: Option<&str>, field: &str| -> Result<(String, FieldType), String> {
-            let field = field.to_string().to_uppercase();
-            let field_type = match field.as_str() {
-                "A" | "B" | "C" => FieldType::Integer,
-                "BINDATAFIELD" => FieldType::MemoBinary,
-                "SHIP_DATE" => FieldType::Date,
-                "ID" => FieldType::Character(1),
-                "L_NAME" => FieldType::Character(20),
-                _ => FieldType::Character(10),
-            };
-            Ok((field, field_type))
-        },
+        field_lookup: field_lookup(),
     };
     _ = translator.translate(&simplified);
 }
