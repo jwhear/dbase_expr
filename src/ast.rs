@@ -1,3 +1,5 @@
+use arbitrary::{Arbitrary, Unstructured};
+
 use crate::codebase_functions::CodebaseFunction;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -147,4 +149,71 @@ fn concat(l: Box<Expression>, op: ConcatOp, r: Box<Expression>) -> Expression {
     v.push(tree);
     v.reverse();
     Expression::Sequence(v, op)
+}
+
+const MAX_DEPTH: usize = 10;
+impl<'a> Arbitrary<'a> for BinaryOp {
+    fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
+        Ok(u.choose(&[
+            BinaryOp::Add,
+            BinaryOp::Sub,
+            BinaryOp::Mul,
+            BinaryOp::Div,
+            BinaryOp::Eq,
+            BinaryOp::Ne,
+            BinaryOp::Lt,
+            BinaryOp::Le,
+            BinaryOp::Gt,
+            BinaryOp::Ge,
+            BinaryOp::Contain,
+            BinaryOp::And,
+            BinaryOp::Or,
+            BinaryOp::Exp,
+        ])?
+        .clone())
+    }
+}
+
+impl<'a> Arbitrary<'a> for ConcatOp {
+    fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
+        Ok(u.choose(&[ConcatOp::Add, ConcatOp::Sub])?.clone())
+    }
+}
+
+impl<'a> Arbitrary<'a> for UnaryOp {
+    fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
+        Ok(u.choose(&[UnaryOp::Not, UnaryOp::Neg])?.clone())
+    }
+}
+
+impl<'a> Arbitrary<'a> for Expression {
+    fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
+        arbitrary_expr(u, 0)
+    }
+}
+
+fn arbitrary_expr(u: &mut Unstructured<'_>, depth: usize) -> arbitrary::Result<Expression> {
+    //for the last layer, only allow the first 4 branches (literals)
+    let allowed_branches = if depth >= MAX_DEPTH { 3 } else { 6 };
+    // Weighted choice: more leaves than branches
+    match u.int_in_range::<u8>(0..=allowed_branches)? {
+        0 => Ok(Expression::BoolLiteral(bool::arbitrary(u)?)),
+        1 => Ok(Expression::NumberLiteral(String::arbitrary(u)?)),
+        2 => Ok(Expression::DoubleQuoteStringLiteral(String::arbitrary(u)?)),
+        3 => Ok(Expression::SingleQuoteStringLiteral(String::arbitrary(u)?)),
+        4 => Ok(Expression::Field {
+            alias: Option::<String>::arbitrary(u)?,
+            name: String::arbitrary(u)?,
+        }),
+        5 => Ok(Expression::BinaryOperator(
+            Box::new(arbitrary_expr(u, depth + 1)?),
+            BinaryOp::arbitrary(u)?,
+            Box::new(arbitrary_expr(u, depth + 1)?),
+        )),
+        6 => Ok(Expression::UnaryOperator(
+            UnaryOp::arbitrary(u)?,
+            Box::new(arbitrary_expr(u, depth + 1)?),
+        )),
+        _ => unreachable!(),
+    }
 }
