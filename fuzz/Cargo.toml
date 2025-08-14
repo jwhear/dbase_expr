@@ -21,3 +21,10 @@ path = "fuzz_targets/fuzz_expr.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_ast"
+path = "fuzz_targets/fuzz_ast.rs"
+test = false
+doc = false
+bench = false
