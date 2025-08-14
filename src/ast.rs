@@ -194,13 +194,14 @@ impl<'a> Arbitrary<'a> for Expression {
 
 fn arbitrary_expr(u: &mut Unstructured<'_>, depth: usize) -> arbitrary::Result<Expression> {
     if depth >= MAX_DEPTH {
-        // Force leaf nodes at max depth
-        let bool_literal = Expression::BoolLiteral(bool::arbitrary(u)?);
-        let num_literal = Expression::NumberLiteral(String::arbitrary(u)?);
-        let dq_literal = Expression::DoubleQuoteStringLiteral(String::arbitrary(u)?);
-        let sq_literal = Expression::SingleQuoteStringLiteral(String::arbitrary(u)?);
-        let literal_types = [bool_literal, num_literal, dq_literal, sq_literal];
-        return Ok(u.choose(&literal_types)?.clone());
+        // Only generate the literal we actually need
+        return Ok(match u.int_in_range(0..=3)? {
+            0 => Expression::BoolLiteral(bool::arbitrary(u)?),
+            1 => Expression::NumberLiteral(String::arbitrary(u)?),
+            2 => Expression::DoubleQuoteStringLiteral(String::arbitrary(u)?),
+            3 => Expression::SingleQuoteStringLiteral(String::arbitrary(u)?),
+            _ => unreachable!(),
+        });
     }
 
     // Weighted choice: more leaves than branches
