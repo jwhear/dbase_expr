@@ -26,8 +26,100 @@ where
         (self.field_lookup)(alias, field)
     }
 
+    //TODO: Review: This code is copy pasted for Add/Subtract
     fn translate(&self, source: &ast::Expression) -> Result {
-        default_translate(source, self)
+        // Handle Sequence operations that involve dates specially for MSSQL
+        match source {
+            ast::Expression::Sequence(operands, concat_op) => {
+                // Check if the first operand is a date type
+                let (first_expr, first_ty) = self.translate(&operands[0])?;
+                match first_ty {
+                    FieldType::Date => {
+                        // For date operations, we need to use DATEADD functions
+                        let mut result = (first_expr, first_ty);
+                        for operand in &operands[1..] {
+                            let (right_expr, right_ty) = self.translate(operand)?;
+                            match (concat_op, &right_ty) {
+                                (
+                                    ast::ConcatOp::Add,
+                                    FieldType::Integer
+                                    | FieldType::Double
+                                    | FieldType::Float
+                                    | FieldType::Numeric { .. },
+                                ) => {
+                                    result = (
+                                        expr_ref(Expression::FunctionCall {
+                                            name: "DATEADD".to_string(),
+                                            args: vec![
+                                                expr_ref(Expression::BareFunctionCall(
+                                                    "day".to_string(),
+                                                )),
+                                                right_expr,
+                                                result.0,
+                                            ],
+                                        }),
+                                        FieldType::Date,
+                                    );
+                                }
+                                (
+                                    ast::ConcatOp::Sub,
+                                    FieldType::Integer
+                                    | FieldType::Double
+                                    | FieldType::Float
+                                    | FieldType::Numeric { .. },
+                                ) => {
+                                    result = (
+                                        expr_ref(Expression::FunctionCall {
+                                            name: "DATEADD".to_string(),
+                                            args: vec![
+                                                expr_ref(Expression::BareFunctionCall(
+                                                    "day".to_string(),
+                                                )),
+                                                expr_ref(Expression::UnaryOperator(
+                                                    crate::translate::UnaryOp::Neg,
+                                                    right_expr,
+                                                )),
+                                                result.0,
+                                            ],
+                                        }),
+                                        FieldType::Date,
+                                    );
+                                }
+                                (ast::ConcatOp::Sub, FieldType::Date) => {
+                                    // Date - Date should use DATEDIFF
+                                    result = (
+                                        expr_ref(Expression::FunctionCall {
+                                            name: "DATEDIFF".to_string(),
+                                            args: vec![
+                                                expr_ref(Expression::BareFunctionCall(
+                                                    "day".to_string(),
+                                                )),
+                                                right_expr,
+                                                result.0,
+                                            ],
+                                        }),
+                                        FieldType::Numeric { len: 99, dec: 0 },
+                                    );
+                                }
+                                _ => {
+                                    // Not a numeric addition/subtraction, fall back to default
+                                    return default_translate(source, self);
+                                }
+                            }
+                        }
+                        Ok(result)
+                    }
+                    _ => {
+                        // Not a date operation, use default behavior
+                        default_translate(source, self)
+                    }
+                }
+            }
+            _ => {
+                // For all other expressions, use default behavior
+                default_translate(source, self)
+            }
+        }
     }
 
     fn translate_fn_call(

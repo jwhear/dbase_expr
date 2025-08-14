@@ -58,6 +58,21 @@ impl PrinterContext for SqlitePrinterContext {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct MssqlPrinterContext;
+
+impl PrinterContext for MssqlPrinterContext {
+    fn write_padding(&self, out: &mut Formatter<'_>, inner: &str, width: u32) -> std::fmt::Result {
+        write!(out, "RPAD(COALESCE({}, ''), {}, ' ')", inner, width)
+    }
+    fn coalesce_date(&self, out: &mut Formatter<'_>, inner: &str) -> std::fmt::Result {
+        write!(out, "COALESCE({}, '{}')", inner, COALESCE_DATE)
+    }
+    fn box_clone(&self) -> Box<dyn PrinterContext> {
+        Box::new(*self)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PrinterConfig {
     pub context: Box<dyn PrinterContext>,

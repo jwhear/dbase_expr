@@ -1,6 +1,6 @@
 use dbase_expr::{
     ast::simplify,
-    to_sql::PrinterConfig,
+    to_sql::{MssqlPrinterContext, PrinterConfig},
     translate::{FieldType, TranslationContext, mssql::MssqlTranslator},
     *,
 };
@@ -32,9 +32,13 @@ fn main() {
 
     let parser = grammar::ExprParser::new();
     let tests = [
-        // Focus on date arithmetic which is different in MSSQL
-        "SHIP_DATE - DATE()",
-        "(DATE() + 1) - STOD(\"20240731\")",
+        // Test simple date arithmetic
+        "DATE() + 1",
+        "DATE() - 1",
+        "DATE() + 1 + 2",
+        // Test date - date
+        "DATE() - STOD(\"20240731\")",
+        // Test some functions that are different
         "SHIP_DATE - STOD(\"20240630\")",
         // Test the complex expression
         "date() + 7 - ((DATE() - STOD('20000102')) - VAL(STR((DATE() - STOD('20000102'))/7 - 0.5,6,0))*7)",
@@ -64,10 +68,12 @@ fn main() {
             Ok(t) => {
                 let t = simplify(*t);
                 match mssql_cx.translate(&t) {
-                    Ok(tree) => println!(
-                        "{test}\n=>\n{}\n",
-                        Printer::new(tree.0, PrinterConfig::default())
-                    ),
+                    Ok(tree) => {
+                        let mssql_config = PrinterConfig {
+                            context: Box::new(MssqlPrinterContext),
+                        };
+                        println!("{test}\n=>\n{}\n", Printer::new(tree.0, mssql_config))
+                    }
                     Err(e) => eprintln!("Error translating tree: {e:?}\n:{test}\n"),
                 }
             }
