@@ -63,7 +63,11 @@ pub struct MssqlPrinterContext;
 
 impl PrinterContext for MssqlPrinterContext {
     fn write_padding(&self, out: &mut Formatter<'_>, inner: &str, width: u32) -> std::fmt::Result {
-        write!(out, "RPAD(COALESCE({}, ''), {}, ' ')", inner, width)
+        write!(
+            out,
+            "LEFT(COALESCE({}, '') + REPLICATE(' ', {}), {})",
+            inner, width, width
+        )
     }
     fn coalesce_date(&self, out: &mut Formatter<'_>, inner: &str) -> std::fmt::Result {
         write!(out, "COALESCE({}, '{}')", inner, COALESCE_DATE)
