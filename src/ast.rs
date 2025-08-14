@@ -193,19 +193,10 @@ impl<'a> Arbitrary<'a> for Expression {
 }
 
 fn arbitrary_expr(u: &mut Unstructured<'_>, depth: usize) -> arbitrary::Result<Expression> {
-    if depth >= MAX_DEPTH {
-        // Only generate the literal we actually need
-        return Ok(match u.int_in_range(0..=3)? {
-            0 => Expression::BoolLiteral(bool::arbitrary(u)?),
-            1 => Expression::NumberLiteral(String::arbitrary(u)?),
-            2 => Expression::DoubleQuoteStringLiteral(String::arbitrary(u)?),
-            3 => Expression::SingleQuoteStringLiteral(String::arbitrary(u)?),
-            _ => unreachable!(),
-        });
-    }
-
+    //for the last layer, only allow the first 4 branches (literals)
+    let allowed_branches = if depth >= MAX_DEPTH { 3 } else { 6 };
     // Weighted choice: more leaves than branches
-    match u.int_in_range::<u8>(0..=6)? {
+    match u.int_in_range::<u8>(0..=allowed_branches)? {
         0 => Ok(Expression::BoolLiteral(bool::arbitrary(u)?)),
         1 => Ok(Expression::NumberLiteral(String::arbitrary(u)?)),
         2 => Ok(Expression::DoubleQuoteStringLiteral(String::arbitrary(u)?)),
