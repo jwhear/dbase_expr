@@ -369,6 +369,14 @@ fn right_str_n(s: &str, n: f64) -> String {
 use Value::*;
 
 fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, String> {
+    // Helper function to truncate a string without risking cutting a multi-byte character in half
+    fn slice(s: &str, len: usize) -> &str {
+        let char_count = len.min(s.chars().count());
+        match s.char_indices().nth(char_count) {
+            Some((i, _)) => &s[..i],
+            None => s,
+        }
+    }
     match op {
         BinaryOp::Add => match (left, right) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a + b)),
@@ -453,52 +461,32 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Str
         })),
         BinaryOp::Lt => match (left, right) {
             (Number(a), Number(b)) => Ok(Bool(a < b)),
-            (Str(a, _) | Memo(a), Str(b, len)) => {
-                Ok(Bool(a[..len.min(a.len())] < b[..a.len().min(b.len())]))
-            }
-            (Str(a, _) | Memo(a), Memo(b)) => {
-                let b_prefix = &b[..a.len().min(b.len())];
-                Ok(Bool(a.as_str() < b_prefix))
-            }
+            (Str(a, _) | Memo(a), Str(b, len)) => Ok(Bool(slice(&a, len) < slice(&b, a.len()))),
+            (Str(a, _) | Memo(a), Memo(b)) => Ok(Bool(a.as_str() < slice(&b, a.len()))),
             (Date(a), Date(b)) => Ok(Bool(a < b)),
             _ => Err("Lt: incompatible types".to_string()),
         },
 
         BinaryOp::Le => match (left, right) {
             (Number(a), Number(b)) => Ok(Bool(a <= b)),
-            (Str(a, _) | Memo(a), Str(b, len)) => {
-                Ok(Bool(a[..len.min(a.len())] <= b[..a.len().min(b.len())]))
-            }
-            (Str(a, _) | Memo(a), Memo(b)) => {
-                let b_prefix = &b[..a.len().min(b.len())];
-                Ok(Bool(a.as_str() <= b_prefix))
-            }
+            (Str(a, _) | Memo(a), Str(b, len)) => Ok(Bool(slice(&a, len) <= slice(&b, a.len()))),
+            (Str(a, _) | Memo(a), Memo(b)) => Ok(Bool(a.as_str() <= slice(&b, a.len()))),
             (Date(a), Date(b)) => Ok(Bool(a <= b)),
             _ => Err("Le: incompatible types".to_string()),
         },
 
         BinaryOp::Gt => match (left, right) {
             (Number(a), Number(b)) => Ok(Bool(a > b)),
-            (Str(a, _) | Memo(a), Str(b, len)) => {
-                Ok(Bool(a[..len.min(a.len())] > b[..a.len().min(b.len())]))
-            }
-            (Str(a, _) | Memo(a), Memo(b)) => {
-                let b_prefix = &b[..a.len().min(b.len())];
-                Ok(Bool(a.as_str() > b_prefix))
-            }
+            (Str(a, _) | Memo(a), Str(b, len)) => Ok(Bool(slice(&a, len) > slice(&b, a.len()))),
+            (Str(a, _) | Memo(a), Memo(b)) => Ok(Bool(a.as_str() > slice(&b, a.len()))),
             (Date(a), Date(b)) => Ok(Bool(a > b)),
             _ => Err("Gt: incompatible types".to_string()),
         },
 
         BinaryOp::Ge => match (left, right) {
             (Number(a), Number(b)) => Ok(Bool(a >= b)),
-            (Str(a, _) | Memo(a), Str(b, len)) => {
-                Ok(Bool(a[..len.min(a.len())] >= b[..a.len().min(b.len())]))
-            }
-            (Str(a, _) | Memo(a), Memo(b)) => {
-                let b_prefix = &b[..a.len().min(b.len())];
-                Ok(Bool(a.as_str() >= b_prefix))
-            }
+            (Str(a, _) | Memo(a), Str(b, len)) => Ok(Bool(slice(&a, len) >= slice(&b, a.len()))),
+            (Str(a, _) | Memo(a), Memo(b)) => Ok(Bool(a.as_str() >= slice(&b, a.len()))),
             (Date(a), Date(b)) => Ok(Bool(a >= b)),
             _ => Err("Ge: incompatible types".to_string()),
         },
