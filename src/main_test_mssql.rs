@@ -32,6 +32,11 @@ fn main() {
 
     let parser = grammar::ExprParser::new();
     let tests = [
+        //Concatenate
+        "'John'+'Doe'",
+        //ConcatenateII
+        "'  John'-'Doe  '",
+        "'John  '-'Doe'",
         // Test simple date arithmetic
         "DATE() + 1",
         "DATE() - 1",

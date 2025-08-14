@@ -109,6 +109,88 @@ where
                         }
                         Ok(result)
                     }
+                    FieldType::Character(_) | FieldType::Memo | FieldType::MemoBinary => {
+                        // For string operations, use SQL Server's CONCAT function
+                        let result = (first_expr, first_ty);
+                        let mut all_exprs = vec![result.0.clone()];
+                        let mut result_type = result.1;
+
+                        for operand in &operands[1..] {
+                            let (right_expr, _right_ty) = self.translate(operand)?;
+                            match concat_op {
+                                ast::ConcatOp::Add => {
+                                    // Simple concatenation - collect all expressions
+                                    all_exprs.push(right_expr);
+                                }
+                                ast::ConcatOp::Sub => {
+                                    // String - String: concatenate with trailing spaces moved to end
+                                    // For SQL Server, we need to handle this specially
+                                    if all_exprs.len() == 1 {
+                                        // First subtraction, convert to special handling
+                                        let left_expr = all_exprs.pop().unwrap();
+                                        let without_spaces = expr_ref(Expression::FunctionCall {
+                                            name: "RTRIM".to_string(),
+                                            args: vec![left_expr.clone()],
+                                        });
+                                        let length_without_spaces =
+                                            expr_ref(Expression::FunctionCall {
+                                                name: "LEN".to_string(),
+                                                args: vec![without_spaces.clone()],
+                                            });
+                                        let length_with_spaces =
+                                            expr_ref(Expression::FunctionCall {
+                                                name: "DATALENGTH".to_string(),
+                                                args: vec![left_expr],
+                                            });
+                                        let num_spaces = expr_ref(Expression::BinaryOperator(
+                                            length_with_spaces,
+                                            crate::translate::BinaryOp::Sub,
+                                            length_without_spaces,
+                                            crate::translate::Parenthesize::No,
+                                        ));
+                                        let repeated_spaces = expr_ref(Expression::FunctionCall {
+                                            name: "REPLICATE".to_string(),
+                                            args: vec![
+                                                expr_ref(Expression::SingleQuoteStringLiteral(
+                                                    " ".to_string(),
+                                                )),
+                                                num_spaces,
+                                            ],
+                                        });
+                                        return Ok((
+                                            expr_ref(Expression::FunctionCall {
+                                                name: "CONCAT".to_string(),
+                                                args: vec![
+                                                    without_spaces,
+                                                    right_expr,
+                                                    repeated_spaces,
+                                                ],
+                                            }),
+                                            FieldType::Memo,
+                                        ));
+                                    } else {
+                                        // Additional operations after subtraction - just concatenate
+                                        all_exprs.push(right_expr);
+                                    }
+                                }
+                            }
+                        }
+
+                        if all_exprs.len() > 1 {
+                            // Multiple expressions to concatenate
+                            result_type = FieldType::Memo;
+                            Ok((
+                                expr_ref(Expression::FunctionCall {
+                                    name: "CONCAT".to_string(),
+                                    args: all_exprs,
+                                }),
+                                result_type,
+                            ))
+                        } else {
+                            // Single expression, return as-is
+                            Ok((all_exprs.into_iter().next().unwrap(), result_type))
+                        }
+                    }
                     _ => {
                         // Not a date operation, use default behavior
                         default_translate(source, self)
@@ -197,6 +279,49 @@ pub fn translate_binary_op<T: TranslationContext>(
             },
             FieldType::Numeric { len: 99, dec: 0 },
         ),
+        // String + String concatenation using CONCAT
+        (ast::BinaryOp::Add, FieldType::Character(_) | FieldType::Memo, _) => ok(
+            Expression::FunctionCall {
+                name: "CONCAT".to_string(),
+                args: vec![translated_l, translated_r],
+            },
+            FieldType::Memo,
+        ),
+        // String - String concatenation with trailing space handling
+        (ast::BinaryOp::Sub, FieldType::Character(_) | FieldType::Memo, _) => {
+            let without_spaces = expr_ref(Expression::FunctionCall {
+                name: "RTRIM".to_string(),
+                args: vec![translated_l.clone()],
+            });
+            let length_without_spaces = expr_ref(Expression::FunctionCall {
+                name: "LEN".to_string(),
+                args: vec![without_spaces.clone()],
+            });
+            let length_with_spaces = expr_ref(Expression::FunctionCall {
+                name: "DATALENGTH".to_string(),
+                args: vec![translated_l],
+            });
+            let num_spaces = expr_ref(Expression::BinaryOperator(
+                length_with_spaces,
+                crate::translate::BinaryOp::Sub,
+                length_without_spaces,
+                crate::translate::Parenthesize::No,
+            ));
+            let repeated_spaces = expr_ref(Expression::FunctionCall {
+                name: "REPLICATE".to_string(),
+                args: vec![
+                    expr_ref(Expression::SingleQuoteStringLiteral(" ".to_string())),
+                    num_spaces,
+                ],
+            });
+            ok(
+                Expression::FunctionCall {
+                    name: "CONCAT".to_string(),
+                    args: vec![without_spaces, translated_r, repeated_spaces],
+                },
+                FieldType::Memo,
+            )
+        }
         // For all other operations, delegate to postgres implementation
         _ => postgres::translate_binary_op(cx, l, op, r),
     }
