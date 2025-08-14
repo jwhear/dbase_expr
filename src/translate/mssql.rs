@@ -222,6 +222,75 @@ where
     }
 }
 
+fn dateadd_expr(interval: &str, amount: ExprRef, date: ExprRef) -> Expression {
+    Expression::FunctionCall {
+        name: "DATEADD".to_string(),
+        args: vec![
+            expr_ref(Expression::BareFunctionCall(interval.to_string())),
+            amount,
+            date,
+        ],
+    }
+}
+
+fn datediff_expr(interval: &str, start_date: ExprRef, end_date: ExprRef) -> Expression {
+    Expression::FunctionCall {
+        name: "DATEDIFF".to_string(),
+        args: vec![
+            expr_ref(Expression::BareFunctionCall(interval.to_string())),
+            start_date,
+            end_date,
+        ],
+    }
+}
+
+fn concat_expr(args: Vec<ExprRef>) -> Expression {
+    Expression::FunctionCall {
+        name: "CONCAT".to_string(),
+        args,
+    }
+}
+
+fn string_subtract_expr(left: ExprRef, right: ExprRef) -> Expression {
+    let without_spaces = expr_ref(Expression::FunctionCall {
+        name: "RTRIM".to_string(),
+        args: vec![left.clone()],
+    });
+    let length_without_spaces = expr_ref(Expression::FunctionCall {
+        name: "LEN".to_string(),
+        args: vec![without_spaces.clone()],
+    });
+    let length_with_spaces = expr_ref(Expression::FunctionCall {
+        name: "DATALENGTH".to_string(),
+        args: vec![left],
+    });
+    let num_spaces = expr_ref(Expression::BinaryOperator(
+        length_with_spaces,
+        crate::translate::BinaryOp::Sub,
+        length_without_spaces,
+        crate::translate::Parenthesize::No,
+    ));
+    let repeated_spaces = expr_ref(Expression::FunctionCall {
+        name: "REPLICATE".to_string(),
+        args: vec![
+            expr_ref(Expression::SingleQuoteStringLiteral(" ".to_string())),
+            num_spaces,
+        ],
+    });
+    concat_expr(vec![without_spaces, right, repeated_spaces])
+}
+
+fn is_numeric_type(ty: &FieldType) -> bool {
+    matches!(
+        ty,
+        FieldType::Integer | FieldType::Double | FieldType::Float | FieldType::Numeric { .. }
+    )
+}
+
+fn is_string_type(ty: &FieldType) -> bool {
+    matches!(ty, FieldType::Character(_) | FieldType::Memo)
+}
+
 pub fn translate_binary_op<T: TranslationContext>(
     cx: &T,
     l: &ast::Expression,
@@ -231,97 +300,34 @@ pub fn translate_binary_op<T: TranslationContext>(
     let (translated_l, ty_l) = cx.translate(l)?;
     let (translated_r, ty_r) = cx.translate(r)?;
 
-    match (op, ty_l, ty_r) {
-        // For date + integer, SQL Server requires DATEADD function
-        (
-            ast::BinaryOp::Add,
-            FieldType::Date,
-            FieldType::Integer | FieldType::Double | FieldType::Float | FieldType::Numeric { .. },
-        ) => ok(
-            Expression::FunctionCall {
-                name: "DATEADD".to_string(),
-                args: vec![
-                    expr_ref(Expression::BareFunctionCall("day".to_string())),
-                    translated_r,
-                    translated_l,
-                ],
-            },
+    match (op, &ty_l, &ty_r) {
+        // Date arithmetic
+        (ast::BinaryOp::Add, FieldType::Date, ty_r) if is_numeric_type(ty_r) => ok(
+            dateadd_expr("day", translated_r, translated_l),
             FieldType::Date,
         ),
-        // For date - integer, SQL Server requires DATEADD with negative number
-        (
-            ast::BinaryOp::Sub,
-            FieldType::Date,
-            FieldType::Integer | FieldType::Double | FieldType::Float | FieldType::Numeric { .. },
-        ) => ok(
-            Expression::FunctionCall {
-                name: "DATEADD".to_string(),
-                args: vec![
-                    expr_ref(Expression::BareFunctionCall("day".to_string())),
-                    expr_ref(Expression::UnaryOperator(
-                        crate::translate::UnaryOp::Neg,
-                        translated_r,
-                    )),
-                    translated_l,
-                ],
-            },
-            FieldType::Date,
-        ),
-        // For date - date, SQL Server requires DATEDIFF function
+        (ast::BinaryOp::Sub, FieldType::Date, ty_r) if is_numeric_type(ty_r) => {
+            let amount = expr_ref(Expression::UnaryOperator(
+                crate::translate::UnaryOp::Neg,
+                translated_r,
+            ));
+            ok(dateadd_expr("day", amount, translated_l), FieldType::Date)
+        }
         (ast::BinaryOp::Sub, FieldType::Date, FieldType::Date) => ok(
-            Expression::FunctionCall {
-                name: "DATEDIFF".to_string(),
-                args: vec![
-                    expr_ref(Expression::BareFunctionCall("day".to_string())),
-                    translated_r,
-                    translated_l,
-                ],
-            },
+            datediff_expr("day", translated_r, translated_l),
             FieldType::Numeric { len: 99, dec: 0 },
         ),
-        // String + String concatenation using CONCAT
-        (ast::BinaryOp::Add, FieldType::Character(_) | FieldType::Memo, _) => ok(
-            Expression::FunctionCall {
-                name: "CONCAT".to_string(),
-                args: vec![translated_l, translated_r],
-            },
+
+        // String operations
+        (ast::BinaryOp::Add, ty_l, _) if is_string_type(ty_l) => ok(
+            concat_expr(vec![translated_l, translated_r]),
             FieldType::Memo,
         ),
-        // String - String concatenation with trailing space handling
-        (ast::BinaryOp::Sub, FieldType::Character(_) | FieldType::Memo, _) => {
-            let without_spaces = expr_ref(Expression::FunctionCall {
-                name: "RTRIM".to_string(),
-                args: vec![translated_l.clone()],
-            });
-            let length_without_spaces = expr_ref(Expression::FunctionCall {
-                name: "LEN".to_string(),
-                args: vec![without_spaces.clone()],
-            });
-            let length_with_spaces = expr_ref(Expression::FunctionCall {
-                name: "DATALENGTH".to_string(),
-                args: vec![translated_l],
-            });
-            let num_spaces = expr_ref(Expression::BinaryOperator(
-                length_with_spaces,
-                crate::translate::BinaryOp::Sub,
-                length_without_spaces,
-                crate::translate::Parenthesize::No,
-            ));
-            let repeated_spaces = expr_ref(Expression::FunctionCall {
-                name: "REPLICATE".to_string(),
-                args: vec![
-                    expr_ref(Expression::SingleQuoteStringLiteral(" ".to_string())),
-                    num_spaces,
-                ],
-            });
-            ok(
-                Expression::FunctionCall {
-                    name: "CONCAT".to_string(),
-                    args: vec![without_spaces, translated_r, repeated_spaces],
-                },
-                FieldType::Memo,
-            )
-        }
+        (ast::BinaryOp::Sub, ty_l, _) if is_string_type(ty_l) => ok(
+            string_subtract_expr(translated_l, translated_r),
+            FieldType::Memo,
+        ),
+
         // For all other operations, delegate to postgres implementation
         _ => postgres::translate_binary_op(cx, l, op, r),
     }

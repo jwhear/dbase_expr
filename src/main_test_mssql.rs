@@ -56,6 +56,8 @@ fn main() {
          VAL(STR((DATE() - STOD('20000102'))/7 - 0.5,6,0))*7)",
         // Also test some functions that are different
         "CHR(65)",
+        "'HELLO' + 12",
+        "'Hello from ' + ' - ' + STOD('20000102')",
         "CTOD(\"07/04/24\")",
         "DTOC(SHIP_DATE)",
         "DTOS(SHIP_DATE)",
