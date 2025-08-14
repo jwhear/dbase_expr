@@ -370,14 +370,12 @@ use Value::*;
 
 fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, String> {
     // Helper function to truncate a string without risking cutting a multi-byte character in half
-    fn safe_prefix(s: &str, char_count: usize) -> &str {
+    fn slice(s: &str, len: usize) -> &str {
+        let char_count = len.min(s.chars().count());
         match s.char_indices().nth(char_count) {
             Some((i, _)) => &s[..i],
             None => s,
         }
-    }
-    fn slice(str: &str, len: usize) -> &str {
-        safe_prefix(str, len.min(str.chars().count()))
     }
     match op {
         BinaryOp::Add => match (left, right) {
