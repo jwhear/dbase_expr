@@ -26,181 +26,23 @@ where
         (self.field_lookup)(alias, field)
     }
 
-    //TODO: Review: This code is copy pasted for Add/Subtract
     fn translate(&self, source: &ast::Expression) -> Result {
-        // Handle Sequence operations that involve dates specially for MSSQL
         match source {
             ast::Expression::Sequence(operands, concat_op) => {
-                // Check if the first operand is a date type
                 let (first_expr, first_ty) = self.translate(&operands[0])?;
                 match first_ty {
-                    FieldType::Date => {
-                        // For date operations, we need to use DATEADD functions
-                        let mut result = (first_expr, first_ty);
-                        for operand in &operands[1..] {
-                            let (right_expr, right_ty) = self.translate(operand)?;
-                            match (concat_op, &right_ty) {
-                                (
-                                    ast::ConcatOp::Add,
-                                    FieldType::Integer
-                                    | FieldType::Double
-                                    | FieldType::Float
-                                    | FieldType::Numeric { .. },
-                                ) => {
-                                    result = (
-                                        expr_ref(Expression::FunctionCall {
-                                            name: "DATEADD".to_string(),
-                                            args: vec![
-                                                expr_ref(Expression::BareFunctionCall(
-                                                    "day".to_string(),
-                                                )),
-                                                right_expr,
-                                                result.0,
-                                            ],
-                                        }),
-                                        FieldType::Date,
-                                    );
-                                }
-                                (
-                                    ast::ConcatOp::Sub,
-                                    FieldType::Integer
-                                    | FieldType::Double
-                                    | FieldType::Float
-                                    | FieldType::Numeric { .. },
-                                ) => {
-                                    result = (
-                                        expr_ref(Expression::FunctionCall {
-                                            name: "DATEADD".to_string(),
-                                            args: vec![
-                                                expr_ref(Expression::BareFunctionCall(
-                                                    "day".to_string(),
-                                                )),
-                                                expr_ref(Expression::UnaryOperator(
-                                                    crate::translate::UnaryOp::Neg,
-                                                    right_expr,
-                                                )),
-                                                result.0,
-                                            ],
-                                        }),
-                                        FieldType::Date,
-                                    );
-                                }
-                                (ast::ConcatOp::Sub, FieldType::Date) => {
-                                    // Date - Date should use DATEDIFF
-                                    result = (
-                                        expr_ref(Expression::FunctionCall {
-                                            name: "DATEDIFF".to_string(),
-                                            args: vec![
-                                                expr_ref(Expression::BareFunctionCall(
-                                                    "day".to_string(),
-                                                )),
-                                                right_expr,
-                                                result.0,
-                                            ],
-                                        }),
-                                        FieldType::Numeric { len: 99, dec: 0 },
-                                    );
-                                }
-                                _ => {
-                                    // Not a numeric addition/subtraction, fall back to default
-                                    return default_translate(source, self);
-                                }
-                            }
-                        }
-                        Ok(result)
-                    }
-                    FieldType::Character(_) | FieldType::Memo | FieldType::MemoBinary => {
-                        // For string operations, use SQL Server's CONCAT function
-                        let result = (first_expr, first_ty);
-                        let mut all_exprs = vec![result.0.clone()];
-                        let mut result_type = result.1;
-
-                        for operand in &operands[1..] {
-                            let (right_expr, _right_ty) = self.translate(operand)?;
-                            match concat_op {
-                                ast::ConcatOp::Add => {
-                                    // Simple concatenation - collect all expressions
-                                    all_exprs.push(right_expr);
-                                }
-                                ast::ConcatOp::Sub => {
-                                    // String - String: concatenate with trailing spaces moved to end
-                                    // For SQL Server, we need to handle this specially
-                                    if all_exprs.len() == 1 {
-                                        // First subtraction, convert to special handling
-                                        let left_expr = all_exprs.pop().unwrap();
-                                        let without_spaces = expr_ref(Expression::FunctionCall {
-                                            name: "RTRIM".to_string(),
-                                            args: vec![left_expr.clone()],
-                                        });
-                                        let length_without_spaces =
-                                            expr_ref(Expression::FunctionCall {
-                                                name: "LEN".to_string(),
-                                                args: vec![without_spaces.clone()],
-                                            });
-                                        let length_with_spaces =
-                                            expr_ref(Expression::FunctionCall {
-                                                name: "DATALENGTH".to_string(),
-                                                args: vec![left_expr],
-                                            });
-                                        let num_spaces = expr_ref(Expression::BinaryOperator(
-                                            length_with_spaces,
-                                            crate::translate::BinaryOp::Sub,
-                                            length_without_spaces,
-                                            crate::translate::Parenthesize::No,
-                                        ));
-                                        let repeated_spaces = expr_ref(Expression::FunctionCall {
-                                            name: "REPLICATE".to_string(),
-                                            args: vec![
-                                                expr_ref(Expression::SingleQuoteStringLiteral(
-                                                    " ".to_string(),
-                                                )),
-                                                num_spaces,
-                                            ],
-                                        });
-                                        return Ok((
-                                            expr_ref(Expression::FunctionCall {
-                                                name: "CONCAT".to_string(),
-                                                args: vec![
-                                                    without_spaces,
-                                                    right_expr,
-                                                    repeated_spaces,
-                                                ],
-                                            }),
-                                            FieldType::Memo,
-                                        ));
-                                    } else {
-                                        // Additional operations after subtraction - just concatenate
-                                        all_exprs.push(right_expr);
-                                    }
-                                }
-                            }
-                        }
-
-                        if all_exprs.len() > 1 {
-                            // Multiple expressions to concatenate
-                            result_type = FieldType::Memo;
-                            Ok((
-                                expr_ref(Expression::FunctionCall {
-                                    name: "CONCAT".to_string(),
-                                    args: all_exprs,
-                                }),
-                                result_type,
-                            ))
-                        } else {
-                            // Single expression, return as-is
-                            Ok((all_exprs.into_iter().next().unwrap(), result_type))
-                        }
-                    }
-                    _ => {
-                        // Not a date operation, use default behavior
-                        default_translate(source, self)
-                    }
+                    FieldType::Date => self.translate_date_sequence(
+                        first_expr,
+                        first_ty,
+                        &operands[1..],
+                        concat_op,
+                    ),
+                    FieldType::Character(_) | FieldType::Memo | FieldType::MemoBinary => self
+                        .translate_string_sequence(first_expr, first_ty, &operands[1..], concat_op),
+                    _ => default_translate(source, self),
                 }
             }
-            _ => {
-                // For all other expressions, use default behavior
-                default_translate(source, self)
-            }
+            _ => default_translate(source, self),
         }
     }
 
@@ -219,6 +61,99 @@ where
         r: &ast::Expression,
     ) -> Result {
         translate_binary_op(self, l, op, r)
+    }
+}
+
+impl<F> MssqlTranslator<F>
+where
+    F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
+{
+    fn translate_date_sequence(
+        &self,
+        first_expr: ExprRef,
+        first_ty: FieldType,
+        remaining_operands: &[Box<ast::Expression>],
+        concat_op: &ast::ConcatOp,
+    ) -> Result {
+        let mut result = (first_expr, first_ty);
+        for operand in remaining_operands {
+            let (right_expr, right_ty) = self.translate(operand)?;
+            match (concat_op, &right_ty) {
+                (ast::ConcatOp::Add, ty) if is_numeric_type(ty) => {
+                    result = (
+                        expr_ref(dateadd_expr("day", right_expr, result.0)),
+                        FieldType::Date,
+                    );
+                }
+                (ast::ConcatOp::Sub, ty) if is_numeric_type(ty) => {
+                    let negated_amount = expr_ref(Expression::UnaryOperator(
+                        crate::translate::UnaryOp::Neg,
+                        right_expr,
+                    ));
+                    result = (
+                        expr_ref(dateadd_expr("day", negated_amount, result.0)),
+                        FieldType::Date,
+                    );
+                }
+                (ast::ConcatOp::Sub, FieldType::Date) => {
+                    result = (
+                        expr_ref(datediff_expr("day", right_expr, result.0)),
+                        FieldType::Numeric { len: 99, dec: 0 },
+                    );
+                }
+                _ => {
+                    // Not a supported date operation, reconstruct the sequence and fall back to default
+                    let mut all_operands =
+                        vec![Box::new(ast::Expression::NumberLiteral("0".to_string()))];
+                    all_operands.extend_from_slice(remaining_operands);
+                    return default_translate(
+                        &ast::Expression::Sequence(all_operands, *concat_op),
+                        self,
+                    );
+                }
+            }
+        }
+        Ok(result)
+    }
+
+    fn translate_string_sequence(
+        &self,
+        first_expr: ExprRef,
+        first_ty: FieldType,
+        remaining_operands: &[Box<ast::Expression>],
+        concat_op: &ast::ConcatOp,
+    ) -> Result {
+        let mut all_exprs = vec![first_expr];
+        let mut result_type = first_ty;
+
+        for operand in remaining_operands {
+            let (right_expr, _right_ty) = self.translate(operand)?;
+            match concat_op {
+                ast::ConcatOp::Add => {
+                    all_exprs.push(right_expr);
+                }
+                ast::ConcatOp::Sub => {
+                    if all_exprs.len() == 1 {
+                        // First subtraction, use the helper function
+                        let left_expr = all_exprs.pop().unwrap();
+                        return Ok((
+                            expr_ref(string_subtract_expr(left_expr, right_expr)),
+                            FieldType::Memo,
+                        ));
+                    } else {
+                        // Additional operations after subtraction - just concatenate
+                        all_exprs.push(right_expr);
+                    }
+                }
+            }
+        }
+
+        if all_exprs.len() > 1 {
+            result_type = FieldType::Memo;
+            Ok((expr_ref(concat_expr(all_exprs)), result_type))
+        } else {
+            Ok((all_exprs.into_iter().next().unwrap(), result_type))
+        }
     }
 }
 
