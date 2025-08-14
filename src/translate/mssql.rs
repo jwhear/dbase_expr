@@ -2,7 +2,7 @@ use crate::{
     ast,
     codebase_functions::CodebaseFunction as F,
     translate::{
-        Error, Expression, FieldType, Result, TranslationContext, ok,
+        Error, ExprRef, Expression, FieldType, Result, TranslationContext, expr_ref, ok,
         postgres::{self, get_all_args, get_arg, translate as default_translate, wrong_type},
     },
 };
@@ -34,7 +34,7 @@ where
         &self,
         name: &crate::codebase_functions::CodebaseFunction,
         args: &[Box<ast::Expression>],
-    ) -> std::result::Result<(Box<Expression>, FieldType), Error> {
+    ) -> std::result::Result<(ExprRef, FieldType), Error> {
         translate_fn_call(name, args, self)
     }
 
@@ -67,7 +67,7 @@ pub fn translate_binary_op<T: TranslationContext>(
             Expression::FunctionCall {
                 name: "DATEADD".to_string(),
                 args: vec![
-                    Box::new(Expression::BareFunctionCall("day".to_string())),
+                    expr_ref(Expression::BareFunctionCall("day".to_string())),
                     translated_r,
                     translated_l,
                 ],
@@ -83,8 +83,8 @@ pub fn translate_binary_op<T: TranslationContext>(
             Expression::FunctionCall {
                 name: "DATEADD".to_string(),
                 args: vec![
-                    Box::new(Expression::BareFunctionCall("day".to_string())),
-                    Box::new(Expression::UnaryOperator(
+                    expr_ref(Expression::BareFunctionCall("day".to_string())),
+                    expr_ref(Expression::UnaryOperator(
                         crate::translate::UnaryOp::Neg,
                         translated_r,
                     )),
@@ -98,7 +98,7 @@ pub fn translate_binary_op<T: TranslationContext>(
             Expression::FunctionCall {
                 name: "DATEDIFF".to_string(),
                 args: vec![
-                    Box::new(Expression::BareFunctionCall("day".to_string())),
+                    expr_ref(Expression::BareFunctionCall("day".to_string())),
                     translated_r,
                     translated_l,
                 ],
@@ -114,7 +114,7 @@ pub fn translate_fn_call(
     name: &F,
     args: &[Box<ast::Expression>],
     cx: &impl TranslationContext,
-) -> std::result::Result<(Box<Expression>, FieldType), Error> {
+) -> std::result::Result<(ExprRef, FieldType), Error> {
     let arg = |index: usize| get_arg(index, args, cx, name);
     let all_args = || get_all_args(args, cx);
     let wrong_type = |index| wrong_type(index, name, args);
@@ -135,9 +135,9 @@ pub fn translate_fn_call(
             Expression::FunctionCall {
                 name: "CONVERT".into(),
                 args: vec![
-                    Box::new(Expression::BareFunctionCall("date".to_string())),
+                    expr_ref(Expression::BareFunctionCall("date".to_string())),
                     arg(0)??.0,
-                    Box::new(Expression::NumberLiteral("101".to_string())), // MM/DD/YY format
+                    expr_ref(Expression::NumberLiteral("101".to_string())), // MM/DD/YY format
                 ],
             },
             FieldType::Date,
@@ -146,7 +146,7 @@ pub fn translate_fn_call(
         // DATE() => CAST(GETDATE() AS date)
         F::DATE => ok(
             Expression::Cast(
-                Box::new(Expression::BareFunctionCall("GETDATE()".to_string())),
+                expr_ref(Expression::BareFunctionCall("GETDATE()".to_string())),
                 "date",
             ),
             FieldType::Date,
@@ -168,7 +168,7 @@ pub fn translate_fn_call(
                 ok(
                     Expression::FunctionCall {
                         name: "FORMAT".into(),
-                        args: vec![arg(0)??.0, "yyyyMMdd".into()],
+                        args: vec![arg(0)??.0, expr_ref("yyyyMMdd".into())],
                     },
                     FieldType::Character(8),
                 )
@@ -176,7 +176,7 @@ pub fn translate_fn_call(
                 ok(
                     Expression::FunctionCall {
                         name: "FORMAT".into(),
-                        args: vec![arg(0)??.0, "MM/dd/yy".into()],
+                        args: vec![arg(0)??.0, expr_ref("MM/dd/yy".into())],
                     },
                     FieldType::Character(8),
                 )
@@ -186,7 +186,7 @@ pub fn translate_fn_call(
         F::DTOS => ok(
             Expression::FunctionCall {
                 name: "FORMAT".into(),
-                args: vec![arg(0)??.0, "yyyyMMdd".into()],
+                args: vec![arg(0)??.0, expr_ref("yyyyMMdd".into())],
             },
             FieldType::Character(8),
         ),
@@ -203,7 +203,7 @@ pub fn translate_fn_call(
         // RIGHT(x, n) => RIGHT(x, n) -- SQL Server has this function
         F::RIGHT => {
             let (x, ty) = arg(0)??;
-            let n = match arg(1)??.0.as_ref() {
+            let n = match &*arg(1)??.0.borrow() {
                 Expression::NumberLiteral(v) => v.parse::<u32>().map_err(|_| wrong_type(1)),
                 _ => Err(wrong_type(1)),
             }?;
@@ -226,9 +226,9 @@ pub fn translate_fn_call(
             Expression::FunctionCall {
                 name: "CONVERT".to_string(),
                 args: vec![
-                    Box::new(Expression::BareFunctionCall("date".to_string())),
+                    expr_ref(Expression::BareFunctionCall("date".to_string())),
                     arg(0)??.0,
-                    Box::new(Expression::NumberLiteral("112".to_string())), // YYYYMMDD format
+                    expr_ref(Expression::NumberLiteral("112".to_string())), // YYYYMMDD format
                 ],
             },
             FieldType::Date,
@@ -236,11 +236,11 @@ pub fn translate_fn_call(
 
         // STR(num, len, dec) => STR(num, len, dec) with padding
         F::STR => {
-            let len: i64 = match arg(1)??.0.as_ref() {
+            let len: i64 = match &*arg(1)??.0.borrow() {
                 Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(1)),
                 _ => Err(wrong_type(1)),
             }?;
-            let dec: i64 = match arg(2)??.0.as_ref() {
+            let dec: i64 = match &*arg(2)??.0.borrow() {
                 Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(2)),
                 _ => Err(wrong_type(2)),
             }?;
@@ -251,8 +251,8 @@ pub fn translate_fn_call(
                     name: "STR".to_string(),
                     args: vec![
                         arg(0)??.0,
-                        Box::new(Expression::NumberLiteral(len.to_string())),
-                        Box::new(Expression::NumberLiteral(dec.to_string())),
+                        expr_ref(Expression::NumberLiteral(len.to_string())),
+                        expr_ref(Expression::NumberLiteral(dec.to_string())),
                     ],
                 },
                 FieldType::Character(len as u32),
