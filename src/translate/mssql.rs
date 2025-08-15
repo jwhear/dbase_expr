@@ -263,6 +263,31 @@ pub fn translate_binary_op<T: TranslationContext>(
             FieldType::Memo,
         ),
 
+        // Contains operation using CHARINDEX (MSSQL equivalent of STRPOS)
+        // Note: In CodeBase the haystack is the right operand, needle is left
+        (ast::BinaryOp::Contain, ty_l, _) if is_string_type(ty_l) => {
+            let charindex = expr_ref(Expression::FunctionCall {
+                name: "CHARINDEX".to_string(),
+                args: vec![translated_l, translated_r], // needle, haystack
+            });
+            // Use CASE WHEN for maximum SQL Server compatibility
+            ok(
+                Expression::Case {
+                    branches: vec![crate::translate::When {
+                        cond: expr_ref(Expression::BinaryOperator(
+                            charindex,
+                            crate::translate::BinaryOp::Gt,
+                            expr_ref(Expression::NumberLiteral("0".to_string())),
+                            crate::translate::Parenthesize::No,
+                        )),
+                        then: expr_ref(Expression::NumberLiteral("1".to_string())),
+                    }],
+                    r#else: expr_ref(Expression::NumberLiteral("0".to_string())),
+                },
+                FieldType::Logical,
+            )
+        }
+
         // For all other operations, delegate to postgres implementation
         _ => postgres::translate_binary_op(cx, l, op, r),
     }
