@@ -27,7 +27,23 @@ where
     }
 
     fn translate(&self, source: &ast::Expression) -> Result {
-        default_translate(source, self)
+        match source {
+            ast::Expression::Sequence(operands, concat_op) => {
+                let (first_expr, first_ty) = self.translate(&operands[0])?;
+                match first_ty {
+                    FieldType::Date => self.translate_date_sequence(
+                        first_expr,
+                        first_ty,
+                        &operands[1..],
+                        concat_op,
+                    ),
+                    FieldType::Character(_) | FieldType::Memo | FieldType::MemoBinary => self
+                        .translate_string_sequence(first_expr, first_ty, &operands[1..], concat_op),
+                    _ => default_translate(source, self),
+                }
+            }
+            _ => default_translate(source, self),
+        }
     }
 
     fn translate_fn_call(
@@ -48,6 +64,168 @@ where
     }
 }
 
+impl<F> MssqlTranslator<F>
+where
+    F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
+{
+    fn translate_date_sequence(
+        &self,
+        first_expr: ExprRef,
+        first_ty: FieldType,
+        remaining_operands: &[Box<ast::Expression>],
+        concat_op: &ast::ConcatOp,
+    ) -> Result {
+        let mut result = (first_expr, first_ty);
+        for operand in remaining_operands {
+            let (right_expr, right_ty) = self.translate(operand)?;
+            match (concat_op, &right_ty) {
+                (ast::ConcatOp::Add, ty) if is_numeric_type(ty) => {
+                    result = (
+                        expr_ref(dateadd_expr("day", right_expr, result.0)),
+                        FieldType::Date,
+                    );
+                }
+                (ast::ConcatOp::Sub, ty) if is_numeric_type(ty) => {
+                    let negated_amount = expr_ref(Expression::UnaryOperator(
+                        crate::translate::UnaryOp::Neg,
+                        right_expr,
+                    ));
+                    result = (
+                        expr_ref(dateadd_expr("day", negated_amount, result.0)),
+                        FieldType::Date,
+                    );
+                }
+                (ast::ConcatOp::Sub, FieldType::Date) => {
+                    result = (
+                        expr_ref(datediff_expr("day", right_expr, result.0)),
+                        FieldType::Numeric { len: 99, dec: 0 },
+                    );
+                }
+                _ => {
+                    // Not a supported date operation, reconstruct the sequence and fall back to default
+                    let mut all_operands =
+                        vec![Box::new(ast::Expression::NumberLiteral("0".to_string()))];
+                    all_operands.extend_from_slice(remaining_operands);
+                    return default_translate(
+                        &ast::Expression::Sequence(all_operands, *concat_op),
+                        self,
+                    );
+                }
+            }
+        }
+        Ok(result)
+    }
+
+    fn translate_string_sequence(
+        &self,
+        first_expr: ExprRef,
+        first_ty: FieldType,
+        remaining_operands: &[Box<ast::Expression>],
+        concat_op: &ast::ConcatOp,
+    ) -> Result {
+        let mut all_exprs = vec![first_expr];
+        let mut result_type = first_ty;
+
+        for operand in remaining_operands {
+            let (right_expr, _right_ty) = self.translate(operand)?;
+            match concat_op {
+                ast::ConcatOp::Add => {
+                    all_exprs.push(right_expr);
+                }
+                ast::ConcatOp::Sub => {
+                    if all_exprs.len() == 1 {
+                        // First subtraction, use the helper function
+                        let left_expr = all_exprs.pop().unwrap();
+                        return Ok((
+                            expr_ref(string_subtract_expr(left_expr, right_expr)),
+                            FieldType::Memo,
+                        ));
+                    } else {
+                        // Additional operations after subtraction - just concatenate
+                        all_exprs.push(right_expr);
+                    }
+                }
+            }
+        }
+
+        if all_exprs.len() > 1 {
+            result_type = FieldType::Memo;
+            Ok((expr_ref(concat_expr(all_exprs)), result_type))
+        } else {
+            Ok((all_exprs.into_iter().next().unwrap(), result_type))
+        }
+    }
+}
+
+fn dateadd_expr(interval: &str, amount: ExprRef, date: ExprRef) -> Expression {
+    Expression::FunctionCall {
+        name: "DATEADD".to_string(),
+        args: vec![
+            expr_ref(Expression::BareFunctionCall(interval.to_string())),
+            amount,
+            date,
+        ],
+    }
+}
+
+fn datediff_expr(interval: &str, start_date: ExprRef, end_date: ExprRef) -> Expression {
+    Expression::FunctionCall {
+        name: "DATEDIFF".to_string(),
+        args: vec![
+            expr_ref(Expression::BareFunctionCall(interval.to_string())),
+            start_date,
+            end_date,
+        ],
+    }
+}
+
+fn concat_expr(args: Vec<ExprRef>) -> Expression {
+    Expression::FunctionCall {
+        name: "CONCAT".to_string(),
+        args,
+    }
+}
+
+fn string_subtract_expr(left: ExprRef, right: ExprRef) -> Expression {
+    let without_spaces = expr_ref(Expression::FunctionCall {
+        name: "RTRIM".to_string(),
+        args: vec![left.clone()],
+    });
+    let length_without_spaces = expr_ref(Expression::FunctionCall {
+        name: "LEN".to_string(),
+        args: vec![without_spaces.clone()],
+    });
+    let length_with_spaces = expr_ref(Expression::FunctionCall {
+        name: "DATALENGTH".to_string(),
+        args: vec![left],
+    });
+    let num_spaces = expr_ref(Expression::BinaryOperator(
+        length_with_spaces,
+        crate::translate::BinaryOp::Sub,
+        length_without_spaces,
+        crate::translate::Parenthesize::No,
+    ));
+    let repeated_spaces = expr_ref(Expression::FunctionCall {
+        name: "REPLICATE".to_string(),
+        args: vec![
+            expr_ref(Expression::SingleQuoteStringLiteral(" ".to_string())),
+            num_spaces,
+        ],
+    });
+    concat_expr(vec![without_spaces, right, repeated_spaces])
+}
+
+fn is_numeric_type(ty: &FieldType) -> bool {
+    matches!(
+        ty,
+        FieldType::Integer | FieldType::Double | FieldType::Float | FieldType::Numeric { .. }
+    )
+}
+
+fn is_string_type(ty: &FieldType) -> bool {
+    matches!(ty, FieldType::Character(_) | FieldType::Memo)
+}
+
 pub fn translate_binary_op<T: TranslationContext>(
     cx: &T,
     l: &ast::Expression,
@@ -57,54 +235,59 @@ pub fn translate_binary_op<T: TranslationContext>(
     let (translated_l, ty_l) = cx.translate(l)?;
     let (translated_r, ty_r) = cx.translate(r)?;
 
-    match (op, ty_l, ty_r) {
-        // For date + integer, SQL Server requires DATEADD function
-        (
-            ast::BinaryOp::Add,
-            FieldType::Date,
-            FieldType::Integer | FieldType::Double | FieldType::Float | FieldType::Numeric { .. },
-        ) => ok(
-            Expression::FunctionCall {
-                name: "DATEADD".to_string(),
-                args: vec![
-                    expr_ref(Expression::BareFunctionCall("day".to_string())),
-                    translated_r,
-                    translated_l,
-                ],
-            },
+    match (op, &ty_l, &ty_r) {
+        // Date arithmetic
+        (ast::BinaryOp::Add, FieldType::Date, ty_r) if is_numeric_type(ty_r) => ok(
+            dateadd_expr("day", translated_r, translated_l),
             FieldType::Date,
         ),
-        // For date - integer, SQL Server requires DATEADD with negative number
-        (
-            ast::BinaryOp::Sub,
-            FieldType::Date,
-            FieldType::Integer | FieldType::Double | FieldType::Float | FieldType::Numeric { .. },
-        ) => ok(
-            Expression::FunctionCall {
-                name: "DATEADD".to_string(),
-                args: vec![
-                    expr_ref(Expression::BareFunctionCall("day".to_string())),
-                    expr_ref(Expression::UnaryOperator(
-                        crate::translate::UnaryOp::Neg,
-                        translated_r,
-                    )),
-                    translated_l,
-                ],
-            },
-            FieldType::Date,
-        ),
-        // For date - date, SQL Server requires DATEDIFF function
+        (ast::BinaryOp::Sub, FieldType::Date, ty_r) if is_numeric_type(ty_r) => {
+            let amount = expr_ref(Expression::UnaryOperator(
+                crate::translate::UnaryOp::Neg,
+                translated_r,
+            ));
+            ok(dateadd_expr("day", amount, translated_l), FieldType::Date)
+        }
         (ast::BinaryOp::Sub, FieldType::Date, FieldType::Date) => ok(
-            Expression::FunctionCall {
-                name: "DATEDIFF".to_string(),
-                args: vec![
-                    expr_ref(Expression::BareFunctionCall("day".to_string())),
-                    translated_r,
-                    translated_l,
-                ],
-            },
+            datediff_expr("day", translated_r, translated_l),
             FieldType::Numeric { len: 99, dec: 0 },
         ),
+
+        // String operations
+        (ast::BinaryOp::Add, ty_l, _) if is_string_type(ty_l) => ok(
+            concat_expr(vec![translated_l, translated_r]),
+            FieldType::Memo,
+        ),
+        (ast::BinaryOp::Sub, ty_l, _) if is_string_type(ty_l) => ok(
+            string_subtract_expr(translated_l, translated_r),
+            FieldType::Memo,
+        ),
+
+        // Contains operation using CHARINDEX (MSSQL equivalent of STRPOS)
+        // Note: In CodeBase the haystack is the right operand, needle is left
+        (ast::BinaryOp::Contain, ty_l, _) if is_string_type(ty_l) => {
+            let charindex = expr_ref(Expression::FunctionCall {
+                name: "CHARINDEX".to_string(),
+                args: vec![translated_l, translated_r], // needle, haystack
+            });
+            // Use CASE WHEN for maximum SQL Server compatibility
+            ok(
+                Expression::Case {
+                    branches: vec![crate::translate::When {
+                        cond: expr_ref(Expression::BinaryOperator(
+                            charindex,
+                            crate::translate::BinaryOp::Gt,
+                            expr_ref(Expression::NumberLiteral("0".to_string())),
+                            crate::translate::Parenthesize::No,
+                        )),
+                        then: expr_ref(Expression::NumberLiteral("1".to_string())),
+                    }],
+                    r#else: expr_ref(Expression::NumberLiteral("0".to_string())),
+                },
+                FieldType::Logical,
+            )
+        }
+
         // For all other operations, delegate to postgres implementation
         _ => postgres::translate_binary_op(cx, l, op, r),
     }
