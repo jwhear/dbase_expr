@@ -1,0 +1,1 @@
+iif( ( trim( F_NAME ) <> trim( \" \" ) ), ( trim( F_NAME ) + \" \" + trim( L_NAME ) ), ( trim( F_NAME) + trim( L_NAME ) ) )
