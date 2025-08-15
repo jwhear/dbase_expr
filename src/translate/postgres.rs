@@ -122,7 +122,6 @@ pub fn translate<C: TranslationContext>(source: &E, cx: &C) -> Result {
             // We'll inspect the type of the first operand and use that to
             //  either emit a '+' or a '||'
             let (first_expr, ty) = cx.translate(&operands[0])?;
-            let first_expr = first_expr;
             let mut exprs = Vec::with_capacity(operands.len());
             exprs.push(first_expr);
             for operand in &operands[1..] {

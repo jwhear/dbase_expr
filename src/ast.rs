@@ -154,7 +154,7 @@ fn concat(l: Box<Expression>, op: ConcatOp, r: Box<Expression>) -> Expression {
 const MAX_DEPTH: usize = 10;
 impl<'a> Arbitrary<'a> for BinaryOp {
     fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
-        Ok(u.choose(&[
+        Ok(*u.choose(&[
             BinaryOp::Add,
             BinaryOp::Sub,
             BinaryOp::Mul,
@@ -169,20 +169,19 @@ impl<'a> Arbitrary<'a> for BinaryOp {
             BinaryOp::And,
             BinaryOp::Or,
             BinaryOp::Exp,
-        ])?
-        .clone())
+        ])?)
     }
 }
 
 impl<'a> Arbitrary<'a> for ConcatOp {
     fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
-        Ok(u.choose(&[ConcatOp::Add, ConcatOp::Sub])?.clone())
+        Ok(*u.choose(&[ConcatOp::Add, ConcatOp::Sub])?)
     }
 }
 
 impl<'a> Arbitrary<'a> for UnaryOp {
     fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
-        Ok(u.choose(&[UnaryOp::Not, UnaryOp::Neg])?.clone())
+        Ok(*u.choose(&[UnaryOp::Not, UnaryOp::Neg])?)
     }
 }
 

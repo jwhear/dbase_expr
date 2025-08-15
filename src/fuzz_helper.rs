@@ -6,7 +6,7 @@ use crate::{
 };
 
 // Simple value lookup for evaluation
-fn value_lookup<'a>() -> impl Fn(&str) -> Option<Value> {
+fn value_lookup() -> impl Fn(&str) -> Option<Value> {
     |field_name: &str| -> Option<Value> {
         match field_name.to_uppercase().as_str() {
             "B_T" => Some(Value::Bool(true)),
@@ -26,7 +26,7 @@ fn value_lookup<'a>() -> impl Fn(&str) -> Option<Value> {
     }
 }
 
-fn field_lookup<'a>() -> impl Fn(Option<&str>, &str) -> Result<(String, FieldType), String> {
+fn field_lookup() -> impl Fn(Option<&str>, &str) -> Result<(String, FieldType), String> {
     |_alias: Option<&str>, field: &str| -> Result<(String, FieldType), String> {
         let field = field.to_string().to_uppercase();
         let field_type = match field.as_str() {
