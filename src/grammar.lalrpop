@@ -35,12 +35,7 @@ Bool: bool = {
 	r"\.[tT]([rR][uU][eE])?\." => true,
 	r"\.[fF]([aA][lL][sS][eE])?\." => false,
 };
-Num: String = {
-    r"[0-9]*+\.[0-9]*" => <>.to_string(), 		// Numbers with decimals (123.45)
-    r"[0-9]+" => <>.to_string(),				// Integers (123)
-    r"[0-9]+\." => format!("{}0", <>), 			// Numbers ending with '.' (123.), add a 0 
-    r"\.[0-9]+" => format!("0{}", <>),			// Numbers with decimals beginning with '.' (.5), prepend a 0 
-};
+Num: String = r"[0-9]*+(\.[0-9]*)?" => <>.to_string();
 Ident: String = r"[a-zA-Z_][a-zA-Z_0-9]*" => <>.to_string();
 Call: (String, Vec<Box<Expression>>) = <name:Ident> "(" <args:Exprs> ")" => (name, args);
 Field: Box<Expression> = {
