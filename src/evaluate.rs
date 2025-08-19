@@ -590,21 +590,19 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
         BinaryOp::And => {
             let left_bool = match left {
                 Value::Bool(b) => b,
-                Value::Number(n) => n != 0.0,
                 _ => {
                     return Err(Error::IncompatibleBinaryOp(
                         BinaryOp::And,
-                        "Expected boolean or numeric operands".to_string(),
+                        "Expected boolean operands".to_string(),
                     ));
                 }
             };
             let right_bool = match right {
                 Value::Bool(b) => b,
-                Value::Number(n) => n != 0.0,
                 _ => {
                     return Err(Error::IncompatibleBinaryOp(
                         BinaryOp::And,
-                        "Expected boolean or numeric operands".to_string(),
+                        "Expected boolean operands".to_string(),
                     ));
                 }
             };
