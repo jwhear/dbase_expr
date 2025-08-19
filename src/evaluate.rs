@@ -679,6 +679,7 @@ mod tests {
     #[test]
     fn add_subtract_operators() {
         assert_eq!(eval("-"), Ok(Value::Number(0.0)));
+        assert_eq!(eval("+"), Ok(Value::Number(0.0)));
         assert_eq!(eval("-2"), Ok(Value::Number(-2.0)));
         assert_eq!(eval("--2"), Ok(Value::Number(2.0)));
         assert_eq!(eval("---2"), Ok(Value::Number(-2.0)));
