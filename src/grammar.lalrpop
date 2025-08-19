@@ -90,7 +90,7 @@ NotOp: UnaryOp = {
 
 NegOp: UnaryOp = {
 	"-" => UnaryOp::Neg,
-}
+};
 
 // Utility macros
 //-------------------------------------------------------
