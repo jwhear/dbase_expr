@@ -640,9 +640,9 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
 mod tests {
     use super::*;
 
-    const TRUE: Result<Value, String> = Result::Ok(Value::Bool(true));
+    const TRUE: Result<Value, Error> = Result::Ok(Value::Bool(true));
 
-    fn eval(expr: &str) -> Result<Value, String> {
+    fn eval(expr: &str) -> Result<Value, Error> {
         use crate::{ast, grammar::ExprParser};
         let parser = ExprParser::new();
         let value_lookup = |_: &str| -> Option<Value> { None };
@@ -651,7 +651,7 @@ mod tests {
                 let t = ast::simplify(*t);
                 evaluate(&t, &value_lookup)
             }
-            Err(e) => Err(format!("{e}")),
+            Err(e) => Err(Error::Other(format!("{e}"))),
         }
     }
 
@@ -674,5 +674,14 @@ mod tests {
     fn precision() {
         assert_eq!(eval(".1 + 0.2"), Ok(Value::Number(0.3)));
         assert_eq!(eval(".1 + 0.2 = 000.3"), TRUE);
+    }
+
+    #[test]
+    fn add_subtract_operators() {
+        assert_eq!(eval("-"), Ok(Value::Number(0.0)));
+        assert_eq!(eval("-2"), Ok(Value::Number(-2.0)));
+        assert_eq!(eval("--2"), Ok(Value::Number(2.0)));
+        assert_eq!(eval("---2"), Ok(Value::Number(-2.0)));
+        assert_eq!(eval("-+-2"), Ok(Value::Number(2.0)));
     }
 }
