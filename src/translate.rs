@@ -201,7 +201,7 @@ impl FieldType {
 ///  translator but intercept anything that needs to be handled differently:
 ///
 /// ```rust
-/// # use dbase_expr::{ast, translate::{self, Expression, FieldType, TranslationContext, Error}, codebase_functions::CodebaseFunction,};
+/// # use dbase_expr::{ast, translate::{self, Expression, FieldType, TranslationContext, Error, ExprRef}, codebase_functions::CodebaseFunction,};
 /// struct MyCustomTranslator
 /// {
 ///     my_state: std::collections::HashMap<String, FieldType>,
@@ -238,6 +238,15 @@ impl FieldType {
 ///
 ///         // and delegate the rest...
 ///         translate::postgres::translate_fn_call(name, args, self)
+///     }
+///
+///     fn translate_binary_op(
+///        &self,
+///        l: &ast::Expression,
+///        op: &ast::BinaryOp,
+///        r: &ast::Expression,
+///     ) -> std::result::Result<(ExprRef, FieldType), Error> {
+///         translate::postgres::translate_binary_op(self, l, op, r)
 ///     }
 /// }
 ///

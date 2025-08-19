@@ -69,6 +69,7 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
             EvalState::Expr(e) => match e {
                 Expression::BoolLiteral(b) => results.push(Value::Bool(*b)),
 
+                Expression::NumberLiteral(s) if s == "." => results.push(Value::Number(0.0)),
                 Expression::NumberLiteral(s) => results.push(
                     s.parse::<f64>()
                         .map(Value::Number)
@@ -525,5 +526,46 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Str
             };
             Ok(Value::Bool(left_bool || right_bool))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TRUE: Result<Value, String> = Result::Ok(Value::Bool(true));
+
+    fn eval(expr: &str) -> Result<Value, String> {
+        use crate::{ast, grammar::ExprParser};
+        let parser = ExprParser::new();
+        let value_lookup = |_: &str| -> Option<Value> { None };
+        match parser.parse(expr) {
+            Ok(t) => {
+                let t = ast::simplify(*t);
+                evaluate(&t, &value_lookup)
+            }
+            Err(e) => Err(format!("{e}")),
+        }
+    }
+
+    #[test]
+    fn optional_digits() {
+        // Trailing digits optional
+        assert_eq!(eval("1. + 2 = 3.00"), TRUE);
+
+        // Leading digits optional
+        assert_eq!(eval(".1 + 0.1 = 000.2"), TRUE);
+
+        // All digits optional!
+        // 0.0 + 0.0 = 0.0
+        assert_eq!(eval(".+.=."), TRUE);
+    }
+
+    // This does not pass due to numeric precision issues with f64
+    //TODO: implement using decimal type and uncomment
+    #[test]
+    fn precision() {
+        assert_eq!(eval(".1 + 0.2"), Ok(Value::Number(0.3)));
+        assert_eq!(eval(".1 + 0.2 = 000.3"), TRUE);
     }
 }
