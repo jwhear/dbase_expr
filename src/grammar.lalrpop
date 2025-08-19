@@ -36,7 +36,7 @@ Bool: bool = {
 	r"\.[fF]([aA][lL][sS][eE])?\." => false,
 };
 Num: String = {
-    r"[0-9]+\.[0-9]+" => <>.to_string(), 		// Numbers with decimals (123.45)
+    r"[0-9]*+\.[0-9]*" => <>.to_string(), 		// Numbers with decimals (123.45)
     r"[0-9]+" => <>.to_string(),				// Integers (123)
     r"[0-9]+\." => format!("{}0", <>), 			// Numbers ending with '.' (123.), add a 0 
     r"\.[0-9]+" => format!("0{}", <>),			// Numbers with decimals beginning with '.' (.5), prepend a 0 
