@@ -1,6 +1,6 @@
 This library aims to faithfully emulate dBase expression evaluation as implemented by Codebase. However, there are areas where we deliberately diverge.
 
-== Early parsing termination
+## Early parsing termination
 This crate expects all expressions to be syntactically valid and returns an error if they are not. Codebase is more lenient with poorly-formed expressions.
 
 Example: `(2.0)) * 3.0`
