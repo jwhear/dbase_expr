@@ -107,6 +107,14 @@ fn main() {
 fn expr_tests() {
     let parser = grammar::ExprParser::new();
     let tests = [
+        "-",    //0
+        "--3",  //3 because it translates to -(-3)
+        "---3", //-3 because it translates to -(-(-3))
+        "+-3",  //-3
+        ".",    //0
+        ".5",   //0.5
+        "5.",   //5.0
+        "   3    - 44  ",
         "deleted() = .f. .and. substr(id, 1, 3 ) <> \"($)\"",
         ".NOT.deleted()",
         "12",
