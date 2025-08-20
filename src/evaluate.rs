@@ -258,14 +258,14 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
 
         F::DTOC | F::DTOS => match args {
             [Value::Date(d)] => {
-                let fmt = if name == &F::DTOC {
-                    "%m/%d/%y"
+                let (fmt, len) = if name == &F::DTOC {
+                    ("%m/%d/%y", 10)
                 } else {
-                    "%Y%m%d"
+                    ("%Y%m%d", 8)
                 };
                 let text = match d {
                     Some(date) => date.format(fmt).to_string(),
-                    None => "".to_string(),
+                    None => " ".repeat(len),
                 };
                 let len = if name == &F::DTOC { 10 } else { 8 };
                 Ok(Value::Str(text, len))
@@ -354,6 +354,10 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
         },
 
         F::STR => match args {
+            [Value::Number(n)] => {
+                let fmt = format!("{:width$.prec$}", n, width = 10, prec = 0); // DBASE defaults: https://www.dbase.com/downloads/dBLLanguageReference2.6.pdf
+                Ok(Value::Str(fmt.trim_end().to_string(), 10))
+            }
             [Value::Number(n), Value::Number(len), Value::Number(dec)] => {
                 let fmt = format!(
                     "{:width$.prec$}",
