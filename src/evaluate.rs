@@ -397,7 +397,11 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
                 let value = match (when_true, when_false) {
                     (Value::Str(str_true, len_true), Value::Str(str_false, len_false)) => {
                         let max_len = *len_true.max(len_false); //get the max of the two because the length shouldn't depend on the values
-                        let str_value = if *cond { str_true } else { str_false }.clone();
+                        let mut str_value = if *cond { str_true } else { str_false }.clone();
+                        if str_value.len() < max_len {
+                            str_value
+                                .extend(std::iter::repeat(' ').take(max_len - str_value.len()));
+                        }
                         Value::Str(str_value, max_len)
                     }
                     _ => chosen.clone(),

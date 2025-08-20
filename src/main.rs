@@ -131,7 +131,7 @@ fn expr_tests() {
         r#"'single quote'"#,
         r#"VAL('10.123')"#,
         "SUBSTR('hello', 2, 3)",
-        "IIF (B_T, ID, L_NAME)", //TODO: this should return length of 100 since we should assume the larger of the potential values
+        "IIF (B_T, ID, L_NAME)",
         "LEFT(ID, 2)",
         "RIGHT(ID, 8)",
         "ID + L_NAME",
