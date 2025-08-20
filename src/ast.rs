@@ -39,6 +39,7 @@ impl ConcatOp {
 pub enum UnaryOp {
     Not,
     Neg,
+    Pos,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

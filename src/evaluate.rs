@@ -144,6 +144,8 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Error
                 let result = match (op, val) {
                     (UnaryOp::Not, Value::Bool(b)) => Value::Bool(!b),
                     (UnaryOp::Neg, Value::Number(n)) => Value::Number(-n),
+                    // Pos does nothing to its number
+                    (UnaryOp::Pos, Value::Number(n)) => Value::Number(n),
                     _ => return Err(Error::InvalidUnaryOp(op)),
                 };
                 results.push(result);
@@ -678,11 +680,16 @@ mod tests {
 
     #[test]
     fn add_subtract_operators() {
-        assert_eq!(eval("-"), Ok(Value::Number(0.0)));
-        assert_eq!(eval("+"), Ok(Value::Number(0.0)));
         assert_eq!(eval("-2"), Ok(Value::Number(-2.0)));
         assert_eq!(eval("--2"), Ok(Value::Number(2.0)));
         assert_eq!(eval("---2"), Ok(Value::Number(-2.0)));
         assert_eq!(eval("-+-2"), Ok(Value::Number(2.0)));
+        assert_eq!(eval("-(+(-(2)))"), Ok(Value::Number(2.0)));
+    }
+
+    #[test]
+    fn implicit_number() {
+        assert_eq!(eval("-"), Ok(Value::Number(0.0)));
+        assert_eq!(eval("+"), Ok(Value::Number(0.0)));
     }
 }
