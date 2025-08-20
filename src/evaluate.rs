@@ -447,22 +447,6 @@ fn right_str_n(s: &str, n: f64) -> String {
 use Value::*;
 
 fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Error> {
-    fn with_len(s: &str, len: usize) -> Cow<str> {
-        let char_count = len.min(s.chars().count());
-        match s.char_indices().nth(char_count) {
-            Some((i, _)) => Cow::Borrowed(&s[..i]), //slice down the string if it's too long
-            None => {
-                //pad it if it's too short
-                if s.chars().count() < len {
-                    let mut padded = s.to_string();
-                    padded.extend(std::iter::repeat(' ').take(len - padded.chars().count()));
-                    Cow::Owned(padded)
-                } else {
-                    Cow::Borrowed(s)
-                }
-            }
-        }
-    }
     match op {
         BinaryOp::Add => match (left, right) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a + b)),
@@ -552,62 +536,21 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
             )),
         },
 
-        BinaryOp::Eq => Ok(Bool(match (left, right) {
-            (Str(a, _), Memo(b) | Str(b, _)) => {
-                a == with_len(&b, a.len()) // this is explicitly not using the Value::Str's len because values that should be padded already are. trimmed fields maintain their len but do not have padded values.
-            }
-            (l, r) => l == r,
+        BinaryOp::Eq | BinaryOp::Ne => Ok(Bool(match (left, right) {
+            (Str(a, _), Memo(b) | Str(b, _)) => cmp_str(&a, &b, &op),
+            (l, r) => match op {
+                BinaryOp::Eq => l == r,
+                BinaryOp::Ne => l != r,
+                _ => unreachable!(),
+            },
         })),
-        BinaryOp::Ne => Ok(Bool(match (left, right) {
-            (Str(a, _), Memo(b) | Str(b, _)) => {
-                a != with_len(&b, a.len()) // this is explicitly not using the Value::Str's len because values that should be padded already are. trimmed fields maintain their len but do not have padded values.
-            }
-            (l, r) => l != r,
-        })),
-        BinaryOp::Lt => match (left, right) {
-            (Number(a), Number(b)) => Ok(Bool(a < b)),
-            (Str(a, _) | Memo(a), Str(b, _) | Memo(b)) => {
-                Ok(Bool(a.as_str() < &*with_len(&b, a.len())))
-            }
-            (Date(a), Date(b)) => Ok(Bool(a < b)),
-            _ => Err(Error::IncompatibleBinaryOp(
-                BinaryOp::Lt,
-                "Incompatible types".to_string(),
-            )),
-        },
 
-        BinaryOp::Le => match (left, right) {
-            (Number(a), Number(b)) => Ok(Bool(a <= b)),
-            (Str(a, _) | Memo(a), Str(b, _) | Memo(b)) => {
-                Ok(Bool(a.as_str() <= &*with_len(&b, a.len())))
-            }
-            (Date(a), Date(b)) => Ok(Bool(a <= b)),
+        BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => match (left, right) {
+            (Number(a), Number(b)) => Ok(Bool(cmp(a, b, &op))),
+            (Str(a, _) | Memo(a), Str(b, _) | Memo(b)) => Ok(Bool(cmp_str(&a, &b, op))),
+            (Date(a), Date(b)) => Ok(Bool(cmp(&a, &b, &op))),
             _ => Err(Error::IncompatibleBinaryOp(
-                BinaryOp::Le,
-                "Incompatible types".to_string(),
-            )),
-        },
-
-        BinaryOp::Gt => match (left, right) {
-            (Number(a), Number(b)) => Ok(Bool(a > b)),
-            (Str(a, _) | Memo(a), Str(b, _) | Memo(b)) => {
-                Ok(Bool(a.as_str() > &*with_len(&b, a.len())))
-            }
-            (Date(a), Date(b)) => Ok(Bool(a > b)),
-            _ => Err(Error::IncompatibleBinaryOp(
-                BinaryOp::Gt,
-                "Incompatible types".to_string(),
-            )),
-        },
-
-        BinaryOp::Ge => match (left, right) {
-            (Number(a), Number(b)) => Ok(Bool(a >= b)),
-            (Str(a, _) | Memo(a), Str(b, _) | Memo(b)) => {
-                Ok(Bool(a.as_str() >= &*with_len(&b, a.len())))
-            }
-            (Date(a), Date(b)) => Ok(Bool(a >= b)),
-            _ => Err(Error::IncompatibleBinaryOp(
-                BinaryOp::Ge,
+                op.clone(),
                 "Incompatible types".to_string(),
             )),
         },
@@ -666,6 +609,38 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
                 }
             };
             Ok(Value::Bool(left_bool || right_bool))
+        }
+    }
+}
+
+fn cmp<T: PartialOrd + PartialEq>(left: T, right: T, op: &BinaryOp) -> bool {
+    match op {
+        BinaryOp::Eq => left == right,
+        BinaryOp::Ne => left != right,
+        BinaryOp::Lt => left < right,
+        BinaryOp::Le => left <= right,
+        BinaryOp::Gt => left > right,
+        BinaryOp::Ge => left >= right,
+        op => panic!("Unexpected comparison operator: {:?}", op),
+    }
+}
+fn cmp_str(a: &str, b: &str, op: &BinaryOp) -> bool {
+    let b_adjusted = with_len(b, a.len());
+    cmp(a, &*b_adjusted, op)
+}
+fn with_len(s: &str, len: usize) -> Cow<str> {
+    let char_count = len.min(s.chars().count());
+    match s.char_indices().nth(char_count) {
+        Some((i, _)) => Cow::Borrowed(&s[..i]), //slice down the string if it's too long
+        None => {
+            //pad it if it's too short
+            if s.chars().count() < len {
+                let mut padded = s.to_string();
+                padded.extend(std::iter::repeat(' ').take(len - padded.chars().count()));
+                Cow::Owned(padded)
+            } else {
+                Cow::Borrowed(s)
+            }
         }
     }
 }
