@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fmt::Debug;
 
 use chrono::Datelike;
@@ -446,21 +447,21 @@ fn right_str_n(s: &str, n: f64) -> String {
 use Value::*;
 
 fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Error> {
-    // Helper function to truncate a string without risking cutting a multi-byte character in half
-    fn slice(s: &str, len: usize) -> &str {
+    fn with_len(s: &str, len: usize) -> Cow<str> {
         let char_count = len.min(s.chars().count());
         match s.char_indices().nth(char_count) {
-            Some((i, _)) => &s[..i],
-            None => s,
+            Some((i, _)) => Cow::Borrowed(&s[..i]), //slice down the string if it's too long
+            None => {
+                //pad it if it's too short
+                if s.chars().count() < len {
+                    let mut padded = s.to_string();
+                    padded.extend(std::iter::repeat(' ').take(len - padded.chars().count()));
+                    Cow::Owned(padded)
+                } else {
+                    Cow::Borrowed(s)
+                }
+            }
         }
-    }
-    fn with_len(s: &str, len: usize) -> String {
-        let s = slice(s, len);
-        let mut padded = s.to_string();
-        if padded.chars().count() < len {
-            padded.extend(std::iter::repeat(' ').take(len - padded.chars().count()));
-        }
-        padded
     }
     match op {
         BinaryOp::Add => match (left, right) {
@@ -565,8 +566,9 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
         })),
         BinaryOp::Lt => match (left, right) {
             (Number(a), Number(b)) => Ok(Bool(a < b)),
-            (Str(a, _) | Memo(a), Str(b, len)) => Ok(Bool(slice(&a, len) < slice(&b, a.len()))),
-            (Str(a, _) | Memo(a), Memo(b)) => Ok(Bool(a.as_str() < slice(&b, a.len()))),
+            (Str(a, _) | Memo(a), Str(b, _) | Memo(b)) => {
+                Ok(Bool(a.as_str() < &*with_len(&b, a.len())))
+            }
             (Date(a), Date(b)) => Ok(Bool(a < b)),
             _ => Err(Error::IncompatibleBinaryOp(
                 BinaryOp::Lt,
@@ -576,8 +578,9 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
 
         BinaryOp::Le => match (left, right) {
             (Number(a), Number(b)) => Ok(Bool(a <= b)),
-            (Str(a, _) | Memo(a), Str(b, len)) => Ok(Bool(slice(&a, len) <= slice(&b, a.len()))),
-            (Str(a, _) | Memo(a), Memo(b)) => Ok(Bool(a.as_str() <= slice(&b, a.len()))),
+            (Str(a, _) | Memo(a), Str(b, _) | Memo(b)) => {
+                Ok(Bool(a.as_str() <= &*with_len(&b, a.len())))
+            }
             (Date(a), Date(b)) => Ok(Bool(a <= b)),
             _ => Err(Error::IncompatibleBinaryOp(
                 BinaryOp::Le,
@@ -587,8 +590,9 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
 
         BinaryOp::Gt => match (left, right) {
             (Number(a), Number(b)) => Ok(Bool(a > b)),
-            (Str(a, _) | Memo(a), Str(b, len)) => Ok(Bool(slice(&a, len) > slice(&b, a.len()))),
-            (Str(a, _) | Memo(a), Memo(b)) => Ok(Bool(a.as_str() > slice(&b, a.len()))),
+            (Str(a, _) | Memo(a), Str(b, _) | Memo(b)) => {
+                Ok(Bool(a.as_str() > &*with_len(&b, a.len())))
+            }
             (Date(a), Date(b)) => Ok(Bool(a > b)),
             _ => Err(Error::IncompatibleBinaryOp(
                 BinaryOp::Gt,
@@ -598,8 +602,9 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
 
         BinaryOp::Ge => match (left, right) {
             (Number(a), Number(b)) => Ok(Bool(a >= b)),
-            (Str(a, _) | Memo(a), Str(b, len)) => Ok(Bool(slice(&a, len) >= slice(&b, a.len()))),
-            (Str(a, _) | Memo(a), Memo(b)) => Ok(Bool(a.as_str() >= slice(&b, a.len()))),
+            (Str(a, _) | Memo(a), Str(b, _) | Memo(b)) => {
+                Ok(Bool(a.as_str() >= &*with_len(&b, a.len())))
+            }
             (Date(a), Date(b)) => Ok(Bool(a >= b)),
             _ => Err(Error::IncompatibleBinaryOp(
                 BinaryOp::Ge,
