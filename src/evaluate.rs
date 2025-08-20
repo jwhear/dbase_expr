@@ -682,6 +682,7 @@ mod tests {
     fn optional_digits() {
         // Trailing digits optional
         assert_eq!(eval("1. + 2 = 3.00"), TRUE);
+        assert_eq!(eval("1=1.and.1=1"), TRUE);
 
         // Leading digits optional
         assert_eq!(eval(".1 + 0.1 = 000.2"), TRUE);
