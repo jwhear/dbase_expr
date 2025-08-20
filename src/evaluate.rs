@@ -392,11 +392,18 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
         F::DATE => Ok(Value::Date(Some(chrono::Local::now().naive_local().date()))),
 
         F::IIF => match args {
-            [Value::Bool(cond), when_true, when_false] => Ok(if *cond {
-                when_true.clone()
-            } else {
-                when_false.clone()
-            }),
+            [Value::Bool(cond), when_true, when_false] => {
+                let chosen = if *cond { when_true } else { when_false };
+                let value = match (when_true, when_false) {
+                    (Value::Str(str_true, len_true), Value::Str(str_false, len_false)) => {
+                        let max_len = *len_true.max(len_false); //get the max of the two because the length shouldn't depend on the values
+                        let str_value = if *cond { str_true } else { str_false }.clone();
+                        Value::Str(str_value, max_len)
+                    }
+                    _ => chosen.clone(),
+                };
+                Ok(value)
+            }
             _ => Err(Error::InvalidArguments(
                 name.clone(),
                 "IIF expects (boolean, true, false)".to_string(),
@@ -529,11 +536,17 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
         },
 
         BinaryOp::Eq => Ok(Bool(match (left, right) {
-            (Str(l, _) | Memo(l), Str(r, _) | Memo(r)) => l.starts_with(&r),
+            (Str(a, _) | Memo(a), Str(b, r_len)) => {
+                slice(&a, r_len).starts_with(slice(&b, a.len()))
+            }
+            (Str(a, _) | Memo(a), Memo(b)) => a.starts_with(slice(&b, a.len())),
             (l, r) => l == r,
         })),
         BinaryOp::Ne => Ok(Bool(match (left, right) {
-            (Str(l, _) | Memo(l), Str(r, _) | Memo(r)) => !l.starts_with(&r),
+            (Str(a, _) | Memo(a), Str(b, r_len)) => {
+                !slice(&a, r_len).starts_with(slice(&b, a.len()))
+            }
+            (Str(a, _) | Memo(a), Memo(b)) => !a.starts_with(slice(&b, a.len())),
             (l, r) => l != r,
         })),
         BinaryOp::Lt => match (left, right) {
