@@ -217,3 +217,34 @@ fn arbitrary_expr(u: &mut Unstructured<'_>, depth: usize) -> arbitrary::Result<E
         _ => unreachable!(),
     }
 }
+
+pub enum ParseError {
+    UnrecognizedToken(String),
+    InvalidToken(String),
+    ExtraToken(String),
+    UnrecognizedEof,
+    User,
+}
+
+pub fn parse(expr: &str) -> Result<Box<Expression>, (ParseError, String)> {
+    let parser = crate::grammar::ExprParser::new();
+    match parser.parse(expr) {
+        Ok(expression) => Ok(expression),
+        Err(err) => {
+            let parsed = match &err {
+                lalrpop_util::ParseError::UnrecognizedToken { token, .. } => {
+                    ParseError::UnrecognizedToken(format!("{:?}", token))
+                }
+                lalrpop_util::ParseError::InvalidToken { location } => {
+                    ParseError::InvalidToken(format!("{:?}", location))
+                }
+                lalrpop_util::ParseError::ExtraToken { token } => {
+                    ParseError::ExtraToken(format!("{:?}", token))
+                }
+                lalrpop_util::ParseError::UnrecognizedEof { .. } => ParseError::UnrecognizedEof,
+                lalrpop_util::ParseError::User { .. } => ParseError::User,
+            };
+            Err((parsed, format!("{}", err)))
+        }
+    }
+}
