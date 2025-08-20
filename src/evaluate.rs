@@ -454,6 +454,14 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
             None => s,
         }
     }
+    fn with_len(s: &str, len: usize) -> String {
+        let s = slice(s, len);
+        let mut padded = s.to_string();
+        if padded.chars().count() < len {
+            padded.extend(std::iter::repeat(' ').take(len - padded.chars().count()));
+        }
+        padded
+    }
     match op {
         BinaryOp::Add => match (left, right) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a + b)),
@@ -485,14 +493,14 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
                 result.push_str(&b);
                 Ok(Value::Str(result, len_a + len_b))
             }
-            (Value::Memo(a), Value::Memo(b) | Value::Str(b, _)) => {
+            (Value::Str(a, _) | Value::Memo(a), Value::Str(b, _) | Value::Memo(b)) => {
                 let mut result = a.clone();
                 result.push_str(&b);
                 Ok(Value::Memo(result))
             }
-            _ => Err(Error::IncompatibleBinaryOp(
+            (l, r) => Err(Error::IncompatibleBinaryOp(
                 BinaryOp::Add,
-                "Incompatible types".to_string(),
+                format!("Incompatible types: {:?} and {:?}", l, r),
             )),
         },
         BinaryOp::Sub => match (left, right) {
@@ -544,17 +552,15 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
         },
 
         BinaryOp::Eq => Ok(Bool(match (left, right) {
-            (Str(a, _) | Memo(a), Str(b, r_len)) => {
-                slice(&a, r_len).starts_with(slice(&b, a.len()))
+            (Str(a, _), Memo(b) | Str(b, _)) => {
+                a == with_len(&b, a.len()) // this is explicitly not using the Value::Str's len because values that should be padded already are. trimmed fields maintain their len but do not have padded values.
             }
-            (Str(a, _) | Memo(a), Memo(b)) => a.starts_with(slice(&b, a.len())),
             (l, r) => l == r,
         })),
         BinaryOp::Ne => Ok(Bool(match (left, right) {
-            (Str(a, _) | Memo(a), Str(b, r_len)) => {
-                !slice(&a, r_len).starts_with(slice(&b, a.len()))
+            (Str(a, _), Memo(b) | Str(b, _)) => {
+                a != with_len(&b, a.len()) // this is explicitly not using the Value::Str's len because values that should be padded already are. trimmed fields maintain their len but do not have padded values.
             }
-            (Str(a, _) | Memo(a), Memo(b)) => !a.starts_with(slice(&b, a.len())),
             (l, r) => l != r,
         })),
         BinaryOp::Lt => match (left, right) {
