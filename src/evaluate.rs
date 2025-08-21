@@ -90,10 +90,7 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Error
                         .map_err(|e| Error::FloatParseError(e.to_string()))?,
                 ),
 
-                Expression::SingleQuoteStringLiteral(s)
-                | Expression::DoubleQuoteStringLiteral(s) => {
-                    results.push(Value::Str(s.clone(), s.len()))
-                }
+                Expression::StringLiteral(s) => results.push(Value::Str(s.clone(), s.len())),
 
                 Expression::Field { name, .. } => match get(name) {
                     Some(Value::Str(s, len)) => {
@@ -662,10 +659,11 @@ mod tests {
     const TRUE: Result<Value, Error> = Result::Ok(Value::Bool(true));
 
     fn eval(expr: &str) -> Result<Value, Error> {
-        use crate::{ast, grammar::ExprParser};
+        use crate::{ast, grammar::ExprParser, lexer::Lexer};
+        let lexer = Lexer::new(expr);
         let parser = ExprParser::new();
         let value_lookup = |_: &str| -> Option<Value> { None };
-        match parser.parse(expr) {
+        match parser.parse(lexer) {
             Ok(t) => {
                 let t = ast::simplify(*t);
                 evaluate(&t, &value_lookup)

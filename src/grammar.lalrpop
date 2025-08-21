@@ -21,9 +21,8 @@ extern {
         "$" => Token::Dollar,
         LIT_TRUE => Token::LitTrue,
         LIT_FALSE => Token::LitFalse,
-        LIT_NUM => Token::LitNumber,
-        LIT_DOUBLE_QUOTE => Token::LitDoubleQuote,
-        LIT_SINGLE_QUOTE => Token::LitSingleQuote,
+        LIT_NUM => Token::LitNumber(<String>),
+        LIT_STRING => Token::LitString(<String>),
         OP_AND => Token::OpAnd,
         OP_OR => Token::OpOr,
         OP_NOT => Token::OpNot,
@@ -38,7 +37,7 @@ extern {
         ">" => Token::Gt,
         "<=" => Token::Lte,
         ">=" => Token::Gte,
-        IDENT => Token::Identifier,
+        IDENT => Token::Identifier(<String>),
     }
 }
 
@@ -66,8 +65,7 @@ pub Exprs = Comma<Expr>;
 Term: Box<Expression> = {
 	Bool => Box::new(Expression::BoolLiteral(<>)),
 	Num => Box::new(Expression::NumberLiteral(<>)),
-	DoubleQuoteString => Box::new(Expression::DoubleQuoteStringLiteral(<>)),
-	SingleQuoteString => Box::new(Expression::SingleQuoteStringLiteral(<>)),
+	StringLiteral => Box::new(Expression::StringLiteral(<>)),
 
 	// ALIAS->FIELD
 	<alias:Ident> "->" <name:Ident> => Box::new(Expression::Field{ alias: Some(alias), name }),
@@ -90,8 +88,7 @@ Field: Box<Expression> = {
 	
 };
 
-DoubleQuoteString: String = <l:LIT_DOUBLE_QUOTE> => (&l[1..l.len()-1]).to_string();
-SingleQuoteString: String = <l:LIT_SINGLE_QUOTE> => (&l[1..l.len()-1]).to_string();
+StringLiteral: String = LIT_STRING => <>;
 
 ExpOp: BinaryOp = {
 	OP_EXP => BinaryOp::Exp,

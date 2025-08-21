@@ -77,7 +77,8 @@ fn main() {
     ];
 
     for test in tests.iter() {
-        match parser.parse(test) {
+        let lexer = crate::lexer::Lexer::new(test);
+        match parser.parse(lexer) {
             Ok(t) => {
                 let t = simplify(*t);
                 match mssql_cx.translate(&t) {

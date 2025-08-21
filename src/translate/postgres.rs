@@ -72,15 +72,7 @@ pub fn translate<C: TranslationContext>(source: &E, cx: &C) -> Result {
                 },
             )
         }
-        E::SingleQuoteStringLiteral(v) => {
-            let v = escape_single_quotes(v);
-            let len = v.len();
-            ok(
-                Expression::SingleQuoteStringLiteral(v),
-                FieldType::Character(len as u32),
-            )
-        }
-        E::DoubleQuoteStringLiteral(v) => {
+        E::StringLiteral(v) => {
             let v = escape_single_quotes(v);
             let len = v.len();
             ok(

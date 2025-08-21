@@ -191,7 +191,8 @@ fn expr_tests() {
     };
 
     for test in tests.iter() {
-        match parser.parse(test) {
+        let lexer = lexer::Lexer::new(test);
+        match parser.parse(lexer) {
             Ok(t) => {
                 //println!("{t:?}");
                 let t = ast::simplify(*t);
@@ -251,7 +252,8 @@ fn to_sql_tests<T: TranslationContext>(cx: &T) {
     ];
 
     for test in tests.iter() {
-        match parser.parse(test) {
+        let lexer = lexer::Lexer::new(test);
+        match parser.parse(lexer) {
             Ok(t) => {
                 let t = ast::simplify(*t);
                 match cx.translate(&t) {
