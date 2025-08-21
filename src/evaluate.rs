@@ -93,10 +93,7 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Error
                         .map_err(|e| Error::FloatParseError(e.to_string()))?,
                 ),
 
-                Expression::SingleQuoteStringLiteral(s)
-                | Expression::DoubleQuoteStringLiteral(s) => {
-                    results.push(Value::Str(s.clone(), s.len()))
-                }
+                Expression::StringLiteral(s) => results.push(Value::Str(s.clone(), s.len())),
 
                 Expression::Field { name, .. } => match get(name) {
                     Some(Value::Str(s, len)) => {
@@ -146,9 +143,6 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Error
                 let val = results.pop().unwrap();
                 let result = match (op, val) {
                     (UnaryOp::Not, Value::Bool(b)) => Value::Bool(!b),
-                    (UnaryOp::Neg, Value::Number(n)) => Value::Number(-n),
-                    // Pos does nothing to its number
-                    (UnaryOp::Pos, Value::Number(n)) => Value::Number(n),
                     _ => return Err(Error::InvalidUnaryOp(op)),
                 };
                 results.push(result);
@@ -411,8 +405,7 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
                         let max_len = *len_true.max(len_false); //get the max of the two because the length shouldn't depend on the values
                         let mut str_value = if *cond { str_true } else { str_false }.clone();
                         if str_value.len() < max_len {
-                            str_value
-                                .extend(std::iter::repeat(' ').take(max_len - str_value.len()));
+                            str_value.extend(std::iter::repeat_n(' ', max_len - str_value.len()));
                         }
                         Value::Str(str_value, max_len)
                     }
@@ -553,7 +546,7 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
         },
 
         BinaryOp::Eq | BinaryOp::Ne => Ok(Bool(match (left, right) {
-            (Str(a, _), Memo(b) | Str(b, _)) => cmp_str(&a, &b, &op),
+            (Str(a, _), Memo(b) | Str(b, _)) => cmp_str(&a, &b, op),
             (l, r) => match op {
                 BinaryOp::Eq => l == r,
                 BinaryOp::Ne => l != r,
@@ -562,11 +555,11 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
         })),
 
         BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => match (left, right) {
-            (Number(a), Number(b)) => Ok(Bool(cmp(a, b, &op))),
+            (Number(a), Number(b)) => Ok(Bool(cmp(a, b, op))),
             (Str(a, _) | Memo(a), Str(b, _) | Memo(b)) => Ok(Bool(cmp_str(&a, &b, op))),
-            (Date(a), Date(b)) => Ok(Bool(cmp(&a, &b, &op))),
+            (Date(a), Date(b)) => Ok(Bool(cmp(&a, &b, op))),
             _ => Err(Error::IncompatibleBinaryOp(
-                op.clone(),
+                *op,
                 "Incompatible types".to_string(),
             )),
         },
@@ -644,7 +637,7 @@ fn cmp_str(a: &str, b: &str, op: &BinaryOp) -> bool {
     let b_adjusted = with_len(b, a.len());
     cmp(a, &*b_adjusted, op)
 }
-fn with_len(s: &str, len: usize) -> Cow<str> {
+fn with_len<'s>(s: &'s str, len: usize) -> Cow<'s, str> {
     let char_count = len.min(s.chars().count());
     match s.char_indices().nth(char_count) {
         Some((i, _)) => Cow::Borrowed(&s[..i]), //slice down the string if it's too long
@@ -652,7 +645,7 @@ fn with_len(s: &str, len: usize) -> Cow<str> {
             //pad it if it's too short
             if s.chars().count() < len {
                 let mut padded = s.to_string();
-                padded.extend(std::iter::repeat(' ').take(len - padded.chars().count()));
+                padded.extend(std::iter::repeat_n(' ', len - padded.chars().count()));
                 Cow::Owned(padded)
             } else {
                 Cow::Borrowed(s)
@@ -663,12 +656,10 @@ fn with_len(s: &str, len: usize) -> Cow<str> {
 
 pub fn julian_day(year: i32, month: u32, day: u32) -> i32 {
     // Julian day calculation (Fliegel & Van Flandern algorithm)
-    let a = ((14 - month as i32) / 12) as i32;
+    let a = (14 - month as i32) / 12;
     let y = year + 4800 - a;
     let m = month as i32 + 12 * a - 3;
-    let julian = day as i32 + ((153 * m + 2) / 5) + 365 * y + y / 4 - y / 100 + y / 400 - 32045;
-
-    julian
+    day as i32 + ((153 * m + 2) / 5) + 365 * y + y / 4 - y / 100 + y / 400 - 32045
 }
 
 fn days_since_jd0(date: NaiveDate) -> i32 {
@@ -694,18 +685,24 @@ mod tests {
         }
     }
 
+    // Asserts if the expression does not produce an error
+    fn assert_any_err(expr: &str) {
+        if let Ok(v) = eval(expr) {
+            panic!("Expected an error, got {v:?}");
+        }
+    }
+
     #[test]
     fn optional_digits() {
-        // Trailing digits optional
-        assert_eq!(eval("1. + 2 = 3.00"), TRUE);
-        assert_eq!(eval("1=1.and.1=1"), TRUE);
+        // Trailing digits NOT optional
+        assert_any_err("1. + 2 = 3.00");
 
         // Leading digits optional
         assert_eq!(eval(".1 + 0.1 = 000.2"), TRUE);
 
         // All digits optional!
         // 0.0 + 0.0 = 0.0
-        assert_eq!(eval(".+.=."), TRUE);
+        //assert_eq!(eval(".+.=."), TRUE);
     }
 
     // This does not pass due to numeric precision issues with f64
@@ -717,17 +714,27 @@ mod tests {
     }
 
     #[test]
-    fn add_subtract_operators() {
+    fn multiple_signs() {
         assert_eq!(eval("-2"), Ok(Value::Number(-2.0)));
-        assert_eq!(eval("--2"), Ok(Value::Number(2.0)));
-        assert_eq!(eval("---2"), Ok(Value::Number(-2.0)));
-        assert_eq!(eval("-+-2"), Ok(Value::Number(2.0)));
-        assert_eq!(eval("-(+(-(2)))"), Ok(Value::Number(2.0)));
+        // Not allowed to stack signs; Codebase actually allows this but only
+        //  because it's doing something very unexpected
+        assert_any_err("--2"); // CB evals this to -2
+        assert_any_err("---2"); // CB evals this to 2
+        assert_any_err("-+-2"); // CB evals this to -2
+        // No negation operator
+        assert_any_err("-(+(-(2)))");
     }
 
     #[test]
     fn implicit_number() {
-        assert_eq!(eval("-"), Ok(Value::Number(0.0)));
-        assert_eq!(eval("+"), Ok(Value::Number(0.0)));
+        // Codebase evaluates these to 0, now an error
+        assert_any_err("-");
+        assert_any_err("+");
+    }
+
+    #[test]
+    fn ambiguous_dots() {
+        // This is fine because a decimal place requires trailing digits
+        assert_eq!(eval("1=1.and.1=1"), TRUE);
     }
 }

@@ -7,3 +7,14 @@ Example: `(2.0)) * 3.0`
 Codebase evaluates this expression as `2.0` while this crate errors due to the extra closing paren in the middle of the expression.
 
 While it is possible to extend the grammar to ignore characters after an unmatched closing paren, we feel that this hides bugs rather than exposing them: the author of the expression certainly wanted `6.0` and accidentally inserted an additional closing paren.
+
+
+## Number parsing
+Codebase will parse a number from nothing but a sign (`-` or `+`) or nothing but a decimal place (`.`). So `-` evaluates to negative zero. This causes lots of weirdness (see the [Bestiary](bestiary.md)) including doing the opposite of what you want (`-1` and `--1` both evaluate to negative one, but `---1` is positive one), so we turn this into an error.
+
+This crate has the following rules for number literals
+* May omit leading digits: `TOTAL * .5` is fine
+* May omit decimal point AND trailing digits: `TOTAL * 5` is fine
+* If the decimal is present, there must be trailing digits: `1.` is _not_ fine
+
+Codebase expressions which are not compliant should always result in parse errors.
