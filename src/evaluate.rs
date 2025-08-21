@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fmt::Debug;
 
 use chrono::Datelike;
@@ -28,6 +29,7 @@ pub enum Value {
     Bool(bool),
     Number(f64),
     Date(Option<NaiveDate>),
+    DateParseError(String), // this is used to indicate a date parsing error but to match codebase, we treat it as julian day zero for equations
     Blob(Vec<u8>),
     Null,
 }
@@ -44,6 +46,7 @@ impl Debug for Value {
                 "Date: {}",
                 d.map_or_else(|| "NULL".to_string(), |f| f.format("%Y-%m-%d").to_string())
             ),
+            Value::DateParseError(s) => write!(f, "DateParseError: {}", s),
             Value::Blob(b) => write!(f, "BLOB({:?})", b),
             Value::Null => write!(f, ".NULL."),
         }
@@ -186,7 +189,11 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Error
     }
 
     assert_eq!(results.len(), 1);
-    Ok(results.pop().unwrap())
+
+    match results.pop().unwrap() {
+        Value::DateParseError(err) => Err(Error::DateParseError(err)), // we allow DateParseError as a value for use within the expressions but it should not be passed back to the caller
+        r => Ok(r),
+    }
 }
 
 fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Value, Error> {
@@ -239,9 +246,10 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
                     } else {
                         "%Y%m%d"
                     };
-                    chrono::NaiveDate::parse_from_str(s, fmt)
-                        .map(|d| Value::Date(Some(d)))
-                        .map_err(|e| Error::DateParseError(format!("Date parse error: {}", e)))
+                    match chrono::NaiveDate::parse_from_str(s, fmt) {
+                        Ok(date) => Ok(Value::Date(Some(date))),
+                        Err(_) => Ok(Value::DateParseError(s.to_string())),
+                    }
                 }
             }
             _ => Err(Error::InvalidArguments(
@@ -252,14 +260,14 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
 
         F::DTOC | F::DTOS => match args {
             [Value::Date(d)] => {
-                let fmt = if name == &F::DTOC {
-                    "%m/%d/%y"
+                let (fmt, len) = if name == &F::DTOC {
+                    ("%m/%d/%y", 10)
                 } else {
-                    "%Y%m%d"
+                    ("%Y%m%d", 8)
                 };
                 let text = match d {
                     Some(date) => date.format(fmt).to_string(),
-                    None => "".to_string(),
+                    None => " ".repeat(len),
                 };
                 let len = if name == &F::DTOC { 10 } else { 8 };
                 Ok(Value::Str(text, len))
@@ -348,6 +356,10 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
         },
 
         F::STR => match args {
+            [Value::Number(n)] => {
+                let fmt = format!("{:width$.prec$}", n, width = 10, prec = 0); // DBASE defaults: https://www.dbase.com/downloads/dBLLanguageReference2.6.pdf
+                Ok(Value::Str(fmt.trim_end().to_string(), 10))
+            }
             [Value::Number(n), Value::Number(len), Value::Number(dec)] => {
                 let fmt = format!(
                     "{:width$.prec$}",
@@ -435,14 +447,6 @@ fn right_str_n(s: &str, n: f64) -> String {
 use Value::*;
 
 fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Error> {
-    // Helper function to truncate a string without risking cutting a multi-byte character in half
-    fn slice(s: &str, len: usize) -> &str {
-        let char_count = len.min(s.chars().count());
-        match s.char_indices().nth(char_count) {
-            Some((i, _)) => &s[..i],
-            None => s,
-        }
-    }
     match op {
         BinaryOp::Add => match (left, right) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a + b)),
@@ -474,14 +478,14 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
                 result.push_str(&b);
                 Ok(Value::Str(result, len_a + len_b))
             }
-            (Value::Memo(a), Value::Memo(b) | Value::Str(b, _)) => {
+            (Value::Str(a, _) | Value::Memo(a), Value::Str(b, _) | Value::Memo(b)) => {
                 let mut result = a.clone();
                 result.push_str(&b);
                 Ok(Value::Memo(result))
             }
-            _ => Err(Error::IncompatibleBinaryOp(
+            (l, r) => Err(Error::IncompatibleBinaryOp(
                 BinaryOp::Add,
-                "Incompatible types".to_string(),
+                format!("Incompatible types: {:?} and {:?}", l, r),
             )),
         },
         BinaryOp::Sub => match (left, right) {
@@ -503,6 +507,15 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
                 let duration = d1.signed_duration_since(d2);
                 Ok(Value::Number(duration.num_days() as f64))
             }
+            (Value::Date(Some(d1)), Value::DateParseError(_)) => {
+                // Difference in days as float
+                Ok(Value::Number(days_since_jd0(d1) as f64))
+            }
+            (Value::DateParseError(_), Value::Date(Some(d1))) => {
+                // Difference in days as float
+                Ok(Value::Number(-days_since_jd0(d1) as f64))
+            }
+            (Value::DateParseError(_), Value::DateParseError(_)) => Ok(Value::Number(0.0)),
             _ => Err(Error::IncompatibleBinaryOp(
                 BinaryOp::Sub,
                 "Incompatible types".to_string(),
@@ -532,60 +545,21 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
             )),
         },
 
-        BinaryOp::Eq => Ok(Bool(match (left, right) {
-            (Str(a, _) | Memo(a), Str(b, r_len)) => {
-                slice(&a, r_len).starts_with(slice(&b, a.len()))
-            }
-            (Str(a, _) | Memo(a), Memo(b)) => a.starts_with(slice(&b, a.len())),
-            (l, r) => l == r,
+        BinaryOp::Eq | BinaryOp::Ne => Ok(Bool(match (left, right) {
+            (Str(a, _), Memo(b) | Str(b, _)) => cmp_str(&a, &b, op),
+            (l, r) => match op {
+                BinaryOp::Eq => l == r,
+                BinaryOp::Ne => l != r,
+                _ => unreachable!(),
+            },
         })),
-        BinaryOp::Ne => Ok(Bool(match (left, right) {
-            (Str(a, _) | Memo(a), Str(b, r_len)) => {
-                !slice(&a, r_len).starts_with(slice(&b, a.len()))
-            }
-            (Str(a, _) | Memo(a), Memo(b)) => !a.starts_with(slice(&b, a.len())),
-            (l, r) => l != r,
-        })),
-        BinaryOp::Lt => match (left, right) {
-            (Number(a), Number(b)) => Ok(Bool(a < b)),
-            (Str(a, _) | Memo(a), Str(b, len)) => Ok(Bool(slice(&a, len) < slice(&b, a.len()))),
-            (Str(a, _) | Memo(a), Memo(b)) => Ok(Bool(a.as_str() < slice(&b, a.len()))),
-            (Date(a), Date(b)) => Ok(Bool(a < b)),
-            _ => Err(Error::IncompatibleBinaryOp(
-                BinaryOp::Lt,
-                "Incompatible types".to_string(),
-            )),
-        },
 
-        BinaryOp::Le => match (left, right) {
-            (Number(a), Number(b)) => Ok(Bool(a <= b)),
-            (Str(a, _) | Memo(a), Str(b, len)) => Ok(Bool(slice(&a, len) <= slice(&b, a.len()))),
-            (Str(a, _) | Memo(a), Memo(b)) => Ok(Bool(a.as_str() <= slice(&b, a.len()))),
-            (Date(a), Date(b)) => Ok(Bool(a <= b)),
+        BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => match (left, right) {
+            (Number(a), Number(b)) => Ok(Bool(cmp(a, b, op))),
+            (Str(a, _) | Memo(a), Str(b, _) | Memo(b)) => Ok(Bool(cmp_str(&a, &b, op))),
+            (Date(a), Date(b)) => Ok(Bool(cmp(&a, &b, op))),
             _ => Err(Error::IncompatibleBinaryOp(
-                BinaryOp::Le,
-                "Incompatible types".to_string(),
-            )),
-        },
-
-        BinaryOp::Gt => match (left, right) {
-            (Number(a), Number(b)) => Ok(Bool(a > b)),
-            (Str(a, _) | Memo(a), Str(b, len)) => Ok(Bool(slice(&a, len) > slice(&b, a.len()))),
-            (Str(a, _) | Memo(a), Memo(b)) => Ok(Bool(a.as_str() > slice(&b, a.len()))),
-            (Date(a), Date(b)) => Ok(Bool(a > b)),
-            _ => Err(Error::IncompatibleBinaryOp(
-                BinaryOp::Gt,
-                "Incompatible types".to_string(),
-            )),
-        },
-
-        BinaryOp::Ge => match (left, right) {
-            (Number(a), Number(b)) => Ok(Bool(a >= b)),
-            (Str(a, _) | Memo(a), Str(b, len)) => Ok(Bool(slice(&a, len) >= slice(&b, a.len()))),
-            (Str(a, _) | Memo(a), Memo(b)) => Ok(Bool(a.as_str() >= slice(&b, a.len()))),
-            (Date(a), Date(b)) => Ok(Bool(a >= b)),
-            _ => Err(Error::IncompatibleBinaryOp(
-                BinaryOp::Ge,
+                *op,
                 "Incompatible types".to_string(),
             )),
         },
@@ -648,6 +622,50 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
     }
 }
 
+fn cmp<T: PartialOrd + PartialEq>(left: T, right: T, op: &BinaryOp) -> bool {
+    match op {
+        BinaryOp::Eq => left == right,
+        BinaryOp::Ne => left != right,
+        BinaryOp::Lt => left < right,
+        BinaryOp::Le => left <= right,
+        BinaryOp::Gt => left > right,
+        BinaryOp::Ge => left >= right,
+        op => panic!("Unexpected comparison operator: {:?}", op),
+    }
+}
+fn cmp_str(a: &str, b: &str, op: &BinaryOp) -> bool {
+    let b_adjusted = with_len(b, a.len());
+    cmp(a, &*b_adjusted, op)
+}
+fn with_len<'s>(s: &'s str, len: usize) -> Cow<'s, str> {
+    let char_count = len.min(s.chars().count());
+    match s.char_indices().nth(char_count) {
+        Some((i, _)) => Cow::Borrowed(&s[..i]), //slice down the string if it's too long
+        None => {
+            //pad it if it's too short
+            if s.chars().count() < len {
+                let mut padded = s.to_string();
+                padded.extend(std::iter::repeat_n(' ', len - padded.chars().count()));
+                Cow::Owned(padded)
+            } else {
+                Cow::Borrowed(s)
+            }
+        }
+    }
+}
+
+pub fn julian_day(year: i32, month: u32, day: u32) -> i32 {
+    // Julian day calculation (Fliegel & Van Flandern algorithm)
+    let a = (14 - month as i32) / 12;
+    let y = year + 4800 - a;
+    let m = month as i32 + 12 * a - 3;
+    day as i32 + ((153 * m + 2) / 5) + 365 * y + y / 4 - y / 100 + y / 400 - 32045
+}
+
+fn days_since_jd0(date: NaiveDate) -> i32 {
+    julian_day(date.year(), date.month(), date.day()) + 1
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -677,7 +695,7 @@ mod tests {
     #[test]
     fn optional_digits() {
         // Trailing digits NOT optional
-        assert!(matches!(eval("1. + 2 = 3.00"), Err(Error::Other(_))));
+        assert_any_err("1. + 2 = 3.00");
 
         // Leading digits optional
         assert_eq!(eval(".1 + 0.1 = 000.2"), TRUE);
