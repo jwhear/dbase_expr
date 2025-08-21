@@ -1,4 +1,5 @@
 use crate::ast::{Expression, BinaryOp, UnaryOp};
+use crate::lexer::{self, Token};
 
 //Custom lexer:
 //  1.and.   should lex to "1" ".and."
@@ -6,6 +7,40 @@ use crate::ast::{Expression, BinaryOp, UnaryOp};
 //  --1      should lex to "-0" "-" "1" <-- requires parse!
 
 grammar;
+
+extern {
+    type Location = usize;
+    type Error = lexer::Error;
+
+    enum lexer::Token {
+        "(" => Token::OpenParen,
+        ")" => Token::CloseParen,
+        "," => Token::Comma,
+        "->" => Token::Arrow,
+        "#" => Token::Hash,
+        "$" => Token::Dollar,
+        LIT_TRUE => Token::LitTrue,
+        LIT_FALSE => Token::LitFalse,
+        LIT_NUM => Token::LitNumber,
+        LIT_DOUBLE_QUOTE => Token::LitDoubleQuote,
+        LIT_SINGLE_QUOTE => Token::LitSingleQuote,
+        OP_AND => Token::OpAnd,
+        OP_OR => Token::OpOr,
+        OP_NOT => Token::OpNot,
+        OP_EXP => Token::OpExp,
+        "+" => Token::Plus,
+        "-" => Token::Minus,
+        "*" => Token::Asterisk,
+        "/" => Token::Slash,
+        "=" => Token::Eq,
+        "<>" => Token::Neq,
+        "<" => Token::Lt,
+        ">" => Token::Gt,
+        "<=" => Token::Lte,
+        ">=" => Token::Gte,
+        IDENT => Token::Identifier,
+    }
+}
 
 // Precedence climbing: each tier is a distinct precedence level. We start with
 //  the lowest precedence and work our way up to "terms".
@@ -43,23 +78,23 @@ Term: Box<Expression> = {
 	"(" <t:Expr> ")" => t,
 };
 
+
 Bool: bool = {
-	r"\.[tT]([rR][uU][eE])?\." => true,
-	r"\.[fF]([aA][lL][sS][eE])?\." => false,
+	LIT_TRUE => true,
+	LIT_FALSE => false,
 };
-Num: String = r"[0-9]*+(\.[0-9]*)?" => <>.to_string();
-Ident: String = r"[a-zA-Z_][a-zA-Z_0-9]*" => <>.to_string();
+Num: String = LIT_NUM => <>.to_string();
+Ident: String = IDENT => <>.to_string();
 Call: (String, Vec<Box<Expression>>) = <name:Ident> "(" <args:Exprs> ")" => (name, args);
 Field: Box<Expression> = {
 	
 };
 
-DoubleQuoteString: String = <l:r#""[^"]*""#> => (&l[1..l.len()-1]).to_string();
-SingleQuoteString: String = <l:r#"'[^']*'"#> => (&l[1..l.len()-1]).to_string();
+DoubleQuoteString: String = <l:LIT_DOUBLE_QUOTE> => (&l[1..l.len()-1]).to_string();
+SingleQuoteString: String = <l:LIT_SINGLE_QUOTE> => (&l[1..l.len()-1]).to_string();
 
 ExpOp: BinaryOp = {
-	"**" => BinaryOp::Exp,
-	"^" => BinaryOp::Exp,
+	OP_EXP => BinaryOp::Exp,
 };
 
 FactorOp: BinaryOp = {
@@ -84,21 +119,22 @@ RelationOp: BinaryOp = {
 };
 
 AndOp: BinaryOp = {
-	r"\.[aA][nN][dD]\." => BinaryOp::And,
+	OP_AND => BinaryOp::And,
 };
 
 OrOp: BinaryOp = {
-	r"\.[oO][rR]\." => BinaryOp::Or,
+	OP_OR => BinaryOp::Or,
 };
 
 NotOp: UnaryOp = {
-	r"\.[nN][oO][tT]\." => UnaryOp::Not,
+	OP_NOT => UnaryOp::Not,
 };
 
 SignOp: UnaryOp = {
     "+" => UnaryOp::Pos,
     "-" => UnaryOp::Neg,
 };
+
 
 // Utility macros
 //-------------------------------------------------------

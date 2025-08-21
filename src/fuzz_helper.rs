@@ -43,8 +43,9 @@ fn field_lookup() -> impl Fn(Option<&str>, &str) -> Result<(String, FieldType), 
 
 pub fn translate_expr(expr: &str) {
     // Try parsing
+    let lexer = crate::lexer::Lexer::new(expr);
     let parser = ExprParser::new();
-    if let Ok(parsed) = parser.parse(expr) {
+    if let Ok(parsed) = parser.parse(lexer) {
         let simplified = crate::ast::simplify(*parsed);
         // Evaluate, ignore errors
         let _ = evaluate::evaluate(&simplified, &value_lookup());

@@ -227,8 +227,9 @@ pub enum ParseError {
 }
 
 pub fn parse(expr: &str) -> Result<Box<Expression>, (ParseError, String)> {
+    let lexer = crate::lexer::Lexer::new(expr);
     let parser = crate::grammar::ExprParser::new();
-    match parser.parse(expr) {
+    match parser.parse(lexer) {
         Ok(expression) => Ok(expression),
         Err(err) => {
             let parsed = match &err {
