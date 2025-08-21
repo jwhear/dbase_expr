@@ -393,8 +393,7 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
                         let max_len = *len_true.max(len_false); //get the max of the two because the length shouldn't depend on the values
                         let mut str_value = if *cond { str_true } else { str_false }.clone();
                         if str_value.len() < max_len {
-                            str_value
-                                .extend(std::iter::repeat(' ').take(max_len - str_value.len()));
+                            str_value.extend(std::iter::repeat_n(' ', max_len - str_value.len()));
                         }
                         Value::Str(str_value, max_len)
                     }
@@ -671,7 +670,7 @@ mod tests {
     // Asserts if the expression does not produce an error
     fn assert_any_err(expr: &str) {
         if let Ok(v) = eval(expr) {
-            assert!(false, "Expected an error, got {v:?}");
+            panic!("Expected an error, got {v:?}");
         }
     }
 
