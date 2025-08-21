@@ -29,6 +29,7 @@ pub enum Value {
     Bool(bool),
     Number(f64),
     Date(Option<NaiveDate>),
+    DateParseError(String), // this is used to indicate a date parsing error but to match codebase, we treat it as julian day zero for equations
     Blob(Vec<u8>),
     Null,
 }
@@ -45,6 +46,7 @@ impl Debug for Value {
                 "Date: {}",
                 d.map_or_else(|| "NULL".to_string(), |f| f.format("%Y-%m-%d").to_string())
             ),
+            Value::DateParseError(s) => write!(f, "DateParseError: {}", s),
             Value::Blob(b) => write!(f, "BLOB({:?})", b),
             Value::Null => write!(f, ".NULL."),
         }
@@ -193,7 +195,11 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Error
     }
 
     assert_eq!(results.len(), 1);
-    Ok(results.pop().unwrap())
+
+    match results.pop().unwrap() {
+        Value::DateParseError(err) => Err(Error::DateParseError(err)), // we allow DateParseError as a value for use within the expressions but it should not be passed back to the caller
+        r => Ok(r),
+    }
 }
 
 fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Value, Error> {
@@ -246,9 +252,10 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
                     } else {
                         "%Y%m%d"
                     };
-                    chrono::NaiveDate::parse_from_str(s, fmt)
-                        .map(|d| Value::Date(Some(d)))
-                        .map_err(|e| Error::DateParseError(format!("Date parse error: {}", e)))
+                    match chrono::NaiveDate::parse_from_str(s, fmt) {
+                        Ok(date) => Ok(Value::Date(Some(date))),
+                        Err(_) => Ok(Value::DateParseError(s.to_string())),
+                    }
                 }
             }
             _ => Err(Error::InvalidArguments(
@@ -507,6 +514,15 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
                 let duration = d1.signed_duration_since(d2);
                 Ok(Value::Number(duration.num_days() as f64))
             }
+            (Value::Date(Some(d1)), Value::DateParseError(_)) => {
+                // Difference in days as float
+                Ok(Value::Number(days_since_jd0(d1) as f64))
+            }
+            (Value::DateParseError(_), Value::Date(Some(d1))) => {
+                // Difference in days as float
+                Ok(Value::Number(-days_since_jd0(d1) as f64))
+            }
+            (Value::DateParseError(_), Value::DateParseError(_)) => Ok(Value::Number(0.0)),
             _ => Err(Error::IncompatibleBinaryOp(
                 BinaryOp::Sub,
                 "Incompatible types".to_string(),
@@ -643,6 +659,20 @@ fn with_len(s: &str, len: usize) -> Cow<str> {
             }
         }
     }
+}
+
+pub fn julian_day(year: i32, month: u32, day: u32) -> i32 {
+    // Julian day calculation (Fliegel & Van Flandern algorithm)
+    let a = ((14 - month as i32) / 12) as i32;
+    let y = year + 4800 - a;
+    let m = month as i32 + 12 * a - 3;
+    let julian = day as i32 + ((153 * m + 2) / 5) + 365 * y + y / 4 - y / 100 + y / 400 - 32045;
+
+    julian
+}
+
+fn days_since_jd0(date: NaiveDate) -> i32 {
+    julian_day(date.year(), date.month(), date.day()) + 1
 }
 
 #[cfg(test)]
