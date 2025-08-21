@@ -90,10 +90,7 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Error
                         .map_err(|e| Error::FloatParseError(e.to_string()))?,
                 ),
 
-                Expression::SingleQuoteStringLiteral(s)
-                | Expression::DoubleQuoteStringLiteral(s) => {
-                    results.push(Value::Str(s.clone(), s.len()))
-                }
+                Expression::StringLiteral(s) => results.push(Value::Str(s.clone(), s.len())),
 
                 Expression::Field { name, .. } => match get(name) {
                     Some(Value::Str(s, len)) => {
@@ -143,9 +140,6 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Error
                 let val = results.pop().unwrap();
                 let result = match (op, val) {
                     (UnaryOp::Not, Value::Bool(b)) => Value::Bool(!b),
-                    (UnaryOp::Neg, Value::Number(n)) => Value::Number(-n),
-                    // Pos does nothing to its number
-                    (UnaryOp::Pos, Value::Number(n)) => Value::Number(n),
                     _ => return Err(Error::InvalidUnaryOp(op)),
                 };
                 results.push(result);
@@ -674,17 +668,24 @@ mod tests {
         }
     }
 
+    // Asserts if the expression does not produce an error
+    fn assert_any_err(expr: &str) {
+        if let Ok(v) = eval(expr) {
+            assert!(false, "Expected an error, got {v:?}");
+        }
+    }
+
     #[test]
     fn optional_digits() {
-        // Trailing digits optional
-        assert_eq!(eval("1. + 2 = 3.00"), TRUE);
+        // Trailing digits NOT optional
+        assert!(matches!(eval("1. + 2 = 3.00"), Err(Error::Other(_))));
 
         // Leading digits optional
         assert_eq!(eval(".1 + 0.1 = 000.2"), TRUE);
 
         // All digits optional!
         // 0.0 + 0.0 = 0.0
-        assert_eq!(eval(".+.=."), TRUE);
+        //assert_eq!(eval(".+.=."), TRUE);
     }
 
     // This does not pass due to numeric precision issues with f64
@@ -696,17 +697,27 @@ mod tests {
     }
 
     #[test]
-    fn add_subtract_operators() {
+    fn multiple_signs() {
         assert_eq!(eval("-2"), Ok(Value::Number(-2.0)));
-        assert_eq!(eval("--2"), Ok(Value::Number(2.0)));
-        assert_eq!(eval("---2"), Ok(Value::Number(-2.0)));
-        assert_eq!(eval("-+-2"), Ok(Value::Number(2.0)));
-        assert_eq!(eval("-(+(-(2)))"), Ok(Value::Number(2.0)));
+        // Not allowed to stack signs; Codebase actually allows this but only
+        //  because it's doing something very unexpected
+        assert_any_err("--2"); // CB evals this to -2
+        assert_any_err("---2"); // CB evals this to 2
+        assert_any_err("-+-2"); // CB evals this to -2
+        // No negation operator
+        assert_any_err("-(+(-(2)))");
     }
 
     #[test]
     fn implicit_number() {
-        assert_eq!(eval("-"), Ok(Value::Number(0.0)));
-        assert_eq!(eval("+"), Ok(Value::Number(0.0)));
+        // Codebase evaluates these to 0, now an error
+        assert_any_err("-");
+        assert_any_err("+");
+    }
+
+    #[test]
+    fn ambiguous_dots() {
+        // This is fine because a decimal place requires trailing digits
+        assert_eq!(eval("1=1.and.1=1"), TRUE);
     }
 }
