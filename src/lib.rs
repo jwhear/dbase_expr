@@ -66,6 +66,8 @@ pub mod evaluate;
 pub mod fuzz_helper;
 pub mod to_sql;
 pub mod translate;
+pub use ast::ParseError;
+pub use ast::parse;
 
 lalrpop_mod!(#[allow(clippy::all)] pub grammar);
 

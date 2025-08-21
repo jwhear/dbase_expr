@@ -7,6 +7,20 @@ use crate::ast::{BinaryOp, Expression, UnaryOp};
 
 use crate::codebase_functions::CodebaseFunction as F;
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum Error {
+    FieldNotFound(String),
+    InvalidUnaryOp(UnaryOp),
+    InvalidArguments(F, String),
+    DateParseError(String),
+    FloatParseError(String),
+    DateAdditionOverflow,
+    DateSubtractionOverflow,
+    IncompatibleBinaryOp(BinaryOp, String),
+    UnknownFunction(String),
+    Other(String),
+}
+
 #[derive(Clone, PartialEq)]
 pub enum Value {
     Str(String, usize),
@@ -38,7 +52,7 @@ impl Debug for Value {
 
 pub type FieldValueGetter<'a> = &'a dyn Fn(&str) -> Option<Value>;
 
-pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, String> {
+pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Error> {
     #[derive(Debug)]
     enum EvalState<'a> {
         Expr(&'a Expression),
@@ -73,7 +87,7 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
                 Expression::NumberLiteral(s) => results.push(
                     s.parse::<f64>()
                         .map(Value::Number)
-                        .map_err(|e| e.to_string())?,
+                        .map_err(|e| Error::FloatParseError(e.to_string()))?,
                 ),
 
                 Expression::SingleQuoteStringLiteral(s)
@@ -93,7 +107,7 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
                         results.push(Value::Str(padded, len))
                     }
                     Some(v) => results.push(v),
-                    None => return Err(format!("Field '{}' not found in row", name)),
+                    None => return Err(Error::FieldNotFound(name.to_string())),
                 },
 
                 Expression::UnaryOperator(op, expr) => {
@@ -130,7 +144,9 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
                 let result = match (op, val) {
                     (UnaryOp::Not, Value::Bool(b)) => Value::Bool(!b),
                     (UnaryOp::Neg, Value::Number(n)) => Value::Number(-n),
-                    _ => return Err("Invalid unary operation".to_string()),
+                    // Pos does nothing to its number
+                    (UnaryOp::Pos, Value::Number(n)) => Value::Number(n),
+                    _ => return Err(Error::InvalidUnaryOp(op)),
                 };
                 results.push(result);
             }
@@ -179,24 +195,33 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Strin
     Ok(results.pop().unwrap())
 }
 
-fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Value, String> {
+fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Value, Error> {
     match name {
         F::LTRIM => match args {
             [Value::Str(s, len)] => Ok(Value::Str(s.trim_start().to_string(), *len)),
             [Value::Memo(s)] => Ok(Value::Memo(s.trim_start().to_string())),
-            _ => Err("LTRIM expects a single string argument".to_string()),
+            _ => Err(Error::InvalidArguments(
+                name.clone(),
+                "LTRIM expects a single string argument".to_string(),
+            )),
         },
 
         F::TRIM | F::RTRIM => match args {
             [Value::Str(s, len)] => Ok(Value::Str(s.trim_end().to_string(), *len)),
             [Value::Memo(s)] => Ok(Value::Memo(s.trim_end().to_string())),
-            _ => Err("RTRIM expects a single string argument".to_string()),
+            _ => Err(Error::InvalidArguments(
+                name.clone(),
+                "RTRIM expects a single string argument".to_string(),
+            )),
         },
 
         F::ALLTRIM => match args {
             [Value::Str(s, len)] => Ok(Value::Str(s.trim().to_string(), *len)),
             [Value::Memo(s)] => Ok(Value::Memo(s.trim().to_string())),
-            _ => Err("ALLTRIM expects a single string argument".to_string()),
+            _ => Err(Error::InvalidArguments(
+                name.clone(),
+                "ALLTRIM expects a single string argument".to_string(),
+            )),
         },
 
         F::CHR => match args {
@@ -204,7 +229,10 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
                 let ch = (*n as u8) as char;
                 Ok(Value::Str(ch.to_string(), 1))
             }
-            _ => Err("CHR expects a single numeric argument".to_string()),
+            _ => Err(Error::InvalidArguments(
+                name.clone(),
+                "CHR expects a single numeric argument".to_string(),
+            )),
         },
 
         F::CTOD | F::STOD => match args {
@@ -219,10 +247,13 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
                     };
                     chrono::NaiveDate::parse_from_str(s, fmt)
                         .map(|d| Value::Date(Some(d)))
-                        .map_err(|e| format!("Date parse error: {}", e))
+                        .map_err(|e| Error::DateParseError(format!("Date parse error: {}", e)))
                 }
             }
-            _ => Err(format!("{:?} expects a single string argument", name)),
+            _ => Err(Error::InvalidArguments(
+                name.clone(),
+                "CTOD expects a single string argument".to_string(),
+            )),
         },
 
         F::DTOC | F::DTOS => match args {
@@ -243,7 +274,10 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
                 let len: usize = if name == &F::DTOC { 10 } else { 8 };
                 Ok(Value::Str("".to_string(), len))
             }
-            _ => Err("DTOC expects a date argument".to_string()),
+            _ => Err(Error::InvalidArguments(
+                name.clone(),
+                "DTOC expects a date argument".to_string(),
+            )),
         },
 
         F::DAY | F::MONTH | F::YEAR => match args {
@@ -259,7 +293,10 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
                 }
                 None => Ok(Value::Number(0.0)),
             },
-            _ => Err(format!("{:?} expects a date argument", name)),
+            _ => Err(Error::InvalidArguments(
+                name.clone(),
+                format!("{:?} expects a date argument", name),
+            )),
         },
 
         F::LEFT => match args {
@@ -271,7 +308,10 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
                 let n = *n as usize;
                 Ok(Value::Str(v.to_string().chars().take(n).collect(), n))
             }
-            _ => Err("LEFT expects (string, number) or (number, number)".to_string()),
+            _ => Err(Error::InvalidArguments(
+                name.clone(),
+                "LEFT expects (string, number) or (number, number)".to_string(),
+            )),
         },
 
         F::RIGHT => match args {
@@ -281,7 +321,10 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
             [Value::Number(v), Value::Number(n)] => {
                 Ok(Value::Str(right_str_n(&v.to_string(), *n), *n as usize))
             }
-            _ => Err("RIGHT expects (string, number) or (number, number)".to_string()),
+            _ => Err(Error::InvalidArguments(
+                name.clone(),
+                "RIGHT expects (string, number) or (number, number)".to_string(),
+            )),
         },
 
         F::SUBSTR => match args {
@@ -295,13 +338,19 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
                 let substr: String = s.chars().skip(start).take(len).collect();
                 Ok(Value::Str(substr, len))
             }
-            _ => Err("SUBSTR expects (string, start, length)".to_string()),
+            _ => Err(Error::InvalidArguments(
+                name.clone(),
+                "SUBSTR expects (string, start, length)".to_string(),
+            )),
         },
 
         F::UPPER => match args {
             [Value::Str(s, len)] => Ok(Value::Str(s.to_uppercase(), *len)),
             [Value::Memo(s)] => Ok(Value::Memo(s.to_uppercase())),
-            _ => Err("UPPER expects a single string argument".to_string()),
+            _ => Err(Error::InvalidArguments(
+                name.clone(),
+                "UPPER expects a single string argument".to_string(),
+            )),
         },
 
         F::STR => match args {
@@ -314,7 +363,10 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
                 );
                 Ok(Value::Str(fmt.trim_end().to_string(), *len as usize))
             }
-            _ => Err("STR expects (number, len, dec)".to_string()),
+            _ => Err(Error::InvalidArguments(
+                name.clone(),
+                "STR expects (number, len, dec)".to_string(),
+            )),
         },
 
         F::VAL => match args {
@@ -324,22 +376,42 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
                     if s.trim().chars().all(|c| c == 'F' || c == 'f') {
                         Ok(Value::Number(0.0)) // these are placeholders for float, we'll just use 0.0
                     } else {
-                        Err(format!("VAL could not parse '{}' to a numeric value", s))
+                        Err(Error::InvalidArguments(
+                            name.clone(),
+                            format!("VAL could not parse '{}' to a numeric value", s),
+                        ))
                     }
                 }
             },
-            _ => Err("VAL expects a string".to_string()),
+            _ => Err(Error::InvalidArguments(
+                name.clone(),
+                "VAL expects a string".to_string(),
+            )),
         },
 
         F::DATE => Ok(Value::Date(Some(chrono::Local::now().naive_local().date()))),
 
         F::IIF => match args {
-            [Value::Bool(cond), when_true, when_false] => Ok(if *cond {
-                when_true.clone()
-            } else {
-                when_false.clone()
-            }),
-            _ => Err("IIF expects (boolean, true, false)".to_string()),
+            [Value::Bool(cond), when_true, when_false] => {
+                let chosen = if *cond { when_true } else { when_false };
+                let value = match (when_true, when_false) {
+                    (Value::Str(str_true, len_true), Value::Str(str_false, len_false)) => {
+                        let max_len = *len_true.max(len_false); //get the max of the two because the length shouldn't depend on the values
+                        let mut str_value = if *cond { str_true } else { str_false }.clone();
+                        if str_value.len() < max_len {
+                            str_value
+                                .extend(std::iter::repeat(' ').take(max_len - str_value.len()));
+                        }
+                        Value::Str(str_value, max_len)
+                    }
+                    _ => chosen.clone(),
+                };
+                Ok(value)
+            }
+            _ => Err(Error::InvalidArguments(
+                name.clone(),
+                "IIF expects (boolean, true, false)".to_string(),
+            )),
         },
 
         // DELETED() => __deleted
@@ -347,7 +419,7 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
 
         F::RECNO => Ok(get("RECNO5").unwrap_or(Value::Number(0.0))),
 
-        F::Unknown(unsupported) => Err(format!("Unsupported function: {}", unsupported)),
+        F::Unknown(unsupported) => Err(Error::UnknownFunction(unsupported.clone())),
     }
 }
 
@@ -369,7 +441,7 @@ fn right_str_n(s: &str, n: f64) -> String {
 
 use Value::*;
 
-fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, String> {
+fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Error> {
     // Helper function to truncate a string without risking cutting a multi-byte character in half
     fn slice(s: &str, len: usize) -> &str {
         let char_count = len.min(s.chars().count());
@@ -388,7 +460,7 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Str
                         let ndays = n as i64;
                         d.checked_add_signed(chrono::Duration::days(ndays))
                             .map(|d| Value::Date(Some(d)))
-                            .ok_or("Date addition overflow".to_string())
+                            .ok_or(Error::DateAdditionOverflow)
                     }
                     None => Ok(Value::Date(None)), //null + n = null
                 }
@@ -399,7 +471,7 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Str
                         let ndays = n as i64;
                         d.checked_add_signed(chrono::Duration::days(ndays))
                             .map(|d| Value::Date(Some(d)))
-                            .ok_or("Date addition overflow".to_string())
+                            .ok_or(Error::DateAdditionOverflow)
                     }
                     None => Ok(Value::Date(None)), //n + null = null
                 }
@@ -414,7 +486,10 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Str
                 result.push_str(&b);
                 Ok(Value::Memo(result))
             }
-            _ => Err("Add: incompatible types".to_string()),
+            _ => Err(Error::IncompatibleBinaryOp(
+                BinaryOp::Add,
+                "Incompatible types".to_string(),
+            )),
         },
         BinaryOp::Sub => match (left, right) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a - b)),
@@ -425,7 +500,7 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Str
                         let ndays = n as i64;
                         d.checked_sub_signed(chrono::Duration::days(ndays))
                             .map(|d| Value::Date(Some(d)))
-                            .ok_or("Date subtraction overflow".to_string())
+                            .ok_or(Error::DateSubtractionOverflow)
                     }
                     None => Ok(Value::Date(None)), //null - n = null
                 }
@@ -435,29 +510,47 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Str
                 let duration = d1.signed_duration_since(d2);
                 Ok(Value::Number(duration.num_days() as f64))
             }
-            _ => Err("Sub: incompatible types".to_string()),
+            _ => Err(Error::IncompatibleBinaryOp(
+                BinaryOp::Sub,
+                "Incompatible types".to_string(),
+            )),
         },
         BinaryOp::Mul => match (left, right) {
             (Number(a), Number(b)) => Ok(Number(a * b)),
-            _ => Err("Mul: incompatible types".to_string()),
+            _ => Err(Error::IncompatibleBinaryOp(
+                BinaryOp::Mul,
+                "Incompatible types".to_string(),
+            )),
         },
         BinaryOp::Div => match (left, right) {
             (Number(_), Number(0.0)) => Ok(Number(f64::NAN)),
             (Number(a), Number(b)) => Ok(Number(a / b)),
-            _ => Err("Div: incompatible types".to_string()),
+            _ => Err(Error::IncompatibleBinaryOp(
+                BinaryOp::Div,
+                "Incompatible types".to_string(),
+            )),
         },
 
         BinaryOp::Exp => match (left, right) {
             (Number(a), Number(b)) => Ok(Number(a.powf(b))),
-            _ => Err("Exp: incompatible types".to_string()),
+            _ => Err(Error::IncompatibleBinaryOp(
+                BinaryOp::Exp,
+                "Incompatible types".to_string(),
+            )),
         },
 
         BinaryOp::Eq => Ok(Bool(match (left, right) {
-            (Str(l, _) | Memo(l), Str(r, _) | Memo(r)) => l.starts_with(&r),
+            (Str(a, _) | Memo(a), Str(b, r_len)) => {
+                slice(&a, r_len).starts_with(slice(&b, a.len()))
+            }
+            (Str(a, _) | Memo(a), Memo(b)) => a.starts_with(slice(&b, a.len())),
             (l, r) => l == r,
         })),
         BinaryOp::Ne => Ok(Bool(match (left, right) {
-            (Str(l, _) | Memo(l), Str(r, _) | Memo(r)) => !l.starts_with(&r),
+            (Str(a, _) | Memo(a), Str(b, r_len)) => {
+                !slice(&a, r_len).starts_with(slice(&b, a.len()))
+            }
+            (Str(a, _) | Memo(a), Memo(b)) => !a.starts_with(slice(&b, a.len())),
             (l, r) => l != r,
         })),
         BinaryOp::Lt => match (left, right) {
@@ -465,7 +558,10 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Str
             (Str(a, _) | Memo(a), Str(b, len)) => Ok(Bool(slice(&a, len) < slice(&b, a.len()))),
             (Str(a, _) | Memo(a), Memo(b)) => Ok(Bool(a.as_str() < slice(&b, a.len()))),
             (Date(a), Date(b)) => Ok(Bool(a < b)),
-            _ => Err("Lt: incompatible types".to_string()),
+            _ => Err(Error::IncompatibleBinaryOp(
+                BinaryOp::Lt,
+                "Incompatible types".to_string(),
+            )),
         },
 
         BinaryOp::Le => match (left, right) {
@@ -473,7 +569,10 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Str
             (Str(a, _) | Memo(a), Str(b, len)) => Ok(Bool(slice(&a, len) <= slice(&b, a.len()))),
             (Str(a, _) | Memo(a), Memo(b)) => Ok(Bool(a.as_str() <= slice(&b, a.len()))),
             (Date(a), Date(b)) => Ok(Bool(a <= b)),
-            _ => Err("Le: incompatible types".to_string()),
+            _ => Err(Error::IncompatibleBinaryOp(
+                BinaryOp::Le,
+                "Incompatible types".to_string(),
+            )),
         },
 
         BinaryOp::Gt => match (left, right) {
@@ -481,7 +580,10 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Str
             (Str(a, _) | Memo(a), Str(b, len)) => Ok(Bool(slice(&a, len) > slice(&b, a.len()))),
             (Str(a, _) | Memo(a), Memo(b)) => Ok(Bool(a.as_str() > slice(&b, a.len()))),
             (Date(a), Date(b)) => Ok(Bool(a > b)),
-            _ => Err("Gt: incompatible types".to_string()),
+            _ => Err(Error::IncompatibleBinaryOp(
+                BinaryOp::Gt,
+                "Incompatible types".to_string(),
+            )),
         },
 
         BinaryOp::Ge => match (left, right) {
@@ -489,26 +591,40 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Str
             (Str(a, _) | Memo(a), Str(b, len)) => Ok(Bool(slice(&a, len) >= slice(&b, a.len()))),
             (Str(a, _) | Memo(a), Memo(b)) => Ok(Bool(a.as_str() >= slice(&b, a.len()))),
             (Date(a), Date(b)) => Ok(Bool(a >= b)),
-            _ => Err("Ge: incompatible types".to_string()),
+            _ => Err(Error::IncompatibleBinaryOp(
+                BinaryOp::Ge,
+                "Incompatible types".to_string(),
+            )),
         },
 
         BinaryOp::Contain => match (left, right) {
             (Str(needle, _) | Memo(needle), Str(haystack, _) | Memo(haystack)) => {
                 Ok(Bool(haystack.contains(&needle)))
             }
-            _ => Err("Contain: requires string operands".to_string()),
+            _ => Err(Error::IncompatibleBinaryOp(
+                BinaryOp::Contain,
+                "Contain requires string operands".to_string(),
+            )),
         },
 
         BinaryOp::And => {
             let left_bool = match left {
                 Value::Bool(b) => b,
-                Value::Number(n) => n != 0.0,
-                _ => return Err("And: expected boolean or numeric operands".to_string()),
+                _ => {
+                    return Err(Error::IncompatibleBinaryOp(
+                        BinaryOp::And,
+                        "Expected boolean operands".to_string(),
+                    ));
+                }
             };
             let right_bool = match right {
                 Value::Bool(b) => b,
-                Value::Number(n) => n != 0.0,
-                _ => return Err("And: expected boolean or numeric operands".to_string()),
+                _ => {
+                    return Err(Error::IncompatibleBinaryOp(
+                        BinaryOp::And,
+                        "Expected boolean operands".to_string(),
+                    ));
+                }
             };
             Ok(Value::Bool(left_bool && right_bool))
         }
@@ -517,12 +633,22 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Str
             let left_bool = match left {
                 Value::Bool(b) => b,
                 Value::Number(n) => n != 0.0,
-                _ => return Err("Or: expected boolean or numeric operands".to_string()),
+                _ => {
+                    return Err(Error::IncompatibleBinaryOp(
+                        BinaryOp::Or,
+                        "Expected boolean or numeric operands".to_string(),
+                    ));
+                }
             };
             let right_bool = match right {
                 Value::Bool(b) => b,
                 Value::Number(n) => n != 0.0,
-                _ => return Err("Or: expected boolean or numeric operands".to_string()),
+                _ => {
+                    return Err(Error::IncompatibleBinaryOp(
+                        BinaryOp::Or,
+                        "Expected boolean or numeric operands".to_string(),
+                    ));
+                }
             };
             Ok(Value::Bool(left_bool || right_bool))
         }
@@ -533,9 +659,9 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Str
 mod tests {
     use super::*;
 
-    const TRUE: Result<Value, String> = Result::Ok(Value::Bool(true));
+    const TRUE: Result<Value, Error> = Result::Ok(Value::Bool(true));
 
-    fn eval(expr: &str) -> Result<Value, String> {
+    fn eval(expr: &str) -> Result<Value, Error> {
         use crate::{ast, grammar::ExprParser};
         let parser = ExprParser::new();
         let value_lookup = |_: &str| -> Option<Value> { None };
@@ -544,7 +670,7 @@ mod tests {
                 let t = ast::simplify(*t);
                 evaluate(&t, &value_lookup)
             }
-            Err(e) => Err(format!("{e}")),
+            Err(e) => Err(Error::Other(format!("{e}"))),
         }
     }
 
@@ -567,5 +693,20 @@ mod tests {
     fn precision() {
         assert_eq!(eval(".1 + 0.2"), Ok(Value::Number(0.3)));
         assert_eq!(eval(".1 + 0.2 = 000.3"), TRUE);
+    }
+
+    #[test]
+    fn add_subtract_operators() {
+        assert_eq!(eval("-2"), Ok(Value::Number(-2.0)));
+        assert_eq!(eval("--2"), Ok(Value::Number(2.0)));
+        assert_eq!(eval("---2"), Ok(Value::Number(-2.0)));
+        assert_eq!(eval("-+-2"), Ok(Value::Number(2.0)));
+        assert_eq!(eval("-(+(-(2)))"), Ok(Value::Number(2.0)));
+    }
+
+    #[test]
+    fn implicit_number() {
+        assert_eq!(eval("-"), Ok(Value::Number(0.0)));
+        assert_eq!(eval("+"), Ok(Value::Number(0.0)));
     }
 }

@@ -110,6 +110,8 @@ pub fn translate<C: TranslationContext>(source: &E, cx: &C) -> Result {
                 let r = translate(r, cx)?;
                 ok(Expression::UnaryOperator(UnaryOp::Neg, r.0), r.1)
             }
+            // Pos does nothing, just passes its argument through
+            ast::UnaryOp::Pos => translate(r, cx),
         },
         E::BinaryOperator(l, op, r) => {
             // Add, Sub are ambiguous: could be numeric, concat, or days (for dates)

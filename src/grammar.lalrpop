@@ -10,8 +10,13 @@ And = Tier<AndOp, Not>;
 Not = TierUnary<NotOp, Relation>;
 Relation = Tier<RelationOp, Add>;
 Add = Tier<AddOp, Factor>;
-Factor = Tier<FactorOp, Neg>;
-Neg = TierUnary<NegOp, Exp>;
+Factor = Tier<FactorOp, Sign>;
+// Any number of '-' and '+' can be placed in front of an expression so we need
+//  to recurse right: `--+-(foo)`
+Sign: Box<Expression> = {
+    <op:SignOp> <r:Sign> => Box::new(Expression::UnaryOperator(op, r)),
+    Exp => <>
+};
 Exp = Tier<ExpOp, Term>;
 
 pub Exprs = Comma<Expr>;
@@ -83,9 +88,10 @@ NotOp: UnaryOp = {
 	r"\.[nN][oO][tT]\." => UnaryOp::Not,
 };
 
-NegOp: UnaryOp = {
-	"-" => UnaryOp::Neg,
-}
+SignOp: UnaryOp = {
+    "+" => UnaryOp::Pos,
+    "-" => UnaryOp::Neg,
+};
 
 // Utility macros
 //-------------------------------------------------------
