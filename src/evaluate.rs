@@ -690,6 +690,17 @@ mod tests {
     #[test]
     fn implicit_number() {
         assert_eq!(eval("-"), Ok(Value::Number(0.0)));
+        assert_eq!(eval("---"), Ok(Value::Number(0.0)));
         assert_eq!(eval("+"), Ok(Value::Number(0.0)));
+        assert_eq!(eval("++"), Ok(Value::Number(0.0)));
+        // Codebase doesn't like an even number of unary operators
+        assert!(eval("--").is_err());
+        assert!(eval("++++").is_err());
+    }
+
+    #[test]
+    fn ambiguous_dots() {
+        // is 1.and. "1" ".and." or is it "1." "and."?
+        assert_eq!(eval("1=1.and.1=1"), TRUE);
     }
 }

@@ -1,5 +1,10 @@
 use crate::ast::{Expression, BinaryOp, UnaryOp};
 
+//Custom lexer:
+//  1.and.   should lex to "1" ".and."
+//  1..and.  should lex to "1." ".and."
+//  --1      should lex to "-0" "-" "1" <-- requires parse!
+
 grammar;
 
 // Precedence climbing: each tier is a distinct precedence level. We start with
@@ -11,6 +16,8 @@ Not = TierUnary<NotOp, Relation>;
 Relation = Tier<RelationOp, Add>;
 Add = Tier<AddOp, Factor>;
 Factor = Tier<FactorOp, Sign>;
+
+//TODO need to rework this! This should be an error!
 // Any number of '-' and '+' can be placed in front of an expression so we need
 //  to recurse right: `--+-(foo)`
 Sign: Box<Expression> = {
