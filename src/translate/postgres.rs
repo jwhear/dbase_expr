@@ -237,7 +237,26 @@ pub fn translate_fn_call(
             },
             FieldType::Character(8),
         ),
-
+        // COALESCE(TRIM(my_column), '') = ''
+        F::EMPTY => {
+            let trim = expr_ref(Expression::FunctionCall {
+                name: "TRIM".into(),
+                args: vec![arg(0)??.0],
+            });
+            let coalesce = expr_ref(Expression::FunctionCall {
+                name: "COALESCE".into(),
+                args: vec![trim, expr_ref("".into())],
+            });
+            ok(
+                Expression::BinaryOperator(
+                    coalesce,
+                    BinaryOp::Eq,
+                    expr_ref("".into()),
+                    Parenthesize::No,
+                ),
+                FieldType::Logical,
+            )
+        }
         // Translate nested IIFs to a flat CASE WHEN. This optimization is
         //  important because some databases (looking at you, SQL Server) have
         //  a limit how deeply nested control flow like CASE and IIF can go.

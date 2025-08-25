@@ -301,6 +301,14 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
             )),
         },
 
+        F::EMPTY => match args {
+            [Value::Str(s, _) | Value::Memo(s)] => Ok(Value::Bool(s.trim().is_empty())),
+            _ => Err(Error::InvalidArguments(
+                name.clone(),
+                "EMPTY expects a single string argument".to_string(),
+            )),
+        },
+
         F::LEFT => match args {
             [Value::Str(s, _) | Value::Memo(s), Value::Number(n)] => {
                 let n = *n as usize;
