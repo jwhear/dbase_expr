@@ -38,16 +38,13 @@ impl ConcatOp {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOp {
     Not,
-    Neg,
-    Pos,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expression {
     BoolLiteral(bool),
     NumberLiteral(String),
-    DoubleQuoteStringLiteral(String),
-    SingleQuoteStringLiteral(String),
+    StringLiteral(String),
     Field {
         alias: Option<String>,
         name: String,
@@ -82,8 +79,7 @@ pub fn simplify_impl(expr: Expression) -> (Expression, bool) {
         // Non-composite types can't be simplified
         Expression::BoolLiteral(_)
         | Expression::NumberLiteral(_)
-        | Expression::DoubleQuoteStringLiteral(_)
-        | Expression::SingleQuoteStringLiteral(_)
+        | Expression::StringLiteral(_)
         | Expression::Field { .. } => (expr, false),
 
         // Attempt to simplify a chain of BinaryOp(Add) to a sequence of operators
@@ -182,7 +178,7 @@ impl<'a> Arbitrary<'a> for ConcatOp {
 
 impl<'a> Arbitrary<'a> for UnaryOp {
     fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
-        Ok(*u.choose(&[UnaryOp::Not, UnaryOp::Neg])?)
+        Ok(*u.choose(&[UnaryOp::Not])?)
     }
 }
 
@@ -194,23 +190,22 @@ impl<'a> Arbitrary<'a> for Expression {
 
 fn arbitrary_expr(u: &mut Unstructured<'_>, depth: usize) -> arbitrary::Result<Expression> {
     //for the last layer, only allow the first 4 branches (literals)
-    let allowed_branches = if depth >= MAX_DEPTH { 3 } else { 6 };
+    let allowed_branches = if depth >= MAX_DEPTH { 2 } else { 5 };
     // Weighted choice: more leaves than branches
     match u.int_in_range::<u8>(0..=allowed_branches)? {
         0 => Ok(Expression::BoolLiteral(bool::arbitrary(u)?)),
         1 => Ok(Expression::NumberLiteral(String::arbitrary(u)?)),
-        2 => Ok(Expression::DoubleQuoteStringLiteral(String::arbitrary(u)?)),
-        3 => Ok(Expression::SingleQuoteStringLiteral(String::arbitrary(u)?)),
-        4 => Ok(Expression::Field {
+        2 => Ok(Expression::StringLiteral(String::arbitrary(u)?)),
+        3 => Ok(Expression::Field {
             alias: Option::<String>::arbitrary(u)?,
             name: String::arbitrary(u)?,
         }),
-        5 => Ok(Expression::BinaryOperator(
+        4 => Ok(Expression::BinaryOperator(
             Box::new(arbitrary_expr(u, depth + 1)?),
             BinaryOp::arbitrary(u)?,
             Box::new(arbitrary_expr(u, depth + 1)?),
         )),
-        6 => Ok(Expression::UnaryOperator(
+        5 => Ok(Expression::UnaryOperator(
             UnaryOp::arbitrary(u)?,
             Box::new(arbitrary_expr(u, depth + 1)?),
         )),
