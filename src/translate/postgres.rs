@@ -376,32 +376,38 @@ pub fn translate_fn_call(
         F::STOD => date("YYYYMMDD"),
         // STR(num, len, dec) => PRINTF("%{len}.{dec}f", num)
         F::STR => {
-            let (val_arg, fmt, len) = get_str_fn_args(args, cx)?;
-            let expression = expr_ref(Expression::FunctionCall {
-                name: "TO_CHAR".to_string(),
-                args: vec![
-                    val_arg, // value to be formatted
-                    expr_ref(fmt.into()),
-                ],
-            });
-            //if the length of the evaluated expression is greater than the specified len, fill the len with asterisks instead of showing any value at all
-            let len_expr = expr_ref(Expression::FunctionCall {
-                name: "LENGTH".into(),
-                args: vec![expression.clone()],
-            });
-            let cond = expr_ref(Expression::BinaryOperator(
-                len_expr,
-                BinaryOp::Le,
-                expr_ref(len.into()),
-                Parenthesize::No,
-            ));
-            let asterisks = "*".repeat(len as usize);
-            let iif = Expression::Iif {
-                cond,
-                when_true: expression,
-                when_false: expr_ref(asterisks.into()),
-            };
-            ok(iif, FieldType::Character(len as u32))
+            match get_str_fn_args(args, cx)? {
+                StrArgs::WithArgs(val_arg, fmt, len) => {
+                    let expression = expr_ref(Expression::FunctionCall {
+                        name: "TO_CHAR".to_string(),
+                        args: vec![
+                            val_arg, // value to be formatted
+                            expr_ref(fmt.into()),
+                        ],
+                    });
+                    //if the length of the evaluated expression is greater than the specified len, fill the len with asterisks instead of showing any value at all
+                    let len_expr = expr_ref(Expression::FunctionCall {
+                        name: "LENGTH".into(),
+                        args: vec![expression.clone()],
+                    });
+                    let cond = expr_ref(Expression::BinaryOperator(
+                        len_expr,
+                        BinaryOp::Le,
+                        expr_ref(len.into()),
+                        Parenthesize::No,
+                    ));
+                    let asterisks = "*".repeat(len as usize);
+                    let iif = Expression::Iif {
+                        cond,
+                        when_true: expression,
+                        when_false: expr_ref(asterisks.into()),
+                    };
+                    ok(iif, FieldType::Character(len as u32))
+                }
+                StrArgs::WithoutArgs(val_arg) => {
+                    ok(Expression::Cast(val_arg, "text"), FieldType::Memo)
+                }
+            }
         }
         F::SUBSTR => {
             let len: u32 = match &*arg(2)??.0.borrow() {
@@ -454,7 +460,7 @@ pub fn translate_fn_call(
 
 pub fn translate_binary_op<T: TranslationContext>(
     cx: &T,
-    l: &ast::Expression,
+    ast_l: &ast::Expression,
     op: &ast::BinaryOp,
     r: &ast::Expression,
 ) -> Result {
@@ -466,7 +472,7 @@ pub fn translate_binary_op<T: TranslationContext>(
         let r = translate(r, cx)?.0;
         tr_binop(l, op, r, ty)
     };
-    let (l, ty) = translate(l, cx)?;
+    let (l, ty) = translate(ast_l, cx)?;
     match (op, ty) {
         // For these types, simple addition is fine
         (
@@ -642,20 +648,26 @@ pub fn translate_binary_op<T: TranslationContext>(
             let left = string_comp_left(l, translate(r, cx)?.0);
             binop(left, BinaryOp::Ge, r, FieldType::Logical)
         }
-        (ast::BinaryOp::Eq, FieldType::Character(_) | FieldType::Memo) => {
-            binop(l, BinaryOp::StartsWith, r, FieldType::Logical)
-        }
-        (ast::BinaryOp::Ne, FieldType::Character(_) | FieldType::Memo) => {
-            let starts_with = Expression::BinaryOperator(
-                l,
-                BinaryOp::StartsWith,
-                translate(r, cx)?.0,
-                Parenthesize::Yes,
-            );
-            ok(
-                Expression::UnaryOperator(UnaryOp::Not, expr_ref(starts_with)),
-                FieldType::Logical,
-            )
+        (ast::BinaryOp::Eq | ast::BinaryOp::Ne, FieldType::Character(_) | FieldType::Memo) => {
+            let compare_operator = match ast_l {
+                ast::Expression::FunctionCall { name, args: _ }
+                    if *name == crate::codebase_functions::CodebaseFunction::TRIM =>
+                {
+                    //if we're trimming the left side, it's no longer a starts-with
+                    BinaryOp::Eq
+                }
+                _ => BinaryOp::StartsWith,
+            };
+            let binop = binop(l, compare_operator, r, FieldType::Logical);
+            if op == &ast::BinaryOp::Eq {
+                binop
+            } else {
+                let starts_with = binop?.0; //invert it for Ne
+                ok(
+                    Expression::UnaryOperator(UnaryOp::Not, starts_with),
+                    FieldType::Logical,
+                )
+            }
         }
         (
             ast::BinaryOp::Eq,
@@ -693,10 +705,20 @@ pub fn translate_binary_op<T: TranslationContext>(
     }
 }
 
+pub enum StrArgs {
+    WithArgs(ExprRef, String, i64),
+    WithoutArgs(ExprRef),
+}
+
 pub fn get_str_fn_args(
     args: &[Box<ast::Expression>],
     cx: &impl TranslationContext,
-) -> std::result::Result<(ExprRef, String, i64), Error> {
+) -> std::result::Result<StrArgs, Error> {
+    if args.len() == 1 {
+        let (val_arg, _) = get_arg(0, args, cx, &F::STR)??;
+        return Ok(StrArgs::WithoutArgs(val_arg));
+    }
+
     let arg = |index: usize| get_arg(index, args, cx, &F::STR);
     let wrong_type = |index| wrong_type(index, &F::STR, args);
 
@@ -753,7 +775,7 @@ pub fn get_str_fn_args(
         format!("FM{:9<x$}", "")
     };
 
-    Ok((val_arg, fmt, len))
+    Ok(StrArgs::WithArgs(val_arg, fmt, len))
 }
 
 pub fn get_arg(
