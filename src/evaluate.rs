@@ -316,6 +316,21 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
             )),
         },
 
+        F::PADL => match args {
+            [Value::Str(s, _) | Value::Memo(s), Value::Number(n)] => {
+                let n = *n as usize;
+                let mut padded = s.chars().take(n).collect::<String>();
+                if padded.len() < n {
+                    padded.extend(std::iter::repeat(' ').take(n - padded.len()));
+                }
+                Ok(Value::Str(padded, n))
+            }
+            _ => Err(Error::InvalidArguments(
+                name.clone(),
+                "PADL expects (string, number)".to_string(),
+            )),
+        },
+
         F::RIGHT => match args {
             [Value::Str(s, _) | Value::Memo(s), Value::Number(n)] => {
                 Ok(Value::Str(right_str_n(s, *n), *n as usize))

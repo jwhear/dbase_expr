@@ -241,7 +241,7 @@ impl ToSQL for Expression {
                 write!(out, " END)")
             }
             Expression::Case { branches, r#else } => {
-                write!(out, "CASE")?;
+                write!(out, "(CASE")?;
                 for branch in branches {
                     write!(out, " WHEN ")?;
                     branch.cond.to_sql(out, conf)?;
@@ -250,7 +250,7 @@ impl ToSQL for Expression {
                 }
                 write!(out, " ELSE ")?;
                 r#else.to_sql(out, conf)?;
-                write!(out, " END ")
+                write!(out, " END) ")
             }
             Expression::BareFunctionCall(name) => write!(out, " {name} "),
         }

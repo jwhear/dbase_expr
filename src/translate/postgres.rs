@@ -307,6 +307,14 @@ pub fn translate_fn_call(
             FieldType::Double,
         ),
 
+        F::PADL => ok(
+            Expression::FunctionCall {
+                name: "LPAD".into(),
+                args: vec![arg(0)??.0, arg(1)??.0, expr_ref(" ".into())],
+            },
+            FieldType::Memo,
+        ),
+
         // RECNO() => RECNO5
         F::RECNO => ok(
             Expression::Field {
