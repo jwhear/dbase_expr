@@ -232,13 +232,13 @@ impl ToSQL for Expression {
                 when_true,
                 when_false,
             } => {
-                write!(out, "CASE WHEN ")?;
+                write!(out, "(CASE WHEN ")?;
                 cond.to_sql(out, conf)?;
                 write!(out, " THEN ")?;
                 when_true.to_sql(out, conf)?;
                 write!(out, " ELSE ")?;
                 when_false.to_sql(out, conf)?;
-                write!(out, " END")
+                write!(out, " END)")
             }
             Expression::Case { branches, r#else } => {
                 write!(out, "CASE")?;

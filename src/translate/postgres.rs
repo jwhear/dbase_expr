@@ -363,35 +363,32 @@ pub fn translate_fn_call(
         F::STOD => date("YYYYMMDD"),
         // STR(num, len, dec) => PRINTF("%{len}.{dec}f", num)
         F::STR => {
-            // `len` and dec` must be constants according to CB docs, so we can
-            //   get them and convert to integers, then mix up a printf call
-            let len: i64 = match &*arg(1)??.0.borrow() {
-                Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(1)),
-                _ => Err(wrong_type(1)),
-            }?;
-            let dec: i64 = match &*arg(2)??.0.borrow() {
-                Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(2)),
-                _ => Err(wrong_type(2)),
-            }?;
-            // We need FMx.y where 'x' is '9' repeated len - dec - 1 times and
-            //  'y' is '0' repeated dec times
-            let fmt = format!(
-                "FM{:9<x$}.{:0<y$}",
-                "",
-                "",
-                x = (len - dec - 1) as usize,
-                y = dec as usize
-            );
-            ok(
-                Expression::FunctionCall {
-                    name: "TO_CHAR".to_string(),
-                    args: vec![
-                        arg(0)??.0, // value to be formatted
-                        expr_ref(fmt.into()),
-                    ],
-                },
-                FieldType::Character(len as u32),
-            )
+            let (val_arg, fmt, len) = get_str_fn_args(args, cx)?;
+            let expression = expr_ref(Expression::FunctionCall {
+                name: "TO_CHAR".to_string(),
+                args: vec![
+                    val_arg, // value to be formatted
+                    expr_ref(fmt.into()),
+                ],
+            });
+            //if the length of the evaluated expression is greater than the specified len, fill the len with asterisks instead of showing any value at all
+            let len_expr = expr_ref(Expression::FunctionCall {
+                name: "LENGTH".into(),
+                args: vec![expression.clone()],
+            });
+            let cond = expr_ref(Expression::BinaryOperator(
+                len_expr,
+                BinaryOp::Le,
+                expr_ref(len.into()),
+                Parenthesize::No,
+            ));
+            let asterisks = "*".repeat(len as usize);
+            let iif = Expression::Iif {
+                cond,
+                when_true: expression,
+                when_false: expr_ref(asterisks.into()),
+            };
+            ok(iif, FieldType::Character(len as u32))
         }
         F::SUBSTR => {
             let len: u32 = match &*arg(2)??.0.borrow() {
@@ -681,6 +678,69 @@ pub fn translate_binary_op<T: TranslationContext>(
             "Unsupported operator/type combination: {op:?} and {ty:?}"
         ))),
     }
+}
+
+pub fn get_str_fn_args(
+    args: &[Box<ast::Expression>],
+    cx: &impl TranslationContext,
+) -> std::result::Result<(ExprRef, String, i64), Error> {
+    let arg = |index: usize| get_arg(index, args, cx, &F::STR);
+    let wrong_type = |index| wrong_type(index, &F::STR, args);
+
+    let val_arg = arg(0)??.0;
+    let len_arg = arg(1)??.0;
+    let dec_arg = arg(2)??.0;
+
+    // `len` and dec` must be constants according to CB docs, so we can get them and convert to integers
+    let len: i64 = match &*len_arg.borrow() {
+        Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(1)),
+        _ => Err(wrong_type(1)),
+    }?;
+    let dec: i64 = match &*dec_arg.borrow() {
+        Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(2)),
+        _ => Err(wrong_type(2)),
+    }?;
+
+    //clamp dec to 15 (codebase max) and the field's assigned decimal places
+    let dec = std::cmp::min(
+        15,
+        match &*val_arg.borrow() {
+            Expression::Field {
+                alias,
+                name,
+                field_type: _,
+            } => match cx.lookup_field(alias.as_deref(), name) {
+                Ok((
+                    _,
+                    FieldType::Numeric {
+                        len: _,
+                        dec: field_dec,
+                    },
+                )) => std::cmp::min(dec, field_dec as i64),
+                _ => dec,
+            },
+            _ => dec,
+        },
+    );
+
+    let x = len - dec - 1;
+    // We need FMx.y where 'x' is '9' repeated len - dec - 1 times and
+    //  'y' is '0' repeated dec times
+    let x = usize::try_from(x).map_err(|_| {
+        Error::Other(format!(
+            "Invalid format: len ({}) must be greater than dec ({})",
+            len, dec
+        ))
+    })?;
+    let fmt = if dec > 0 {
+        let y = dec as usize;
+        format!("FM{:9<x$}.{:0<y$}", "", "")
+    } else {
+        let x = len as usize;
+        format!("FM{:9<x$}", "")
+    };
+
+    Ok((val_arg, fmt, len))
 }
 
 pub fn get_arg(
