@@ -301,6 +301,14 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
             )),
         },
 
+        F::EMPTY => match args {
+            [Value::Str(s, _) | Value::Memo(s)] => Ok(Value::Bool(s.trim().is_empty())),
+            _ => Err(Error::InvalidArguments(
+                name.clone(),
+                "EMPTY expects a single string argument".to_string(),
+            )),
+        },
+
         F::LEFT => match args {
             [Value::Str(s, _) | Value::Memo(s), Value::Number(n)] => {
                 let n = *n as usize;
@@ -313,6 +321,21 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
             _ => Err(Error::InvalidArguments(
                 name.clone(),
                 "LEFT expects (string, number) or (number, number)".to_string(),
+            )),
+        },
+
+        F::PADL => match args {
+            [Value::Str(s, _) | Value::Memo(s), Value::Number(n)] => {
+                let n = *n as usize;
+                let mut padded = s.chars().take(n).collect::<String>();
+                if padded.len() < n {
+                    padded.extend(std::iter::repeat(' ').take(n - padded.len()));
+                }
+                Ok(Value::Str(padded, n))
+            }
+            _ => Err(Error::InvalidArguments(
+                name.clone(),
+                "PADL expects (string, number)".to_string(),
             )),
         },
 
@@ -361,13 +384,28 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
                 Ok(Value::Str(fmt.trim_end().to_string(), 10))
             }
             [Value::Number(n), Value::Number(len), Value::Number(dec)] => {
-                let fmt = format!(
-                    "{:width$.prec$}",
-                    n,
-                    width = *len as usize,
-                    prec = *dec as usize
-                );
-                Ok(Value::Str(fmt.trim_end().to_string(), *len as usize))
+                let len = (*len).max(0.0) as usize;
+                let mut dec = (*dec).max(0.0) as usize;
+                dec = dec.min(15);
+
+                if len == 0 {
+                    return Ok(Value::Str(String::new(), 0));
+                }
+
+                if len <= dec + 1 {
+                    dec = (len.saturating_sub(2)).max(0); //to allow space for the '.', something like 2,1 doesn't make sense since there would be no space for the leading 0 so codebase just removes the dec
+                }
+
+                let fmt = format!("{:width$.prec$}", n, width = len, prec = dec);
+                Ok(Value::Str(
+                    if fmt.len() > len {
+                        "*".repeat(len)
+                    } else {
+                        let text = fmt.trim_end().to_string();
+                        format!("{:>width$}", text, width = len)
+                    },
+                    len,
+                ))
             }
             _ => Err(Error::InvalidArguments(
                 name.clone(),
