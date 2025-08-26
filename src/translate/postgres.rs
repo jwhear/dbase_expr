@@ -98,6 +98,10 @@ pub fn translate<C: TranslationContext>(source: &E, cx: &C) -> Result {
                 Expression::UnaryOperator(UnaryOp::Not, translate(r, cx)?.0),
                 FieldType::Logical,
             ),
+            ast::UnaryOp::Neg => {
+                let r = translate(r, cx)?;
+                ok(Expression::UnaryOperator(UnaryOp::Neg, r.0), r.1)
+            }
         },
         E::BinaryOperator(l, op, r) => {
             // Add, Sub are ambiguous: could be numeric, concat, or days (for dates)

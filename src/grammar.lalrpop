@@ -3,11 +3,11 @@ use crate::ast::{Expression, BinaryOp, UnaryOp};
 grammar;
 
 // Precedence climbing: each tier is a distinct precedence level. We start with
-//  the lowest precedence and work our way up to "terms".
+// the lowest precedence and work our way up to "terms".
 pub Expr = Or;
 Or = Tier<OrOp, And>;
 And = Tier<AndOp, Not>;
-Not = TierUnary<NotOp, Relation>;
+Not = TierUnary<NotOp_relation, Relation>;
 Relation = Tier<RelationOp, Add>;
 Add = Tier<AddOp, Factor>;
 Factor = Tier<FactorOp, Exp>;
@@ -15,7 +15,15 @@ Exp = Tier<ExpOp, Term>;
 
 pub Exprs = Comma<Expr>;
 
+// We distinguish between Term and BaseTerm so that we can prevent sign stacking
+// This allows us to make `--+-7` an error instead of CB's weird behavior.
 Term: Box<Expression> = {
+    BaseTerm,
+	"-" <t:BaseTerm> => Box::new(Expression::UnaryOperator(UnaryOp::Neg, t)),
+	"+" <t:BaseTerm> => t, // Unary plus is a no-op, just return the term
+};
+
+BaseTerm: Box<Expression> = {
 	Bool => Box::new(Expression::BoolLiteral(<>)),
 	Num => Box::new(Expression::NumberLiteral(<>)),
 	DoubleQuoteString => Box::new(Expression::StringLiteral(<>)),
@@ -34,7 +42,7 @@ Bool: bool = {
 	r"\.[tT]([rR][uU][eE])?\." => true,
 	r"\.[fF]([aA][lL][sS][eE])?\." => false,
 };
-Num: String = r"[\-\+]?[0-9]*(\.[0-9]+)?" => <>.to_string();
+Num: String = r"[0-9]*(\.[0-9]+)?" => <>.to_string();
 Ident: String = r"[a-zA-Z_][a-zA-Z_0-9]*" => <>.to_string();
 Call: (String, Vec<Box<Expression>>) = <name:Ident> "(" <args:Exprs> ")" => (name, args);
 Field: Box<Expression> = {
@@ -78,7 +86,7 @@ OrOp: BinaryOp = {
 	r"\.[oO][rR]\." => BinaryOp::Or,
 };
 
-NotOp: UnaryOp = {
+NotOp_relation: UnaryOp = {
 	r"\.[nN][oO][tT]\." => UnaryOp::Not,
 };
 
@@ -86,8 +94,8 @@ NotOp: UnaryOp = {
 //-------------------------------------------------------
 
 // Matches a comma separated list of T and returns them in a Vec
-Comma<T>: Vec<T> = { // (1)
-    <mut v:(<T> ",")*> <e:T?> => match e { // (2)
+Comma<T>: Vec<T> = {
+    <mut v:(<T> ",")*> <e:T?> => match e {
         None => v,
         Some(e) => {
             v.push(e);

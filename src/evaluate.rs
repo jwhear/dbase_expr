@@ -143,6 +143,7 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Error
                 let val = results.pop().unwrap();
                 let result = match (op, val) {
                     (UnaryOp::Not, Value::Bool(b)) => Value::Bool(!b),
+                    (UnaryOp::Neg, Value::Number(n)) => Value::Number(-n),
                     _ => return Err(Error::InvalidUnaryOp(op)),
                 };
                 results.push(result);
@@ -759,8 +760,6 @@ mod tests {
         assert_any_err("--2"); // CB evals this to -2
         assert_any_err("---2"); // CB evals this to 2
         assert_any_err("-+-2"); // CB evals this to -2
-        // No negation operator
-        assert_any_err("-(+(-(2)))");
     }
 
     #[test]
@@ -774,5 +773,10 @@ mod tests {
     fn ambiguous_dots() {
         // This is fine because a decimal place requires trailing digits
         assert_eq!(eval("1=1.and.1=1"), TRUE);
+    }
+
+    #[test]
+    fn addition_or_sign() {
+        assert_eq!(eval("7+1=8"), TRUE);
     }
 }
