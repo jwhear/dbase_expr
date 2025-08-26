@@ -28,6 +28,7 @@ pub enum Value {
     Memo(String),
     Bool(bool),
     Number(f64),
+    Decimal(f64, usize, usize), // value, length, decimal places
     Date(Option<NaiveDate>),
     DateParseError(String), // this is used to indicate a date parsing error but to match codebase, we treat it as julian day zero for equations
     Blob(Vec<u8>),
@@ -41,6 +42,13 @@ impl Debug for Value {
             Value::Memo(s) => write!(f, "Memo: '{}'", s.replace('\'', "''")),
             Value::Bool(b) => write!(f, "Boolean: {}", if *b { ".T." } else { ".F." }),
             Value::Number(n) => write!(f, "Number: {}", n),
+            Value::Decimal(v, len, dec) => {
+                write!(
+                    f,
+                    "Decimal: {}, Length: {}, Decimal Places: {}",
+                    v, len, dec
+                )
+            }
             Value::Date(d) => write!(
                 f,
                 "Date: {}",
@@ -379,7 +387,7 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
         },
 
         F::STR => match args {
-            [Value::Number(n)] => {
+            [Value::Number(n) | Value::Decimal(n, _, _)] => {
                 let fmt = format!("{:width$.prec$}", n, width = 10, prec = 0); // DBASE defaults: https://www.dbase.com/downloads/dBLLanguageReference2.6.pdf
                 Ok(Value::Str(fmt.trim_end().to_string(), 10))
             }
@@ -391,6 +399,57 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
                     prec = *dec as usize
                 );
                 Ok(Value::Str(fmt.trim_end().to_string(), *len as usize))
+            }
+            [
+                Value::Decimal(n, _, field_dec),
+                Value::Number(len_in),
+                Value::Number(dec_in),
+            ] => {
+                let len = (*len_in).max(0.0) as usize;
+                let mut dec = (*dec_in).max(0.0) as usize;
+
+                if len == 0 {
+                    return Ok(Value::Str(String::new(), 0));
+                }
+
+                dec = dec.min(*field_dec as usize).min(15);
+
+                // round number to requested decimals
+                let mut rounded = format!("{:.*}", dec, n);
+                if dec == 0 {
+                    rounded = rounded.split('.').next().unwrap().to_string();
+                }
+
+                let int_len = rounded.split('.').next().unwrap().len();
+                let required_len = if dec > 0 { rounded.len() } else { int_len };
+
+                // 3 seems to be a magic number where dbase will just round up even if there isn't enough space for all digits
+                // this was discovered by trial and error and does not seem to be documented anywhere
+                if len >= 3 && required_len > len {
+                    return Ok(Value::Str("*".repeat(len), len));
+                }
+
+                // Small-length fallback: drop decimals until integer fits
+                let mut s = rounded;
+                while s.len() > len && dec > 0 {
+                    dec -= 1;
+                    s = format!("{:.*}", dec, n);
+                    if dec == 0 {
+                        s = s.split('.').next().unwrap().to_string();
+                    }
+                }
+
+                // If still too long, finally return asterisks
+                if s.len() > len {
+                    s = "*".repeat(len);
+                }
+
+                // Left-pad to requested length
+                if s.len() < len {
+                    s = format!("{:>width$}", s, width = len);
+                }
+
+                Ok(Value::Str(s, len))
             }
             _ => Err(Error::InvalidArguments(
                 name.clone(),
