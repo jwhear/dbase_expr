@@ -386,14 +386,15 @@ pub fn translate_fn_call(
                         ],
                     });
                     //if the length of the evaluated expression is greater than the specified len, fill the len with asterisks instead of showing any value at all
-                    let len_expr = expr_ref(Expression::FunctionCall {
-                        name: "LENGTH".into(),
-                        args: vec![expression.clone()],
-                    });
+                    let len_expr: std::rc::Rc<std::cell::RefCell<Expression>> =
+                        expr_ref(Expression::FunctionCall {
+                            name: "LENGTH".into(),
+                            args: vec![expression.clone()],
+                        });
                     let cond = expr_ref(Expression::BinaryOperator(
                         len_expr,
                         BinaryOp::Le,
-                        expr_ref(len.into()),
+                        expr_ref((len as i64).into()),
                         Parenthesize::No,
                     ));
                     let asterisks = "*".repeat(len as usize);
@@ -706,7 +707,7 @@ pub fn translate_binary_op<T: TranslationContext>(
 }
 
 pub enum StrArgs {
-    WithArgs(ExprRef, String, i64),
+    WithArgs(ExprRef, String, usize),
     WithoutArgs(ExprRef),
 }
 
@@ -731,43 +732,26 @@ pub fn get_str_fn_args(
         Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(1)),
         _ => Err(wrong_type(1)),
     }?;
+    let len: usize = len
+        .try_into()
+        .map_err(|_| Error::Other("STR length must be a positive integer".into()))?;
     let dec: i64 = match &*dec_arg.borrow() {
         Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(2)),
         _ => Err(wrong_type(2)),
     }?;
+    let dec: usize = dec
+        .try_into()
+        .map_err(|_| Error::Other("STR dec must be a positive integer".into()))?;
 
-    //clamp dec to 15 (codebase max) and the field's assigned decimal places
-    let dec = std::cmp::min(
-        15,
-        match &*val_arg.borrow() {
-            Expression::Field {
-                alias,
-                name,
-                field_type: _,
-            } => match cx.lookup_field(alias.as_deref(), name) {
-                Ok((
-                    _,
-                    FieldType::Numeric {
-                        len: _,
-                        dec: field_dec,
-                    },
-                )) => std::cmp::min(dec, field_dec as i64),
-                _ => dec,
-            },
-            _ => dec,
-        },
-    );
+    //clamp dec to 15 (codebase max)
+    let mut dec: usize = dec.min(15);
 
-    let x = len - dec - 1;
-    // We need FMx.y where 'x' is '9' repeated len - dec - 1 times and
-    //  'y' is '0' repeated dec times
-    let x = usize::try_from(x).map_err(|_| {
-        Error::Other(format!(
-            "Invalid format: len ({}) must be greater than dec ({})",
-            len, dec
-        ))
-    })?;
+    if len <= dec + 1 {
+        dec = (len.saturating_sub(2)).max(0); //to allow space for the '.', something like 2,1 doesn't make sense since there would be no space for the leading 0 so codebase just removes the dec
+    }
+
     let fmt = if dec > 0 {
+        let x = (len - dec - 1) as usize;
         let y = dec as usize;
         format!("FM{:9<x$}.{:0<y$}", "", "")
     } else {
