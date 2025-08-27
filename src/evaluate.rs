@@ -330,7 +330,7 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
                 let n = *n as usize;
                 let mut padded = s.chars().take(n).collect::<String>();
                 if padded.len() < n {
-                    padded.extend(std::iter::repeat(' ').take(n - padded.len()));
+                    padded.extend(std::iter::repeat_n(' ', n - padded.len()));
                 }
                 Ok(Value::Str(padded, n))
             }

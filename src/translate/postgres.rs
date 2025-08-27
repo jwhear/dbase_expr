@@ -401,7 +401,7 @@ pub fn translate_fn_call(
                         expr_ref((len as i64).into()),
                         Parenthesize::No,
                     ));
-                    let asterisks = "*".repeat(len as usize);
+                    let asterisks = "*".repeat(len);
                     let iif = Expression::Iif {
                         cond,
                         when_true: expression,
@@ -755,11 +755,11 @@ pub fn get_str_fn_args(
     }
 
     let fmt = if dec > 0 {
-        let x = (len - dec - 1) as usize;
-        let y = dec as usize;
+        let x = len - dec - 1;
+        let y = dec;
         format!("FM{:9<x$}.{:0<y$}", "", "")
     } else {
-        let x = len as usize;
+        let x = len;
         format!("FM{:9<x$}", "")
     };
 
