@@ -388,22 +388,33 @@ pub fn translate_fn_call(
             let (x, ty) = arg(0)??;
 
             match &ty {
-                FieldType::Character(_) | FieldType::Memo => {
+                FieldType::Character(_)
+                | FieldType::Memo
+                | FieldType::Date
+                | FieldType::DateTime => {
+                    let cast = expr_ref(Expression::Cast(x.clone(), "nvarchar(max)"));
                     let trim = expr_ref(Expression::FunctionCall {
                         name: "TRIM".into(),
-                        args: vec![x.clone()],
+                        args: vec![cast],
                     });
-                    let len = expr_ref(Expression::FunctionCall {
-                        name: "LEN".into(),
-                        args: vec![trim],
+                    let coalesce = expr_ref(Expression::FunctionCall {
+                        name: "COALESCE".into(),
+                        args: vec![trim, expr_ref("".into())],
                     });
                     ok(
                         Expression::Case {
                             branches: vec![crate::translate::When {
                                 cond: expr_ref(Expression::BinaryOperator(
-                                    len,
+                                    coalesce,
                                     crate::translate::BinaryOp::Eq,
-                                    expr_ref(Expression::NumberLiteral("0".to_string())),
+                                    expr_ref(match &ty {
+                                        FieldType::Date | FieldType::DateTime => {
+                                            Expression::SingleQuoteStringLiteral(
+                                                COALESCE_DATE.to_string(),
+                                            )
+                                        }
+                                        _ => Expression::SingleQuoteStringLiteral("".to_string()),
+                                    }),
                                     crate::translate::Parenthesize::No,
                                 )),
                                 then: expr_ref(Expression::NumberLiteral("1".to_string())),
@@ -413,24 +424,6 @@ pub fn translate_fn_call(
                         FieldType::Logical,
                     )
                 }
-                FieldType::Date => ok(
-                    Expression::Case {
-                        branches: vec![crate::translate::When {
-                            cond: expr_ref(Expression::BinaryOperator(
-                                x.clone(),
-                                crate::translate::BinaryOp::Eq,
-                                expr_ref(Expression::BareFunctionCall(format!(
-                                    "CAST ('{}' AS date)",
-                                    COALESCE_DATE
-                                ))),
-                                crate::translate::Parenthesize::No,
-                            )),
-                            then: expr_ref(Expression::NumberLiteral("1".to_string())),
-                        }],
-                        r#else: expr_ref(Expression::NumberLiteral("0".to_string())),
-                    },
-                    FieldType::Logical,
-                ),
                 FieldType::Logical
                 | FieldType::Integer
                 | FieldType::Double
@@ -486,8 +479,6 @@ pub fn translate_fn_call(
                         FieldType::Logical,
                     )
                 }
-
-                _ => return Err(wrong_type(0)),
             }
         }
 
