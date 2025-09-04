@@ -241,25 +241,84 @@ pub fn translate_fn_call(
             },
             FieldType::Character(8),
         ),
-        // COALESCE(TRIM(my_column), '') = ''
+
+        //the result of EMPTY depends on the type
         F::EMPTY => {
-            let trim = expr_ref(Expression::FunctionCall {
-                name: "TRIM".into(),
-                args: vec![arg(0)??.0],
-            });
-            let coalesce = expr_ref(Expression::FunctionCall {
-                name: "COALESCE".into(),
-                args: vec![trim, expr_ref("".into())],
-            });
-            ok(
-                Expression::BinaryOperator(
-                    coalesce,
-                    BinaryOp::Eq,
-                    expr_ref("".into()),
-                    Parenthesize::No,
-                ),
-                FieldType::Logical,
-            )
+            let (arg, ty) = arg(0)??;
+            let expression = match ty {
+                FieldType::Logical => {
+                    // COALESCE(x, false) = false
+                    let coalesce = expr_ref(Expression::FunctionCall {
+                        name: "COALESCE".into(),
+                        args: vec![arg.clone(), expr_ref(Expression::BoolLiteral(false))],
+                    });
+                    Expression::BinaryOperator(
+                        coalesce,
+                        BinaryOp::Eq,
+                        expr_ref(Expression::BoolLiteral(false)),
+                        Parenthesize::No,
+                    )
+                }
+                FieldType::Integer
+                | FieldType::Currency
+                | FieldType::Double
+                | FieldType::Float
+                | FieldType::Numeric { .. } => {
+                    // COALESCE(x, 0) = 0
+                    let coalesce = expr_ref(Expression::FunctionCall {
+                        name: "COALESCE".into(),
+                        args: vec![arg.clone(), expr_ref(Expression::NumberLiteral("0".into()))],
+                    });
+                    Expression::BinaryOperator(
+                        coalesce,
+                        BinaryOp::Eq,
+                        expr_ref(Expression::NumberLiteral("0".into())),
+                        Parenthesize::No,
+                    )
+                }
+                FieldType::Character(_)
+                | FieldType::Memo
+                | FieldType::Date
+                | FieldType::DateTime => {
+                    // COALESCE(TRIM(CAST(x AS TEXT)), '') = ''
+                    let trim = expr_ref(Expression::FunctionCall {
+                        name: "CAST".into(),
+                        args: vec![arg],
+                    });
+                    let trim = expr_ref(Expression::FunctionCall {
+                        name: "TRIM".into(),
+                        args: vec![trim],
+                    });
+                    let coalesce = expr_ref(Expression::FunctionCall {
+                        name: "COALESCE".into(),
+                        args: vec![trim, expr_ref("".into())],
+                    });
+                    Expression::BinaryOperator(
+                        coalesce,
+                        BinaryOp::Eq,
+                        expr_ref("".into()),
+                        Parenthesize::No,
+                    )
+                }
+                FieldType::MemoBinary | FieldType::CharacterBinary(_) | FieldType::General => {
+                    // COALESCE(LENGTH(x), 0) = 0
+                    let length_call = expr_ref(Expression::FunctionCall {
+                        name: "length".into(),
+                        args: vec![arg],
+                    });
+                    let coalesce_call = expr_ref(Expression::FunctionCall {
+                        name: "COALESCE".into(),
+                        args: vec![length_call, expr_ref(Expression::NumberLiteral("0".into()))],
+                    });
+                    Expression::BinaryOperator(
+                        coalesce_call,
+                        BinaryOp::Eq,
+                        expr_ref(Expression::NumberLiteral("0".into())),
+                        Parenthesize::No,
+                    )
+                }
+            };
+            ok(expression, FieldType::Logical)
         }
         // Translate nested IIFs to a flat CASE WHEN. This optimization is
         //  important because some databases (looking at you, SQL Server) have
