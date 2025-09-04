@@ -2,7 +2,8 @@ use crate::{
     ast,
     codebase_functions::CodebaseFunction as F,
     translate::{
-        Error, ExprRef, Expression, FieldType, Result, TranslationContext, expr_ref, ok,
+        COALESCE_DATE, Error, ExprRef, Expression, FieldType, Result, TranslationContext, expr_ref,
+        ok,
         postgres::{self, get_all_args, get_arg, translate as default_translate, wrong_type},
     },
 };
@@ -383,21 +384,126 @@ pub fn translate_fn_call(
             FieldType::Double,
         ),
 
-        // RIGHT(x, n) => RIGHT(x, n) -- SQL Server has this function
-        F::RIGHT => {
+        F::EMPTY => {
+            let (x, ty) = arg(0)??;
+
+            match &ty {
+                FieldType::Character(_) | FieldType::Memo => {
+                    let trim = expr_ref(Expression::FunctionCall {
+                        name: "TRIM".into(),
+                        args: vec![x.clone()],
+                    });
+                    let len = expr_ref(Expression::FunctionCall {
+                        name: "LEN".into(),
+                        args: vec![trim],
+                    });
+                    ok(
+                        Expression::Case {
+                            branches: vec![crate::translate::When {
+                                cond: expr_ref(Expression::BinaryOperator(
+                                    len,
+                                    crate::translate::BinaryOp::Eq,
+                                    expr_ref(Expression::NumberLiteral("0".to_string())),
+                                    crate::translate::Parenthesize::No,
+                                )),
+                                then: expr_ref(Expression::NumberLiteral("1".to_string())),
+                            }],
+                            r#else: expr_ref(Expression::NumberLiteral("0".to_string())),
+                        },
+                        FieldType::Logical,
+                    )
+                }
+                FieldType::Date => ok(
+                    Expression::Case {
+                        branches: vec![crate::translate::When {
+                            cond: expr_ref(Expression::BinaryOperator(
+                                x.clone(),
+                                crate::translate::BinaryOp::Eq,
+                                expr_ref(Expression::BareFunctionCall(format!(
+                                    "CAST ('{}' AS date)",
+                                    COALESCE_DATE
+                                ))),
+                                crate::translate::Parenthesize::No,
+                            )),
+                            then: expr_ref(Expression::NumberLiteral("1".to_string())),
+                        }],
+                        r#else: expr_ref(Expression::NumberLiteral("0".to_string())),
+                    },
+                    FieldType::Logical,
+                ),
+                FieldType::Logical
+                | FieldType::Integer
+                | FieldType::Double
+                | FieldType::Float
+                | FieldType::Currency
+                | FieldType::Numeric { .. } => {
+                    let coalesce = expr_ref(Expression::FunctionCall {
+                        name: "COALESCE".into(),
+                        args: vec![
+                            x.clone(),
+                            expr_ref(Expression::NumberLiteral("0".to_string())),
+                        ],
+                    });
+                    ok(
+                        Expression::Case {
+                            branches: vec![crate::translate::When {
+                                cond: expr_ref(Expression::BinaryOperator(
+                                    coalesce,
+                                    crate::translate::BinaryOp::Eq,
+                                    expr_ref(Expression::NumberLiteral("0".to_string())),
+                                    crate::translate::Parenthesize::No,
+                                )),
+                                then: expr_ref(Expression::NumberLiteral("1".to_string())),
+                            }],
+                            r#else: expr_ref(Expression::NumberLiteral("0".to_string())),
+                        },
+                        FieldType::Logical,
+                    )
+                }
+
+                FieldType::CharacterBinary(..) | FieldType::MemoBinary | FieldType::General => {
+                    let len = expr_ref(Expression::FunctionCall {
+                        name: "LEN".into(),
+                        args: vec![x.clone()],
+                    });
+                    let coalesce = expr_ref(Expression::FunctionCall {
+                        name: "COALESCE".into(),
+                        args: vec![len, expr_ref(Expression::NumberLiteral("0".into()))],
+                    });
+                    ok(
+                        Expression::Case {
+                            branches: vec![crate::translate::When {
+                                cond: expr_ref(Expression::BinaryOperator(
+                                    coalesce,
+                                    crate::translate::BinaryOp::Eq,
+                                    expr_ref(Expression::NumberLiteral("0".to_string())),
+                                    crate::translate::Parenthesize::No,
+                                )),
+                                then: expr_ref(Expression::NumberLiteral("1".to_string())),
+                            }],
+                            r#else: expr_ref(Expression::NumberLiteral("0".to_string())),
+                        },
+                        FieldType::Logical,
+                    )
+                }
+
+                _ => return Err(wrong_type(0)),
+            }
+        }
+
+        F::LEFT => {
             let (x, ty) = arg(0)??;
             let n = match &*arg(1)??.0.borrow() {
                 Expression::NumberLiteral(v) => v.parse::<u32>().map_err(|_| wrong_type(1)),
                 _ => Err(wrong_type(1)),
             }?;
             let out_ty = match ty {
-                FieldType::Character(len) if len > n => FieldType::Character(len - n),
-                FieldType::Character(_) => FieldType::Character(1), // Minimum length
+                FieldType::Character(len) => FieldType::Character(len - n),
                 _ => FieldType::Memo,
             };
             ok(
                 Expression::FunctionCall {
-                    name: "RIGHT".into(),
+                    name: "LEFT".into(),
                     args: vec![x, arg(1)??.0],
                 },
                 out_ty,
