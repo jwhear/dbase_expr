@@ -281,7 +281,7 @@ pub fn translate_fn_call(
                 | FieldType::Date
                 | FieldType::DateTime => {
                     // COALESCE(TRIM(CAST(x AS TEXT)), '') = ''
-                    let cast = expr_ref(Expression::Cast(arg, "text"));
+                    let cast = expr_ref(Expression::Cast(arg, "TEXT"));
                     let trim = expr_ref(Expression::FunctionCall {
                         name: "TRIM".into(),
                         args: vec![cast],
