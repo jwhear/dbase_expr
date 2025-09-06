@@ -375,7 +375,7 @@ pub fn translate_fn_call(
             FieldType::Character(8),
         ),
 
-        // MONTH(x) => MONTH(x) -- SQL Server has this function
+        // MONTH(x) => MONTH(x)
         F::MONTH => ok(
             Expression::FunctionCall {
                 name: "MONTH".into(),
@@ -388,6 +388,7 @@ pub fn translate_fn_call(
             let (x, ty) = arg(0)??;
 
             match &ty {
+                //EMPTY(X) => (CASE WHEN COALESCE(TRIM(CAST ("DESCR_2" AS nvarchar(max))),'')='' THEN 1 ELSE 0 END)
                 FieldType::Character(_)
                 | FieldType::Memo
                 | FieldType::Date
@@ -424,6 +425,7 @@ pub fn translate_fn_call(
                         FieldType::Logical,
                     )
                 }
+                // EMPTY(X) => (CASE WHEN COALESCE(X,0)=0 THEN 1 ELSE 0 END)
                 FieldType::Logical
                 | FieldType::Integer
                 | FieldType::Double
