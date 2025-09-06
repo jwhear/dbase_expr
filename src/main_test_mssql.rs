@@ -16,6 +16,7 @@ fn main() {
         (_, "DATE") => FieldType::Date,
         (_, "ID") => FieldType::Character(1),
         (_, "L_NAME") => FieldType::Character(20),
+        (_, "DESCR_2") => FieldType::Memo,
         (_, "DESCRIPTION") => FieldType::Memo,
         (_, "C_TYPE") => FieldType::Numeric { len: 2, dec: 0 },
 
@@ -65,7 +66,12 @@ fn main() {
         "DAY(SHIP_DATE)",
         "MONTH(SHIP_DATE)",
         "YEAR(SHIP_DATE)",
-        "RIGHT(ID, 3)",
+        "RIGHT(ID, 1)",
+        "LEFT('asd',1)",
+        "EMPTY(DESCR_2)",
+        "EMPTY(DATE)",
+        "EMPTY(C_TYPE)",
+        "EMPTY(BINDATAFIELD)",
         "STR(A, 5, 2)",
         "VAL(\"123.45\")",
         // Test contain operation with CHARINDEX
