@@ -8,6 +8,34 @@ use std::{
 pub trait PrinterContext: std::fmt::Debug {
     fn write_padding(&self, out: &mut Formatter<'_>, inner: &str, width: u32) -> std::fmt::Result;
     fn coalesce_date(&self, out: &mut Formatter<'_>, inner: &str) -> std::fmt::Result;
+    fn write_startswith(
+        &self,
+        out: &mut Formatter,
+        expr: &Rc<RefCell<Expression>>,
+        conf: &PrinterConfig,
+    ) -> std::fmt::Result {
+        expr.to_sql(out, conf)
+    }
+    fn write_operator(&self, out: &mut Formatter, op: &BinaryOp) -> std::fmt::Result {
+        match op {
+            BinaryOp::Add => write!(out, "+"),
+            BinaryOp::Sub => write!(out, "-"),
+            BinaryOp::Mul => write!(out, "*"),
+            BinaryOp::Div => write!(out, "/"),
+            BinaryOp::Eq => write!(out, "="),
+            BinaryOp::Ne => write!(out, "!="),
+            BinaryOp::Lt => write!(out, "<"),
+            BinaryOp::Le => write!(out, "<="),
+            BinaryOp::Gt => write!(out, ">"),
+            BinaryOp::Ge => write!(out, ">="),
+            BinaryOp::And => write!(out, " AND "),
+            BinaryOp::Or => write!(out, " OR "),
+            BinaryOp::Concat => write!(out, " || "),
+            BinaryOp::StartsWith => write!(out, " ^@ "),
+            BinaryOp::Between => write!(out, " BETWEEN "),
+            BinaryOp::NotBetween => write!(out, " NOT BETWEEN "),
+        }
+    }
     fn box_clone(&self) -> Box<dyn PrinterContext>;
 }
 
@@ -23,6 +51,14 @@ pub struct PostgresPrinterContext;
 impl PrinterContext for PostgresPrinterContext {
     fn write_padding(&self, out: &mut Formatter<'_>, inner: &str, width: u32) -> std::fmt::Result {
         write!(out, "RPAD(COALESCE({}, ''), {}, ' ')", inner, width)
+    }
+    fn write_startswith(
+        &self,
+        out: &mut Formatter,
+        expr: &Rc<RefCell<Expression>>,
+        conf: &PrinterConfig,
+    ) -> std::fmt::Result {
+        expr.to_sql(out, conf)
     }
     fn coalesce_date(&self, out: &mut Formatter<'_>, inner: &str) -> std::fmt::Result {
         write!(out, "COALESCE({}, DATE '{}')", inner, COALESCE_DATE)
@@ -50,6 +86,14 @@ impl PrinterContext for SqlitePrinterContext {
             write!(out, "{}", inner)
         }
     }
+    fn write_startswith(
+        &self,
+        out: &mut Formatter,
+        expr: &Rc<RefCell<Expression>>,
+        conf: &PrinterConfig,
+    ) -> std::fmt::Result {
+        expr.to_sql(out, conf)
+    }
     fn coalesce_date(&self, out: &mut Formatter<'_>, inner: &str) -> std::fmt::Result {
         write!(out, "COALESCE({}, DATE('{}'))", inner, COALESCE_DATE)
     }
@@ -74,6 +118,29 @@ impl PrinterContext for MssqlPrinterContext {
     }
     fn box_clone(&self) -> Box<dyn PrinterContext> {
         Box::new(*self)
+    }
+    fn write_operator(&self, out: &mut Formatter, op: &BinaryOp) -> std::fmt::Result {
+        match op {
+            BinaryOp::StartsWith => write!(out, " LIKE "),
+            _ => PostgresPrinterContext.write_operator(out, op),
+        }
+    }
+    fn write_startswith(
+        &self,
+        out: &mut Formatter,
+        expr: &Rc<RefCell<Expression>>,
+        conf: &PrinterConfig,
+    ) -> std::fmt::Result {
+        let expr_ref = expr.as_ref().borrow();
+        match &*expr_ref {
+            Expression::SingleQuoteStringLiteral(s) => write!(out, "'{}%'", s),
+            //TODO: Should this error instead of writing it parenthesized?
+            _ => {
+                write!(out, "(")?;
+                expr_ref.to_sql(out, conf)?;
+                write!(out, " + '%')")
+            }
+        }
     }
 }
 
@@ -133,25 +200,8 @@ where
 }
 
 impl ToSQL for BinaryOp {
-    fn to_sql(&self, out: &mut Formatter, _: &PrinterConfig) -> Result {
-        match self {
-            BinaryOp::Add => write!(out, "+"),
-            BinaryOp::Sub => write!(out, "-"),
-            BinaryOp::Mul => write!(out, "*"),
-            BinaryOp::Div => write!(out, "/"),
-            BinaryOp::Eq => write!(out, "="),
-            BinaryOp::Ne => write!(out, "!="),
-            BinaryOp::Lt => write!(out, "<"),
-            BinaryOp::Le => write!(out, "<="),
-            BinaryOp::Gt => write!(out, ">"),
-            BinaryOp::Ge => write!(out, ">="),
-            BinaryOp::And => write!(out, " AND "),
-            BinaryOp::Or => write!(out, " OR "),
-            BinaryOp::Concat => write!(out, " || "),
-            BinaryOp::StartsWith => write!(out, " ^@ "),
-            BinaryOp::Between => write!(out, " BETWEEN "),
-            BinaryOp::NotBetween => write!(out, " NOT BETWEEN "),
-        }
+    fn to_sql(&self, out: &mut Formatter, conf: &PrinterConfig) -> Result {
+        conf.context.write_operator(out, self)
     }
 }
 
@@ -195,7 +245,11 @@ impl ToSQL for Expression {
                 p.open(out)?;
                 l.to_sql(out, conf)?;
                 op.to_sql(out, conf)?;
-                r.to_sql(out, conf)?;
+                if let BinaryOp::StartsWith = op {
+                    conf.context.write_startswith(out, r, conf)?;
+                } else {
+                    r.to_sql(out, conf)?;
+                }
                 p.close(out)
             }
             Expression::BinaryOperatorSequence(op, exprs) => {
