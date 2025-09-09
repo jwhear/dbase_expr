@@ -403,24 +403,22 @@ pub fn translate_fn_call(
                         args: vec![trim, expr_ref("".into())],
                     });
                     ok(
-                        Expression::Case {
-                            branches: vec![crate::translate::When {
-                                cond: expr_ref(Expression::BinaryOperator(
-                                    coalesce,
-                                    crate::translate::BinaryOp::Eq,
-                                    expr_ref(match &ty {
-                                        FieldType::Date | FieldType::DateTime => {
-                                            Expression::SingleQuoteStringLiteral(
-                                                COALESCE_DATE.to_string(),
-                                            )
-                                        }
-                                        _ => Expression::SingleQuoteStringLiteral("".to_string()),
-                                    }),
-                                    crate::translate::Parenthesize::No,
-                                )),
-                                then: expr_ref(Expression::NumberLiteral("1".to_string())),
-                            }],
-                            r#else: expr_ref(Expression::NumberLiteral("0".to_string())),
+                        Expression::Iif {
+                            cond: expr_ref(Expression::BinaryOperator(
+                                coalesce,
+                                crate::translate::BinaryOp::Eq,
+                                expr_ref(match &ty {
+                                    FieldType::Date | FieldType::DateTime => {
+                                        Expression::SingleQuoteStringLiteral(
+                                            COALESCE_DATE.to_string(),
+                                        )
+                                    }
+                                    _ => Expression::SingleQuoteStringLiteral("".to_string()),
+                                }),
+                                crate::translate::Parenthesize::No,
+                            )),
+                            when_true: expr_ref(Expression::NumberLiteral("0".to_string())),
+                            when_false: expr_ref(Expression::NumberLiteral("1".to_string())),
                         },
                         FieldType::Logical,
                     )
@@ -439,18 +437,18 @@ pub fn translate_fn_call(
                             expr_ref(Expression::NumberLiteral("0".to_string())),
                         ],
                     });
+                    let eq = expr_ref(Expression::BinaryOperator(
+                        coalesce,
+                        crate::translate::BinaryOp::Eq,
+                        expr_ref(Expression::NumberLiteral("0".to_string())),
+                        crate::translate::Parenthesize::No,
+                    ));
+
                     ok(
-                        Expression::Case {
-                            branches: vec![crate::translate::When {
-                                cond: expr_ref(Expression::BinaryOperator(
-                                    coalesce,
-                                    crate::translate::BinaryOp::Eq,
-                                    expr_ref(Expression::NumberLiteral("0".to_string())),
-                                    crate::translate::Parenthesize::No,
-                                )),
-                                then: expr_ref(Expression::NumberLiteral("1".to_string())),
-                            }],
-                            r#else: expr_ref(Expression::NumberLiteral("0".to_string())),
+                        Expression::Iif {
+                            cond: eq,
+                            when_true: expr_ref(Expression::NumberLiteral("0".to_string())),
+                            when_false: expr_ref(Expression::NumberLiteral("1".to_string())),
                         },
                         FieldType::Logical,
                     )
@@ -466,17 +464,15 @@ pub fn translate_fn_call(
                         args: vec![len, expr_ref(Expression::NumberLiteral("0".into()))],
                     });
                     ok(
-                        Expression::Case {
-                            branches: vec![crate::translate::When {
-                                cond: expr_ref(Expression::BinaryOperator(
-                                    coalesce,
-                                    crate::translate::BinaryOp::Eq,
-                                    expr_ref(Expression::NumberLiteral("0".to_string())),
-                                    crate::translate::Parenthesize::No,
-                                )),
-                                then: expr_ref(Expression::NumberLiteral("1".to_string())),
-                            }],
-                            r#else: expr_ref(Expression::NumberLiteral("0".to_string())),
+                        Expression::Iif {
+                            cond: expr_ref(Expression::BinaryOperator(
+                                coalesce,
+                                crate::translate::BinaryOp::Eq,
+                                expr_ref(Expression::NumberLiteral("0".to_string())),
+                                crate::translate::Parenthesize::No,
+                            )),
+                            when_true: expr_ref(Expression::NumberLiteral("0".to_string())),
+                            when_false: expr_ref(Expression::NumberLiteral("1".to_string())),
                         },
                         FieldType::Logical,
                     )
