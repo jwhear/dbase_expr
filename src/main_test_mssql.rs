@@ -16,7 +16,10 @@ fn main() {
         (_, "DATE") => FieldType::Date,
         (_, "ID") => FieldType::Character(1),
         (_, "L_NAME") => FieldType::Character(20),
+        (_, "DESCR_2") => FieldType::Memo,
         (_, "DESCRIPTION") => FieldType::Memo,
+        (_, "PO_EXT") => FieldType::Character(2),
+        (_, "PO_NO") => FieldType::Character(15),
         (_, "C_TYPE") => FieldType::Numeric { len: 2, dec: 0 },
 
         (Some(alias), _) => panic!("unknown field: {alias}.{field}"),
@@ -65,7 +68,12 @@ fn main() {
         "DAY(SHIP_DATE)",
         "MONTH(SHIP_DATE)",
         "YEAR(SHIP_DATE)",
-        "RIGHT(ID, 3)",
+        "RIGHT(ID, 1)",
+        "LEFT('asd',1)",
+        "EMPTY(DESCR_2)",
+        "EMPTY(DATE)",
+        "EMPTY(C_TYPE)",
+        "EMPTY(BINDATAFIELD)",
         "STR(A, 5, 2)",
         "VAL(\"123.45\")",
         // Test contain operation with CHARINDEX
@@ -74,6 +82,10 @@ fn main() {
         "'product' $ DESCRIPTION",
         //Nested IIF
         "IIF(C_TYPE=0,'Service',IIF(C_TYPE=1,'No Count',IIF(C_TYPE=2,'Track Count',IIF(C_TYPE=3,'Serialized',IIF(C_TYPE=4,'Special',IIF(C_TYPE=5,'Rental',IIF(C_TYPE=6,'Percentage Price',IIF(C_TYPE=7,'Non-inventory Serialized',IIF(C_TYPE=8,'Rental',IIF(C_TYPE=9,'Average-Cost Lot',IIF(C_TYPE=10,'Discount',IIF(C_TYPE=11,'Tracked-Cost Lot',IIF(C_TYPE=12,'Gift Card','')))))))))))))",
+        "iif(po_ext='   ','', '.' + ALLTRIM(po_ext))",
+        "iif(po_ext=po_no, 'Match', 'No Match')",
+        "iif(dtos(DATE) = '2001', 'Y', 'N')",
+        "'asd'='as'",
     ];
 
     for test in tests.iter() {
