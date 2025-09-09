@@ -19,32 +19,21 @@ pub trait PrinterContext: std::fmt::Debug {
         r: &Rc<RefCell<Expression>>,
         conf: &PrinterConfig,
     ) -> std::fmt::Result {
-        l.to_sql(out, conf)?;
-        write_op_token(out, op)?;
-        r.to_sql(out, conf)
+        write_binary_default(out, l, op, r, conf)
     }
     fn box_clone(&self) -> Box<dyn PrinterContext>;
 }
 
-fn write_op_token(out: &mut Formatter, op: &BinaryOp) -> std::fmt::Result {
-    match op {
-        BinaryOp::Add => write!(out, "+"),
-        BinaryOp::Sub => write!(out, "-"),
-        BinaryOp::Mul => write!(out, "*"),
-        BinaryOp::Div => write!(out, "/"),
-        BinaryOp::Eq => write!(out, "="),
-        BinaryOp::Ne => write!(out, "!="),
-        BinaryOp::Lt => write!(out, "<"),
-        BinaryOp::Le => write!(out, "<="),
-        BinaryOp::Gt => write!(out, ">"),
-        BinaryOp::Ge => write!(out, ">="),
-        BinaryOp::And => write!(out, " AND "),
-        BinaryOp::Or => write!(out, " OR "),
-        BinaryOp::Concat => write!(out, " || "),
-        BinaryOp::StartsWith => write!(out, " ^@ "),
-        BinaryOp::Between => write!(out, " BETWEEN "),
-        BinaryOp::NotBetween => write!(out, " NOT BETWEEN "),
-    }
+fn write_binary_default(
+    out: &mut Formatter,
+    l: &Rc<RefCell<Expression>>,
+    op: &BinaryOp,
+    r: &Rc<RefCell<Expression>>,
+    conf: &PrinterConfig,
+) -> std::fmt::Result {
+    l.to_sql(out, conf)?;
+    op.to_sql(out, conf)?;
+    r.to_sql(out, conf)
 }
 
 impl Clone for Box<dyn PrinterContext> {
@@ -129,11 +118,7 @@ impl PrinterContext for MssqlPrinterContext {
                 write!(out, ")) = ")?;
                 r.to_sql(out, conf)
             }
-            _ => {
-                l.to_sql(out, conf)?;
-                write_op_token(out, op)?;
-                r.to_sql(out, conf)
-            }
+            _ => write_binary_default(out, l, op, r, conf),
         }
     }
 }
@@ -193,6 +178,29 @@ where
     }
 }
 
+impl ToSQL for BinaryOp {
+    fn to_sql(&self, out: &mut Formatter, _: &PrinterConfig) -> Result {
+        match self {
+            BinaryOp::Add => write!(out, "+"),
+            BinaryOp::Sub => write!(out, "-"),
+            BinaryOp::Mul => write!(out, "*"),
+            BinaryOp::Div => write!(out, "/"),
+            BinaryOp::Eq => write!(out, "="),
+            BinaryOp::Ne => write!(out, "!="),
+            BinaryOp::Lt => write!(out, "<"),
+            BinaryOp::Le => write!(out, "<="),
+            BinaryOp::Gt => write!(out, ">"),
+            BinaryOp::Ge => write!(out, ">="),
+            BinaryOp::And => write!(out, " AND "),
+            BinaryOp::Or => write!(out, " OR "),
+            BinaryOp::Concat => write!(out, " || "),
+            BinaryOp::StartsWith => write!(out, " ^@ "),
+            BinaryOp::Between => write!(out, " BETWEEN "),
+            BinaryOp::NotBetween => write!(out, " NOT BETWEEN "),
+        }
+    }
+}
+
 impl ToSQL for Expression {
     fn to_sql(&self, out: &mut Formatter, conf: &PrinterConfig) -> Result {
         match self {
@@ -239,7 +247,7 @@ impl ToSQL for Expression {
                 write!(out, "(")?;
                 exprs[0].to_sql(out, conf)?;
                 for e in &exprs[1..] {
-                    write_op_token(out, op)?;
+                    op.to_sql(out, conf)?;
                     e.to_sql(out, conf)?;
                 }
                 write!(out, ")")
