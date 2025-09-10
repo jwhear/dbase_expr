@@ -388,7 +388,7 @@ pub fn translate_fn_call(
             let (x, ty) = arg(0)??;
 
             match &ty {
-                //EMPTY(X) => (CASE WHEN COALESCE(TRIM(CAST ("DESCR_2" AS nvarchar(max))),'')='' THEN 1 ELSE 0 END)
+                //EMPTY(X) => COALESCE(TRIM(CAST(x AS nvarchar(max))), '') = ''
                 FieldType::Character(_)
                 | FieldType::Memo
                 | FieldType::Date
@@ -403,27 +403,16 @@ pub fn translate_fn_call(
                         args: vec![trim, expr_ref("".into())],
                     });
                     ok(
-                        Expression::Iif {
-                            cond: expr_ref(Expression::BinaryOperator(
-                                coalesce,
-                                crate::translate::BinaryOp::Eq,
-                                expr_ref(match &ty {
-                                    FieldType::Date | FieldType::DateTime => {
-                                        Expression::SingleQuoteStringLiteral(
-                                            COALESCE_DATE.to_string(),
-                                        )
-                                    }
-                                    _ => Expression::SingleQuoteStringLiteral("".to_string()),
-                                }),
-                                crate::translate::Parenthesize::No,
-                            )),
-                            when_true: expr_ref(Expression::NumberLiteral("0".to_string())),
-                            when_false: expr_ref(Expression::NumberLiteral("1".to_string())),
-                        },
+                        Expression::BinaryOperator(
+                            coalesce,
+                            crate::translate::BinaryOp::Eq,
+                            expr_ref("".into()),
+                            crate::translate::Parenthesize::No,
+                        ),
                         FieldType::Logical,
                     )
                 }
-                // EMPTY(X) => (CASE WHEN COALESCE(X,0)=0 THEN 1 ELSE 0 END)
+                // EMPTY(X) => COALESCE(x, 0) = 0 (or false for logical)
                 FieldType::Logical
                 | FieldType::Integer
                 | FieldType::Double
@@ -437,23 +426,18 @@ pub fn translate_fn_call(
                             expr_ref(Expression::NumberLiteral("0".to_string())),
                         ],
                     });
-                    let eq = expr_ref(Expression::BinaryOperator(
-                        coalesce,
-                        crate::translate::BinaryOp::Eq,
-                        expr_ref(Expression::NumberLiteral("0".to_string())),
-                        crate::translate::Parenthesize::No,
-                    ));
-
                     ok(
-                        Expression::Iif {
-                            cond: eq,
-                            when_true: expr_ref(Expression::NumberLiteral("0".to_string())),
-                            when_false: expr_ref(Expression::NumberLiteral("1".to_string())),
-                        },
+                        Expression::BinaryOperator(
+                            coalesce,
+                            crate::translate::BinaryOp::Eq,
+                            expr_ref(Expression::NumberLiteral("0".to_string())),
+                            crate::translate::Parenthesize::No,
+                        ),
                         FieldType::Logical,
                     )
                 }
 
+                // EMPTY(X => COALESCE(LEN(x), 0) = 0
                 FieldType::CharacterBinary(..) | FieldType::MemoBinary | FieldType::General => {
                     let len = expr_ref(Expression::FunctionCall {
                         name: "LEN".into(),
@@ -464,16 +448,12 @@ pub fn translate_fn_call(
                         args: vec![len, expr_ref(Expression::NumberLiteral("0".into()))],
                     });
                     ok(
-                        Expression::Iif {
-                            cond: expr_ref(Expression::BinaryOperator(
-                                coalesce,
-                                crate::translate::BinaryOp::Eq,
-                                expr_ref(Expression::NumberLiteral("0".to_string())),
-                                crate::translate::Parenthesize::No,
-                            )),
-                            when_true: expr_ref(Expression::NumberLiteral("0".to_string())),
-                            when_false: expr_ref(Expression::NumberLiteral("1".to_string())),
-                        },
+                        Expression::BinaryOperator(
+                            coalesce,
+                            crate::translate::BinaryOp::Eq,
+                            expr_ref(Expression::NumberLiteral("0".to_string())),
+                            crate::translate::Parenthesize::No,
+                        ),
                         FieldType::Logical,
                     )
                 }
