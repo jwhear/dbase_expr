@@ -113,7 +113,7 @@ impl PrinterContext for MssqlPrinterContext {
                 // LEFT(l, LEN(r)) = r
                 write!(out, "LEFT(")?;
                 l.to_sql(out, conf)?;
-                write!(out, ", LEN(")?;
+                write!(out, ", DATALENGTH(")?;
                 r.to_sql(out, conf)?;
                 write!(out, ")) = ")?;
                 r.to_sql(out, conf)
