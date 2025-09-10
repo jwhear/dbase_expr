@@ -72,6 +72,7 @@ fn main() {
         "LEFT('asd',1)",
         "EMPTY(DESCR_2)",
         "EMPTY(DATE)",
+        "IIF(EMPTY(DATE), 'Empty', 'Not Empty')",
         "EMPTY(C_TYPE)",
         "EMPTY(BINDATAFIELD)",
         "STR(A, 5, 2)",

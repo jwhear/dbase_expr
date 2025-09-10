@@ -388,11 +388,8 @@ pub fn translate_fn_call(
             let (x, ty) = arg(0)??;
 
             match &ty {
-                //EMPTY(X) => COALESCE(TRIM(CAST(x AS nvarchar(max))), '') = ''
-                FieldType::Character(_)
-                | FieldType::Memo
-                | FieldType::Date
-                | FieldType::DateTime => {
+                // EMPTY(X) => COALESCE(TRIM(CAST(x AS nvarchar(max))), '') = ''
+                FieldType::Character(_) | FieldType::Memo => {
                     let cast = expr_ref(Expression::Cast(x.clone(), "nvarchar(max)"));
                     let trim = expr_ref(Expression::FunctionCall {
                         name: "TRIM".into(),
@@ -412,6 +409,18 @@ pub fn translate_fn_call(
                         FieldType::Logical,
                     )
                 }
+
+                // EMPTY(X) => COALESCE(x, COALESCE_DATE) = COALESCE_DATE
+                FieldType::Date | FieldType::DateTime => ok(
+                    Expression::BinaryOperator(
+                        x.clone(),
+                        crate::translate::BinaryOp::Eq,
+                        expr_ref(COALESCE_DATE.into()),
+                        crate::translate::Parenthesize::No,
+                    ),
+                    FieldType::Logical,
+                ),
+
                 // EMPTY(X) => COALESCE(x, 0) = 0 (or false for logical)
                 FieldType::Logical
                 | FieldType::Integer
