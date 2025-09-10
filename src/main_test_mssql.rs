@@ -71,9 +71,14 @@ fn main() {
         "RIGHT(ID, 1)",
         "LEFT('asd',1)",
         "EMPTY(DESCR_2)",
+        ".not.EMPTY(DESCR_2)",
+        "IIF(EMPTY(DESCR_2), 'Empty', 'Not Empty')",
         "EMPTY(DATE)",
+        "IIF(EMPTY(DATE), 'Empty', 'Not Empty')",
         "EMPTY(C_TYPE)",
+        ".not.EMPTY(C_TYPE)",
         "EMPTY(BINDATAFIELD)",
+        ".not.EMPTY(BINDATAFIELD)",
         "STR(A, 5, 2)",
         "VAL(\"123.45\")",
         // Test contain operation with CHARINDEX
@@ -85,6 +90,7 @@ fn main() {
         "iif(po_ext='   ','', '.' + ALLTRIM(po_ext))",
         "iif(po_ext=po_no, 'Match', 'No Match')",
         "iif(dtos(DATE) = '2001', 'Y', 'N')",
+        "po_no + iif(EMPTY(po_ext),'', '.' + ALLTRIM(po_ext))",
         "'asd'='as'",
     ];
 
