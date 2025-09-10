@@ -111,14 +111,12 @@ impl PrinterContext for MssqlPrinterContext {
         match op {
             BinaryOp::StartsWith => {
                 // LEFT(l, LEN(r)) = r
-                write!(out, "IIF(")?;
                 write!(out, "LEFT(")?;
                 l.to_sql(out, conf)?;
                 write!(out, ", LEN(")?;
                 r.to_sql(out, conf)?;
                 write!(out, ")) = ")?;
-                r.to_sql(out, conf)?;
-                write!(out, ", 1, 0)")
+                r.to_sql(out, conf)
             }
             _ => write_binary_default(out, l, op, r, conf),
         }
