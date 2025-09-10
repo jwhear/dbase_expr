@@ -113,9 +113,9 @@ impl PrinterContext for MssqlPrinterContext {
                 // LEFT(l, LEN(r)) = r
                 write!(out, "LEFT(")?;
                 l.to_sql(out, conf)?;
-                write!(out, ", DATALENGTH(")?;
+                write!(out, ", LEN(REPLACE(")?;
                 r.to_sql(out, conf)?;
-                write!(out, ")) = ")?;
+                write!(out, ", ' ', '.'))) = ")?;
                 r.to_sql(out, conf)
             }
             _ => write_binary_default(out, l, op, r, conf),
