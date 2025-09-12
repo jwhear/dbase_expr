@@ -728,8 +728,8 @@ pub fn translate_binary_op<T: TranslationContext>(
             if is_trim(ast_l) {
                 binop(l, BinaryOp::Ne, r, FieldType::Logical)
             } else {
-                let binop = binop(l, BinaryOp::StartsWith, r, FieldType::Logical);
-                let expr = Expression::UnaryOperator(UnaryOp::Not, binop?.0);
+                let starts_with = binop(l, BinaryOp::StartsWith, r, FieldType::Logical);
+                let expr = Expression::UnaryOperator(UnaryOp::Not, starts_with?.0);
                 ok(expr, FieldType::Logical)
             }
         }
@@ -738,9 +738,8 @@ pub fn translate_binary_op<T: TranslationContext>(
                 binop(l, BinaryOp::Ne, r, FieldType::Logical)
             } else {
                 let trimmed_r = string_comp_right(translate(r, cx)?.0, len);
-                let binop = tr_binop(l, BinaryOp::StartsWith, trimmed_r, FieldType::Logical);
-
-                let expr = Expression::UnaryOperator(UnaryOp::Not, binop?.0);
+                let starts_with = tr_binop(l, BinaryOp::StartsWith, trimmed_r, FieldType::Logical);
+                let expr = Expression::UnaryOperator(UnaryOp::Not, starts_with?.0);
                 ok(expr, FieldType::Logical)
             }
         }
