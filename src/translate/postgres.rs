@@ -51,32 +51,6 @@ where
     ) -> std::result::Result<(ExprRef, FieldType), Error> {
         translate_fn_call(name, args, self)
     }
-
-    fn string_comp_right(&self, r: ExprRef, len: u32) -> ExprRef {
-        expr_ref(Expression::FunctionCall {
-            name: "SUBSTR".into(),
-            args: vec![
-                r,
-                expr_ref(Expression::NumberLiteral("1".into())),
-                expr_ref(Expression::NumberLiteral(len.to_string())),
-            ],
-        })
-    }
-
-    fn string_comp_left(&self, l: ExprRef, r: ExprRef) -> ExprRef {
-        let right_side_len_expression = expr_ref(Expression::FunctionCall {
-            name: "LENGTH".into(),
-            args: vec![r],
-        });
-        expr_ref(Expression::FunctionCall {
-            name: "SUBSTR".into(),
-            args: vec![
-                l,
-                expr_ref(Expression::NumberLiteral("1".into())),
-                right_side_len_expression,
-            ],
-        })
-    }
 }
 
 /// Translates dBase expression to a SQL expression.
