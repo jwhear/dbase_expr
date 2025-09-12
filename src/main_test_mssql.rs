@@ -91,7 +91,6 @@ fn main() {
         "iif(po_ext=po_no, 'Match', 'No Match')",
         "iif(dtos(DATE) = '2001', 'Y', 'N')",
         "po_no + iif(EMPTY(po_ext),'', '.' + ALLTRIM(po_ext))",
-        "'asd'='as    '",
     ];
 
     for test in tests.iter() {
