@@ -1,6 +1,6 @@
 use super::{
     BinaryOp, Error, Expression, FieldType, Result, TranslationContext, UnaryOp,
-    escape_single_quotes, ok, string_comp_left, string_comp_right,
+    escape_single_quotes, ok,
 };
 use crate::{
     ast::{self, Expression as E},
@@ -671,42 +671,42 @@ pub fn translate_binary_op<T: TranslationContext>(
         (ast::BinaryOp::Or, FieldType::Logical) => binop(l, BinaryOp::Or, r, FieldType::Logical),
         (ast::BinaryOp::Lt, FieldType::Character(len)) => {
             let r_tr = translate(r, cx)?.0;
-            let left = string_comp_left(l, r_tr.clone());
-            let right = string_comp_right(r_tr, len);
+            let left = cx.string_comp_left(l, r_tr.clone());
+            let right = cx.string_comp_right(r_tr, len);
             tr_binop(left, BinaryOp::Lt, right, FieldType::Logical)
         }
         (ast::BinaryOp::Le, FieldType::Character(len)) => {
             let r_tr = translate(r, cx)?.0;
-            let left = string_comp_left(l, r_tr.clone());
-            let right = string_comp_right(r_tr, len);
+            let left = cx.string_comp_left(l, r_tr.clone());
+            let right = cx.string_comp_right(r_tr, len);
             tr_binop(left, BinaryOp::Le, right, FieldType::Logical)
         }
         (ast::BinaryOp::Gt, FieldType::Character(len)) => {
             let r_tr = translate(r, cx)?.0;
-            let left = string_comp_left(l, r_tr.clone());
-            let right = string_comp_right(r_tr, len);
+            let left = cx.string_comp_left(l, r_tr.clone());
+            let right = cx.string_comp_right(r_tr, len);
             tr_binop(left, BinaryOp::Gt, right, FieldType::Logical)
         }
         (ast::BinaryOp::Ge, FieldType::Character(len)) => {
             let r_tr = translate(r, cx)?.0;
-            let left = string_comp_left(l, r_tr.clone());
-            let right = string_comp_right(r_tr, len);
+            let left = cx.string_comp_left(l, r_tr.clone());
+            let right = cx.string_comp_right(r_tr, len);
             tr_binop(left, BinaryOp::Ge, right, FieldType::Logical)
         }
         (ast::BinaryOp::Lt, FieldType::Memo) => {
-            let left = string_comp_left(l, translate(r, cx)?.0);
+            let left = cx.string_comp_left(l, translate(r, cx)?.0);
             binop(left, BinaryOp::Lt, r, FieldType::Logical)
         }
         (ast::BinaryOp::Le, FieldType::Memo) => {
-            let left = string_comp_left(l, translate(r, cx)?.0);
+            let left = cx.string_comp_left(l, translate(r, cx)?.0);
             binop(left, BinaryOp::Le, r, FieldType::Logical)
         }
         (ast::BinaryOp::Gt, FieldType::Memo) => {
-            let left = string_comp_left(l, translate(r, cx)?.0);
+            let left = cx.string_comp_left(l, translate(r, cx)?.0);
             binop(left, BinaryOp::Gt, r, FieldType::Logical)
         }
         (ast::BinaryOp::Ge, FieldType::Memo) => {
-            let left = string_comp_left(l, translate(r, cx)?.0);
+            let left = cx.string_comp_left(l, translate(r, cx)?.0);
             binop(left, BinaryOp::Ge, r, FieldType::Logical)
         }
         (ast::BinaryOp::Eq, FieldType::Memo | FieldType::Character(_)) if is_trim(ast_l) => {
@@ -719,7 +719,7 @@ pub fn translate_binary_op<T: TranslationContext>(
             binop(l, BinaryOp::StartsWith, r, FieldType::Logical)
         }
         (ast::BinaryOp::Eq, FieldType::Character(len)) => {
-            let trimmed_r = string_comp_right(translate(r, cx)?.0, len);
+            let trimmed_r = cx.string_comp_right(translate(r, cx)?.0, len);
             tr_binop(l, BinaryOp::StartsWith, trimmed_r, FieldType::Logical)
         }
         (ast::BinaryOp::Ne, FieldType::Memo) => {
@@ -728,7 +728,7 @@ pub fn translate_binary_op<T: TranslationContext>(
             ok(expr, FieldType::Logical)
         }
         (ast::BinaryOp::Ne, FieldType::Character(len)) => {
-            let trimmed_r = string_comp_right(translate(r, cx)?.0, len);
+            let trimmed_r = cx.string_comp_right(translate(r, cx)?.0, len);
             let starts_with = tr_binop(l, BinaryOp::StartsWith, trimmed_r, FieldType::Logical);
             let expr = Expression::UnaryOperator(UnaryOp::Not, starts_with?.0);
             ok(expr, FieldType::Logical)
