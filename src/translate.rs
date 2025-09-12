@@ -277,12 +277,19 @@ pub trait TranslationContext {
         args: &[Box<ast::Expression>],
     ) -> std::result::Result<(ExprRef, FieldType), Error>;
 
+    /// Called to translate a binary operator expression.
     fn translate_binary_op(
         &self,
         l: &ast::Expression,
         op: &ast::BinaryOp,
         r: &ast::Expression,
     ) -> Result;
+
+    /// Truncate the right side of a string comparison to a fixed length.
+    fn string_comp_right(&self, r: ExprRef, len: u32) -> ExprRef;
+
+    /// The left side of the string comparison should be truncated to the length of the right side (basically a startswith compare)
+    fn string_comp_left(&self, l: ExprRef, r: ExprRef) -> ExprRef;
 }
 
 //NOTE(justin): This function almost certainly has a bug hiding in it.
@@ -301,34 +308,6 @@ fn escape_single_quotes(s: &str) -> String {
         res.push(c);
     }
     res
-}
-
-// The left side of the string comparison should be truncated to the length of the right side (basically a startswith compare)
-pub fn string_comp_left(l: ExprRef, r: ExprRef) -> ExprRef {
-    let right_side_len_expression = expr_ref(Expression::FunctionCall {
-        name: "LENGTH".into(),
-        args: vec![r],
-    });
-    expr_ref(Expression::FunctionCall {
-        name: "SUBSTR".into(),
-        args: vec![
-            l,
-            expr_ref(Expression::NumberLiteral("1".into())),
-            right_side_len_expression,
-        ],
-    })
-}
-
-// The right side of the string comparison should be truncated to the fixed length, no need to evaluate additional characters
-pub fn string_comp_right(r: ExprRef, len: u32) -> ExprRef {
-    expr_ref(Expression::FunctionCall {
-        name: "SUBSTR".into(),
-        args: vec![
-            r,
-            expr_ref(Expression::NumberLiteral("1".into())),
-            expr_ref(Expression::NumberLiteral(len.to_string())),
-        ],
-    })
 }
 
 #[cfg(test)]

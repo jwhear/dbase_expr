@@ -63,6 +63,32 @@ where
     ) -> Result {
         translate_binary_op(self, l, op, r)
     }
+
+    fn string_comp_left(&self, l: ExprRef, r: ExprRef) -> ExprRef {
+        let right_side_len_expression = expr_ref(Expression::FunctionCall {
+            name: "LEN".into(),
+            args: vec![r],
+        });
+        expr_ref(Expression::FunctionCall {
+            name: "SUBSTRING".into(),
+            args: vec![
+                l,
+                expr_ref(Expression::NumberLiteral("1".into())),
+                right_side_len_expression,
+            ],
+        })
+    }
+
+    fn string_comp_right(&self, r: ExprRef, len: u32) -> ExprRef {
+        expr_ref(Expression::FunctionCall {
+            name: "SUBSTRING".into(),
+            args: vec![
+                r,
+                expr_ref(Expression::NumberLiteral("1".to_string())),
+                expr_ref(Expression::NumberLiteral(len.to_string())),
+            ],
+        })
+    }
 }
 
 impl<F> MssqlTranslator<F>
@@ -540,6 +566,20 @@ pub fn translate_fn_call(
             },
             FieldType::Double,
         ),
+
+        F::SUBSTR => {
+            let len: u32 = match &*arg(2)??.0.borrow() {
+                Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(2)),
+                _ => Err(wrong_type(2)),
+            }?;
+            ok(
+                Expression::FunctionCall {
+                    name: "SUBSTRING".into(),
+                    args: all_args()?,
+                },
+                FieldType::Character(len),
+            )
+        }
 
         // For all other functions, delegate to Postgres implementation
         other => postgres::translate_fn_call(other, args, cx),
