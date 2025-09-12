@@ -709,25 +709,39 @@ pub fn translate_binary_op<T: TranslationContext>(
             let left = string_comp_left(l, translate(r, cx)?.0);
             binop(left, BinaryOp::Ge, r, FieldType::Logical)
         }
-        (ast::BinaryOp::Eq | ast::BinaryOp::Ne, FieldType::Character(_) | FieldType::Memo) => {
-            let compare_operator = match ast_l {
-                ast::Expression::FunctionCall { name, args: _ }
-                    if *name == crate::codebase_functions::CodebaseFunction::TRIM =>
-                {
-                    //if we're trimming the left side, it's no longer a starts-with
-                    BinaryOp::Eq
-                }
-                _ => BinaryOp::StartsWith,
-            };
-            let binop = binop(l, compare_operator, r, FieldType::Logical);
-            if op == &ast::BinaryOp::Eq {
-                binop
+        (ast::BinaryOp::Eq, FieldType::Memo) => {
+            if is_trim(ast_l) {
+                binop(l, BinaryOp::Eq, r, FieldType::Logical)
             } else {
-                let starts_with = binop?.0; //invert it for Ne
-                ok(
-                    Expression::UnaryOperator(UnaryOp::Not, starts_with),
-                    FieldType::Logical,
-                )
+                binop(l, BinaryOp::StartsWith, r, FieldType::Logical)
+            }
+        }
+        (ast::BinaryOp::Eq, FieldType::Character(len)) => {
+            if is_trim(ast_l) {
+                binop(l, BinaryOp::Eq, r, FieldType::Logical)
+            } else {
+                let trimmed_r = string_comp_right(translate(r, cx)?.0, len);
+                tr_binop(l, BinaryOp::StartsWith, trimmed_r, FieldType::Logical)
+            }
+        }
+        (ast::BinaryOp::Ne, FieldType::Memo) => {
+            if is_trim(ast_l) {
+                binop(l, BinaryOp::Ne, r, FieldType::Logical)
+            } else {
+                let binop = binop(l, BinaryOp::StartsWith, r, FieldType::Logical);
+                let expr = Expression::UnaryOperator(UnaryOp::Not, binop?.0);
+                ok(expr, FieldType::Logical)
+            }
+        }
+        (ast::BinaryOp::Ne, FieldType::Character(len)) => {
+            if is_trim(ast_l) {
+                binop(l, BinaryOp::Ne, r, FieldType::Logical)
+            } else {
+                let trimmed_r = string_comp_right(translate(r, cx)?.0, len);
+                let binop = tr_binop(l, BinaryOp::StartsWith, trimmed_r, FieldType::Logical);
+
+                let expr = Expression::UnaryOperator(UnaryOp::Not, binop?.0);
+                ok(expr, FieldType::Logical)
             }
         }
         (
@@ -848,4 +862,12 @@ pub fn wrong_type(index: usize, name: &F, args: &[Box<ast::Expression>]) -> Erro
         },
         wrong_arg_index: index,
     }
+}
+
+fn is_trim(ast_l: &ast::Expression) -> bool {
+    matches!(
+        ast_l,
+        ast::Expression::FunctionCall { name, .. }
+            if *name == crate::codebase_functions::CodebaseFunction::TRIM
+    )
 }
