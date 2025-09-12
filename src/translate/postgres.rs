@@ -709,39 +709,29 @@ pub fn translate_binary_op<T: TranslationContext>(
             let left = string_comp_left(l, translate(r, cx)?.0);
             binop(left, BinaryOp::Ge, r, FieldType::Logical)
         }
+        (ast::BinaryOp::Eq, FieldType::Memo | FieldType::Character(_)) if is_trim(ast_l) => {
+            binop(l, BinaryOp::Eq, r, FieldType::Logical)
+        }
+        (ast::BinaryOp::Ne, FieldType::Memo | FieldType::Character(_)) if is_trim(ast_l) => {
+            binop(l, BinaryOp::Ne, r, FieldType::Logical)
+        }
         (ast::BinaryOp::Eq, FieldType::Memo) => {
-            if is_trim(ast_l) {
-                binop(l, BinaryOp::Eq, r, FieldType::Logical)
-            } else {
-                binop(l, BinaryOp::StartsWith, r, FieldType::Logical)
-            }
+            binop(l, BinaryOp::StartsWith, r, FieldType::Logical)
         }
         (ast::BinaryOp::Eq, FieldType::Character(len)) => {
-            if is_trim(ast_l) {
-                binop(l, BinaryOp::Eq, r, FieldType::Logical)
-            } else {
-                let trimmed_r = string_comp_right(translate(r, cx)?.0, len);
-                tr_binop(l, BinaryOp::StartsWith, trimmed_r, FieldType::Logical)
-            }
+            let trimmed_r = string_comp_right(translate(r, cx)?.0, len);
+            tr_binop(l, BinaryOp::StartsWith, trimmed_r, FieldType::Logical)
         }
         (ast::BinaryOp::Ne, FieldType::Memo) => {
-            if is_trim(ast_l) {
-                binop(l, BinaryOp::Ne, r, FieldType::Logical)
-            } else {
-                let starts_with = binop(l, BinaryOp::StartsWith, r, FieldType::Logical);
-                let expr = Expression::UnaryOperator(UnaryOp::Not, starts_with?.0);
-                ok(expr, FieldType::Logical)
-            }
+            let starts_with = binop(l, BinaryOp::StartsWith, r, FieldType::Logical);
+            let expr = Expression::UnaryOperator(UnaryOp::Not, starts_with?.0);
+            ok(expr, FieldType::Logical)
         }
         (ast::BinaryOp::Ne, FieldType::Character(len)) => {
-            if is_trim(ast_l) {
-                binop(l, BinaryOp::Ne, r, FieldType::Logical)
-            } else {
-                let trimmed_r = string_comp_right(translate(r, cx)?.0, len);
-                let starts_with = tr_binop(l, BinaryOp::StartsWith, trimmed_r, FieldType::Logical);
-                let expr = Expression::UnaryOperator(UnaryOp::Not, starts_with?.0);
-                ok(expr, FieldType::Logical)
-            }
+            let trimmed_r = string_comp_right(translate(r, cx)?.0, len);
+            let starts_with = tr_binop(l, BinaryOp::StartsWith, trimmed_r, FieldType::Logical);
+            let expr = Expression::UnaryOperator(UnaryOp::Not, starts_with?.0);
+            ok(expr, FieldType::Logical)
         }
         (
             ast::BinaryOp::Eq,
