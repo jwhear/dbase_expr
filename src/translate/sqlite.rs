@@ -16,6 +16,7 @@ where
     F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
 {
     pub field_lookup: F,
+    pub custom_functions: fn(&str) -> Option<ast::Expression>,
 }
 
 impl<F> TranslationContext for SqliteTranslator<F>
@@ -28,6 +29,10 @@ where
         field: &str,
     ) -> std::result::Result<(String, FieldType), String> {
         (self.field_lookup)(alias, field)
+    }
+
+    fn custom_functions(&self, func: &str) -> Option<ast::Expression> {
+        (self.custom_functions)(func)
     }
 
     fn translate(&self, source: &ast::Expression) -> Result {

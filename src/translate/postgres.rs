@@ -17,6 +17,7 @@ where
     F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
 {
     pub field_lookup: F,
+    pub custom_functions: fn(&str) -> Option<ast::Expression>,
 }
 
 impl<F> TranslationContext for Translator<F>
@@ -29,6 +30,10 @@ where
         field: &str,
     ) -> std::result::Result<(String, FieldType), String> {
         (self.field_lookup)(alias, field)
+    }
+
+    fn custom_functions(&self, func: &str) -> Option<ast::Expression> {
+        (self.custom_functions)(func)
     }
 
     fn translate(&self, source: &ast::Expression) -> Result {
@@ -515,7 +520,10 @@ pub fn translate_fn_call(
             FieldType::Double,
         ),
 
-        F::Unknown(unsupported) => Err(Error::UnsupportedFunction(unsupported.clone())),
+        F::Unknown(unknown) => match cx.custom_functions(unknown) {
+            Some(v) => cx.translate(&v),
+            None => Err(Error::UnsupportedFunction(unknown.clone())),
+        },
     }
 }
 

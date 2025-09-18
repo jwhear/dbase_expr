@@ -26,6 +26,17 @@ fn value_lookup() -> impl Fn(&str) -> Option<Value> {
     }
 }
 
+fn custom_functions() -> fn(&str) -> Option<ast::Expression> {
+    custom_functions_impl
+}
+
+fn custom_functions_impl(func: &str) -> Option<ast::Expression> {
+    match func.to_uppercase().as_str() {
+        "USER" => Some(ast::Expression::StringLiteral("my user".to_string())),
+        _ => None,
+    }
+}
+
 fn field_lookup() -> impl Fn(Option<&str>, &str) -> Result<(String, FieldType), String> {
     |_alias: Option<&str>, field: &str| -> Result<(String, FieldType), String> {
         let field = field.to_string().to_uppercase();
@@ -47,10 +58,11 @@ pub fn translate_expr(expr: &str) {
     if let Ok(parsed) = parser.parse(expr) {
         let simplified = crate::ast::simplify(*parsed);
         // Evaluate, ignore errors
-        let _ = evaluate::evaluate(&simplified, &value_lookup());
+        let _ = evaluate::evaluate(&simplified, &value_lookup(), &custom_functions());
 
         let translator = Translator {
             field_lookup: field_lookup(),
+            custom_functions: custom_functions(),
         };
         _ = translator.translate(&simplified);
     }
@@ -58,11 +70,15 @@ pub fn translate_expr(expr: &str) {
 
 pub fn translate_ast(expr: ast::Expression) {
     let simplified = crate::ast::simplify(expr);
+    let func = custom_functions();
     // Evaluate, ignore errors
-    let _ = evaluate::evaluate(&simplified, &value_lookup());
+    {
+        let _ = evaluate::evaluate(&simplified, &value_lookup(), &func);
+    }
 
     let translator = Translator {
         field_lookup: field_lookup(),
+        custom_functions: func,
     };
     _ = translator.translate(&simplified);
 }

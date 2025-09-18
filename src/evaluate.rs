@@ -54,8 +54,13 @@ impl Debug for Value {
 }
 
 pub type FieldValueGetter<'a> = &'a dyn Fn(&str) -> Option<Value>;
+pub type CustomFunctions<'a> = &'a dyn Fn(&str) -> Option<Expression>;
 
-pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Error> {
+pub fn evaluate(
+    expr: &Expression,
+    get: FieldValueGetter,
+    custom_functions: CustomFunctions,
+) -> Result<Value, Error> {
     #[derive(Debug)]
     enum EvalState<'a> {
         Expr(&'a Expression),
@@ -121,9 +126,9 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Error
                 }
                 Expression::Sequence(exprs, op) => {
                     // Evaluate the whole expression and push it to the stack
-                    let mut accum = evaluate(&exprs[0], get)?;
+                    let mut accum = evaluate(&exprs[0], get, custom_functions)?;
                     for e in &exprs[1..] {
-                        let e = evaluate(e, get)?;
+                        let e = evaluate(e, get, custom_functions)?;
                         accum = eval_binary_op(op.get_op(), accum, e)?;
                     }
                     results.push(accum);
@@ -182,7 +187,7 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Error
                     }
                     collected.reverse(); // restore original order
 
-                    let result = eval_function(name, &collected, get)?;
+                    let result = eval_function(name, &collected, get, custom_functions)?;
                     results.push(result);
                 }
             }
@@ -197,7 +202,12 @@ pub fn evaluate(expr: &Expression, get: FieldValueGetter) -> Result<Value, Error
     }
 }
 
-fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Value, Error> {
+fn eval_function(
+    name: &F,
+    args: &[Value],
+    get: FieldValueGetter,
+    custom_functions: CustomFunctions,
+) -> Result<Value, Error> {
     match name {
         F::LTRIM => match args {
             [Value::Str(s, len)] => Ok(Value::Str(s.trim_start().to_string(), *len)),
@@ -463,7 +473,10 @@ fn eval_function(name: &F, args: &[Value], get: FieldValueGetter) -> Result<Valu
 
         F::RECNO => Ok(get("RECNO5").unwrap_or(Value::Number(0.0))),
 
-        F::Unknown(unsupported) => Err(Error::UnknownFunction(unsupported.clone())),
+        F::Unknown(unknown) => match custom_functions(unknown) {
+            Some(v) => evaluate(&v, get, custom_functions),
+            None => Err(Error::UnknownFunction(unknown.clone())),
+        },
     }
 }
 
@@ -715,10 +728,11 @@ mod tests {
         use crate::{ast, grammar::ExprParser};
         let parser = ExprParser::new();
         let value_lookup = |_: &str| -> Option<Value> { None };
+        let custom_functions = |_: &str| -> Option<Expression> { None };
         match parser.parse(expr) {
             Ok(t) => {
                 let t = ast::simplify(*t);
-                evaluate(&t, &value_lookup)
+                evaluate(&t, &value_lookup, &custom_functions)
             }
             Err(e) => Err(Error::Other(format!("{e}"))),
         }
