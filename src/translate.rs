@@ -263,7 +263,7 @@ pub trait TranslationContext {
         field: &str,
     ) -> std::result::Result<(String, FieldType), String>;
 
-    fn custom_functions(&self, func: &str) -> Option<ast::Expression>;
+    fn custom_function(&self, func: &str) -> Option<ast::Expression>;
 
     /// Called to translate an expression generally.
     fn translate(&self, source: &ast::Expression) -> Result;

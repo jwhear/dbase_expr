@@ -32,7 +32,7 @@ where
         (self.field_lookup)(alias, field)
     }
 
-    fn custom_functions(&self, func: &str) -> Option<ast::Expression> {
+    fn custom_function(&self, func: &str) -> Option<ast::Expression> {
         (self.custom_functions)(func)
     }
 
@@ -520,7 +520,7 @@ pub fn translate_fn_call(
             FieldType::Double,
         ),
 
-        F::Unknown(unknown) => match cx.custom_functions(unknown) {
+        F::Unknown(unknown) => match cx.custom_function(unknown) {
             Some(v) => cx.translate(&v),
             None => Err(Error::UnsupportedFunction(unknown.clone())),
         },

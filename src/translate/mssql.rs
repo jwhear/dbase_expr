@@ -27,7 +27,7 @@ where
         (self.field_lookup)(alias, field)
     }
 
-    fn custom_functions(&self, _func: &str) -> Option<ast::Expression> {
+    fn custom_function(&self, _func: &str) -> Option<ast::Expression> {
         None //not used here
     }
 

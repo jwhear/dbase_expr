@@ -59,7 +59,7 @@ fn main() {
             (self.field_lookup)(alias, field)
         }
 
-        fn custom_functions(&self, func: &str) -> Option<ast::Expression> {
+        fn custom_function(&self, func: &str) -> Option<ast::Expression> {
             (self.custom_functions)(func)
         }
 
