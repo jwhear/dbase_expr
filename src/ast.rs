@@ -132,7 +132,6 @@ fn concat(l: Box<Expression>, op: ConcatOp, r: Box<Expression>) -> Expression {
     //  [c, b, a]
     // Then reverse it at the end. For addition proper it's not a big deal
     //  but '+' is also used for concatenation and order is very important
-    //TODO simplify elements?
 
     let expected_op = op.get_op();
     let mut v = vec![r];

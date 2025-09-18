@@ -184,10 +184,9 @@ pub fn translate_fn_call(
             FieldType::Character(1),
         ),
         // CTOD(x) => COALESCE(TO_DATE(NULLIF(TRIM(x),''),'MM/DD/YY'),'0001-01-01')
-        F::CTOD => date("MM/DD/YY"), //TODO the date format can be changed on the Codebase object
+        F::CTOD => date("MM/DD/YY"), //TODO KOB-104
         // DATE() => CURRENT_DATE
         F::DATE => ok(
-            //TODO do we need to format as a string here?
             Expression::BareFunctionCall("CURRENT_DATE".to_string()),
             FieldType::Date,
         ),
@@ -226,7 +225,7 @@ pub fn translate_fn_call(
                         name: "TO_CHAR".into(),
                         args: vec![
                             arg(0)??.0,
-                            //TODO this is controlled by the Code4
+                            //TODO KOB-104
                             expr_ref("MM/DD/YY".into()),
                         ],
                     },
@@ -331,7 +330,7 @@ pub fn translate_fn_call(
 
             let mut branches = Vec::new();
             // We have to take ownership of args for the loop to work
-            //TODO(justin): come back and try to rework this
+            //OPT: come back and try to rework this
             let mut inner_args = Vec::from(args);
 
             // Add this IIF as a When branch. If when_false is an IIF, traverse
@@ -346,7 +345,7 @@ pub fn translate_fn_call(
                             then: cx.translate(when_true)?.0,
                         });
 
-                        //TODO there's probably a way to work around this clone
+                        //OPT there's probably a way to work around this clone
                         let expr: ast::Expression = (**when_false).clone();
                         if let ast::Expression::FunctionCall { name: F::IIF, args } = expr {
                             inner_args = args.clone();
@@ -527,9 +526,8 @@ pub fn translate_binary_op<T: TranslationContext>(
 ) -> Result {
     let tr_binop = |l, op, r, ty| ok(Expression::BinaryOperator(l, op, r, Parenthesize::Yes), ty);
     let binop = |l, op, r, ty| {
-        //TODO(justin): order of operations is preserved by parenthesizing
-        // everything.  It'd be nice to analyze precedence to only do so
-        // when necessary.
+        //OPT: order of operations is preserved by parenthesizing everything.
+        // It'd be nice to analyze precedence to only do so when necessary.
         let r = translate(r, cx)?.0;
         tr_binop(l, op, r, ty)
     };
