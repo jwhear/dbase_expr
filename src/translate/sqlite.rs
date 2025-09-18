@@ -11,17 +11,19 @@ use crate::{
     },
 };
 
-pub struct SqliteTranslator<F>
+pub struct SqliteTranslator<F, C>
 where
     F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
+    C: Fn(&str) -> Option<ast::Expression>,
 {
     pub field_lookup: F,
-    pub custom_functions: fn(&str) -> Option<ast::Expression>,
+    pub custom_function: C,
 }
 
-impl<F> TranslationContext for SqliteTranslator<F>
+impl<F, C> TranslationContext for SqliteTranslator<F, C>
 where
     F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
+    C: Fn(&str) -> Option<ast::Expression>,
 {
     fn lookup_field(
         &self,
@@ -32,7 +34,7 @@ where
     }
 
     fn custom_function(&self, func: &str) -> Option<ast::Expression> {
-        (self.custom_functions)(func)
+        (self.custom_function)(func)
     }
 
     fn translate(&self, source: &ast::Expression) -> Result {

@@ -34,7 +34,7 @@ fn main() {
             let field_type = get_type(alias, &field);
             Ok((field, field_type))
         },
-        custom_functions: custom_functions(),
+        custom_function: custom_functions(),
     };
     to_sql_tests(&translation_cx);
 
@@ -123,6 +123,7 @@ fn expr_tests() {
         "5.",   //5.0
         "   3    - 44  ",
         "deleted() = .f. .and. substr(id, 1, 3 ) <> \"($)\"",
+        "USER() + \"Hello world\"",
         ".NOT.deleted()",
         "12",
         "(12)",

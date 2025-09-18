@@ -62,7 +62,7 @@ pub fn translate_expr(expr: &str) {
 
         let translator = Translator {
             field_lookup: field_lookup(),
-            custom_functions: custom_functions(),
+            custom_function: custom_functions(),
         };
         _ = translator.translate(&simplified);
     }
@@ -78,7 +78,7 @@ pub fn translate_ast(expr: ast::Expression) {
 
     let translator = Translator {
         field_lookup: field_lookup(),
-        custom_functions: func,
+        custom_function: func,
     };
     _ = translator.translate(&simplified);
 }

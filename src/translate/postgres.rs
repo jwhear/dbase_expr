@@ -17,7 +17,7 @@ where
     F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
 {
     pub field_lookup: F,
-    pub custom_functions: fn(&str) -> Option<ast::Expression>,
+    pub custom_function: fn(&str) -> Option<ast::Expression>,
 }
 
 impl<F> TranslationContext for Translator<F>
@@ -33,7 +33,7 @@ where
     }
 
     fn custom_function(&self, func: &str) -> Option<ast::Expression> {
-        (self.custom_functions)(func)
+        (self.custom_function)(func)
     }
 
     fn translate(&self, source: &ast::Expression) -> Result {
