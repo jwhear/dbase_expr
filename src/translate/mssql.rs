@@ -27,6 +27,10 @@ where
         (self.field_lookup)(alias, field)
     }
 
+    fn custom_function(&self, _func: &str) -> Option<ast::Expression> {
+        None //not used here
+    }
+
     fn translate(&self, source: &ast::Expression) -> Result {
         match source {
             ast::Expression::Sequence(operands, concat_op) => {

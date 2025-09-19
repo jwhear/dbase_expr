@@ -34,6 +34,7 @@ fn main() {
             let field_type = get_type(alias, &field);
             Ok((field, field_type))
         },
+        custom_function: custom_functions(),
     };
     to_sql_tests(&translation_cx);
 
@@ -44,6 +45,7 @@ fn main() {
         F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
     {
         field_lookup: F,
+        custom_functions: fn(&str) -> Option<ast::Expression>,
     }
     impl<F> TranslationContext for CustomTranslator<F>
     where
@@ -55,6 +57,10 @@ fn main() {
             field: &str,
         ) -> std::result::Result<(String, FieldType), String> {
             (self.field_lookup)(alias, field)
+        }
+
+        fn custom_function(&self, func: &str) -> Option<ast::Expression> {
+            (self.custom_functions)(func)
         }
 
         fn translate(&self, source: &ast::Expression) -> translate::Result {
@@ -100,6 +106,7 @@ fn main() {
             let field_type = get_type(alias, &field);
             Ok((field, field_type))
         },
+        custom_functions: custom_functions(),
     };
     to_sql_tests(&cx);
 }
@@ -116,6 +123,7 @@ fn expr_tests() {
         "5.",   //5.0
         "   3    - 44  ",
         "deleted() = .f. .and. substr(id, 1, 3 ) <> \"($)\"",
+        "USER() + \"Hello world\"",
         ".NOT.deleted()",
         "12",
         "(12)",
@@ -196,7 +204,7 @@ fn expr_tests() {
                 //println!("{t:?}");
                 let t = ast::simplify(*t);
                 //println!("{t:?}");
-                match evaluate::evaluate(&t, &value_lookup) {
+                match evaluate::evaluate(&t, &value_lookup, &custom_functions()) {
                     Ok(tree) => println!("{test} => {tree:?}\n"),
                     Err(e) => eprintln!("{test} => Error translating tree: {e:?}\n:{test}\n"),
                 }
@@ -274,5 +282,16 @@ fn to_sql_tests<T: TranslationContext>(cx: &T) {
             // Any other kind of error, just print it
             Err(e) => println!("{:?}", e),
         };
+    }
+}
+
+fn custom_functions() -> fn(&str) -> Option<ast::Expression> {
+    custom_functions_impl
+}
+
+fn custom_functions_impl(func: &str) -> Option<ast::Expression> {
+    match func.to_uppercase().as_str() {
+        "USER" => Some(ast::Expression::StringLiteral("my user".to_string())),
+        _ => None,
     }
 }
