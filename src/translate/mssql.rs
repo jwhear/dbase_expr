@@ -568,6 +568,35 @@ pub fn translate_fn_call(
             FieldType::Double,
         ),
 
+        // PADL(string, length) => RIGHT(REPLICATE(' ', length) + string, length)
+        F::PADL => {
+            let len: u32 = match &*arg(1)??.0.borrow() {
+                Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(1)),
+                _ => Err(wrong_type(1)),
+            }?;
+
+            let replicate_spaces = expr_ref(Expression::FunctionCall {
+                name: "REPLICATE".into(),
+                args: vec![
+                    expr_ref(Expression::SingleQuoteStringLiteral(" ".into())),
+                    arg(1)??.0,
+                ],
+            });
+
+            let padded_string = expr_ref(Expression::FunctionCall {
+                name: "CONCAT".into(),
+                args: vec![replicate_spaces, arg(0)??.0],
+            });
+
+            ok(
+                Expression::FunctionCall {
+                    name: "RIGHT".into(),
+                    args: vec![padded_string, arg(1)??.0],
+                },
+                FieldType::Character(len),
+            )
+        }
+
         F::SUBSTR => {
             let len: u32 = match &*arg(2)??.0.borrow() {
                 Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(2)),
