@@ -5,7 +5,7 @@ use crate::{
         BinaryOp, COALESCE_DATE, Error, ExprRef, Expression, FieldType, Parenthesize, Result,
         TranslationContext, expr_ref, ok,
         postgres::{
-            self, get_all_args, get_arg, translate as default_translate, translate_binary_op,
+            self, get_all_args, get_arg, translate as default_translate, translate_binary_op_right,
             wrong_type,
         },
     },
@@ -73,7 +73,7 @@ where
                     FieldType::Logical,
                 )
             }
-            _ => translate_binary_op(self, l, op, r),
+            _ => translate_binary_op_right(self, l, translated_l, ty, op, r),
         }
     }
 }

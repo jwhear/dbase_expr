@@ -532,6 +532,19 @@ pub fn translate_binary_op<T: TranslationContext>(
     op: &ast::BinaryOp,
     r: &ast::Expression,
 ) -> Result {
+    let (l, ty) = translate(ast_l, cx)?;
+    translate_binary_op_right(cx, ast_l, l, ty, op, r)
+}
+
+/// The same as translate_binary_op but useful if you've already translated l and don't want to do it again
+pub fn translate_binary_op_right<T: TranslationContext>(
+    cx: &T,
+    ast_l: &ast::Expression,
+    l: ExprRef,
+    ty: FieldType,
+    op: &ast::BinaryOp,
+    r: &ast::Expression,
+) -> Result {
     let tr_binop = |l, op, r, ty| ok(Expression::BinaryOperator(l, op, r, Parenthesize::Yes), ty);
     let binop = |l, op, r, ty| {
         //OPT: order of operations is preserved by parenthesizing everything.
@@ -539,7 +552,6 @@ pub fn translate_binary_op<T: TranslationContext>(
         let r = translate(r, cx)?.0;
         tr_binop(l, op, r, ty)
     };
-    let (l, ty) = translate(ast_l, cx)?;
     match (op, ty) {
         // For these types, simple addition is fine
         (
