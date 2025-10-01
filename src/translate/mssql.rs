@@ -264,39 +264,58 @@ pub fn translate_binary_op<T: TranslationContext>(
     r: &ast::Expression,
 ) -> Result {
     let (translated_l, ty_l) = cx.translate(l)?;
-    let (translated_r, ty_r) = cx.translate(r)?;
 
-    match (op, &ty_l, &ty_r) {
+    match (op, &ty_l) {
         // Date arithmetic
-        (ast::BinaryOp::Add, FieldType::Date, ty_r) if is_numeric_type(ty_r) => ok(
-            dateadd_expr("day", translated_r, translated_l),
-            FieldType::Date,
-        ),
-        (ast::BinaryOp::Sub, FieldType::Date, ty_r) if is_numeric_type(ty_r) => {
-            let amount = expr_ref(Expression::UnaryOperator(
-                crate::translate::UnaryOp::Neg,
-                translated_r,
-            ));
-            ok(dateadd_expr("day", amount, translated_l), FieldType::Date)
+        (ast::BinaryOp::Add, FieldType::Date) => {
+            let (translated_r, ty_r) = cx.translate(r)?;
+            if is_numeric_type(&ty_r) {
+                ok(
+                    dateadd_expr("day", translated_r, translated_l),
+                    FieldType::Date,
+                )
+            } else {
+                postgres::translate_binary_op_right(cx, l, translated_l, ty_l, op, r)
+            }
         }
-        (ast::BinaryOp::Sub, FieldType::Date, FieldType::Date) => ok(
-            datediff_expr("day", translated_r, translated_l),
-            FieldType::Numeric { len: 99, dec: 0 },
-        ),
+        (ast::BinaryOp::Sub, FieldType::Date) => {
+            let (translated_r, ty_r) = cx.translate(r)?;
+            if is_numeric_type(&ty_r) {
+                let amount = expr_ref(Expression::UnaryOperator(
+                    crate::translate::UnaryOp::Neg,
+                    translated_r,
+                ));
+                ok(dateadd_expr("day", amount, translated_l), FieldType::Date)
+            } else if matches!(ty_r, FieldType::Date) {
+                ok(
+                    datediff_expr("day", translated_r, translated_l),
+                    FieldType::Numeric { len: 99, dec: 0 },
+                )
+            } else {
+                postgres::translate_binary_op_right(cx, l, translated_l, ty_l, op, r)
+            }
+        }
 
         // String operations
-        (ast::BinaryOp::Add, ty_l, _) if is_string_type(ty_l) => ok(
-            concat_expr(vec![translated_l, translated_r]),
-            FieldType::Memo,
-        ),
-        (ast::BinaryOp::Sub, ty_l, _) if is_string_type(ty_l) => ok(
-            string_subtract_expr(translated_l, translated_r),
-            FieldType::Memo,
-        ),
+        (ast::BinaryOp::Add, ty_l) if is_string_type(ty_l) => {
+            let (translated_r, _) = cx.translate(r)?;
+            ok(
+                concat_expr(vec![translated_l, translated_r]),
+                FieldType::Memo,
+            )
+        }
+        (ast::BinaryOp::Sub, ty_l) if is_string_type(ty_l) => {
+            let (translated_r, _) = cx.translate(r)?;
+            ok(
+                string_subtract_expr(translated_l, translated_r),
+                FieldType::Memo,
+            )
+        }
 
         // Contains operation using CHARINDEX (MSSQL equivalent of STRPOS)
         // Note: In CodeBase the haystack is the right operand, needle is left
-        (ast::BinaryOp::Contain, ty_l, _) if is_string_type(ty_l) => {
+        (ast::BinaryOp::Contain, ty_l) if is_string_type(ty_l) => {
+            let (translated_r, _) = cx.translate(r)?;
             let charindex = expr_ref(Expression::FunctionCall {
                 name: "CHARINDEX".into(),
                 args: vec![translated_l, translated_r], // needle, haystack
@@ -320,7 +339,7 @@ pub fn translate_binary_op<T: TranslationContext>(
         }
 
         // For all other operations, delegate to postgres implementation
-        _ => postgres::translate_binary_op(cx, l, op, r),
+        _ => postgres::translate_binary_op_right(cx, l, translated_l, ty_l, op, r),
     }
 }
 
