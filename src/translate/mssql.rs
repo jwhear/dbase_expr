@@ -88,7 +88,7 @@ where
             name: "SUBSTRING".into(),
             args: vec![
                 r,
-                expr_ref(Expression::NumberLiteral("1".to_string())),
+                expr_ref(Expression::NumberLiteral("1".into())),
                 expr_ref(Expression::NumberLiteral(len.to_string())),
             ],
         })
@@ -135,7 +135,7 @@ where
                 _ => {
                     // Not a supported date operation, reconstruct the sequence and fall back to default
                     let mut all_operands =
-                        vec![Box::new(ast::Expression::NumberLiteral("0".to_string()))];
+                        vec![Box::new(ast::Expression::NumberLiteral("0".into()))];
                     all_operands.extend_from_slice(remaining_operands);
                     return default_translate(
                         &ast::Expression::Sequence(all_operands, *concat_op),
@@ -190,7 +190,7 @@ where
 
 fn dateadd_expr(interval: &str, amount: ExprRef, date: ExprRef) -> Expression {
     Expression::FunctionCall {
-        name: "DATEADD".to_string(),
+        name: "DATEADD".into(),
         args: vec![
             expr_ref(Expression::BareFunctionCall(interval.to_string())),
             amount,
@@ -201,7 +201,7 @@ fn dateadd_expr(interval: &str, amount: ExprRef, date: ExprRef) -> Expression {
 
 fn datediff_expr(interval: &str, start_date: ExprRef, end_date: ExprRef) -> Expression {
     Expression::FunctionCall {
-        name: "DATEDIFF".to_string(),
+        name: "DATEDIFF".into(),
         args: vec![
             expr_ref(Expression::BareFunctionCall(interval.to_string())),
             start_date,
@@ -212,22 +212,22 @@ fn datediff_expr(interval: &str, start_date: ExprRef, end_date: ExprRef) -> Expr
 
 fn concat_expr(args: Vec<ExprRef>) -> Expression {
     Expression::FunctionCall {
-        name: "CONCAT".to_string(),
+        name: "CONCAT".into(),
         args,
     }
 }
 
 fn string_subtract_expr(left: ExprRef, right: ExprRef) -> Expression {
     let without_spaces = expr_ref(Expression::FunctionCall {
-        name: "RTRIM".to_string(),
+        name: "RTRIM".into(),
         args: vec![left.clone()],
     });
     let length_without_spaces = expr_ref(Expression::FunctionCall {
-        name: "LEN".to_string(),
+        name: "LEN".into(),
         args: vec![without_spaces.clone()],
     });
     let length_with_spaces = expr_ref(Expression::FunctionCall {
-        name: "DATALENGTH".to_string(),
+        name: "DATALENGTH".into(),
         args: vec![left],
     });
     let num_spaces = expr_ref(Expression::BinaryOperator(
@@ -237,9 +237,9 @@ fn string_subtract_expr(left: ExprRef, right: ExprRef) -> Expression {
         crate::translate::Parenthesize::No,
     ));
     let repeated_spaces = expr_ref(Expression::FunctionCall {
-        name: "REPLICATE".to_string(),
+        name: "REPLICATE".into(),
         args: vec![
-            expr_ref(Expression::SingleQuoteStringLiteral(" ".to_string())),
+            expr_ref(Expression::SingleQuoteStringLiteral(" ".into())),
             num_spaces,
         ],
     });
@@ -317,7 +317,7 @@ pub fn translate_binary_op<T: TranslationContext>(
         (ast::BinaryOp::Contain, ty_l) if is_string_type(ty_l) => {
             let (translated_r, _) = cx.translate(r)?;
             let charindex = expr_ref(Expression::FunctionCall {
-                name: "CHARINDEX".to_string(),
+                name: "CHARINDEX".into(),
                 args: vec![translated_l, translated_r], // needle, haystack
             });
             // Use CASE WHEN for maximum SQL Server compatibility
@@ -327,12 +327,12 @@ pub fn translate_binary_op<T: TranslationContext>(
                         cond: expr_ref(Expression::BinaryOperator(
                             charindex,
                             crate::translate::BinaryOp::Gt,
-                            expr_ref(Expression::NumberLiteral("0".to_string())),
+                            expr_ref(Expression::NumberLiteral("0".into())),
                             crate::translate::Parenthesize::No,
                         )),
-                        then: expr_ref(Expression::NumberLiteral("1".to_string())),
+                        then: expr_ref(Expression::NumberLiteral("1".into())),
                     }],
-                    r#else: expr_ref(Expression::NumberLiteral("0".to_string())),
+                    r#else: expr_ref(Expression::NumberLiteral("0".into())),
                 },
                 FieldType::Logical,
             )
@@ -357,7 +357,7 @@ pub fn translate_fn_call(
         // In SQL Server, CHR is called CHAR
         F::CHR => ok(
             Expression::FunctionCall {
-                name: "CHAR".to_string(),
+                name: "CHAR".into(),
                 args: all_args()?,
             },
             FieldType::Character(1),
@@ -368,9 +368,9 @@ pub fn translate_fn_call(
             Expression::FunctionCall {
                 name: "CONVERT".into(),
                 args: vec![
-                    expr_ref(Expression::BareFunctionCall("date".to_string())),
+                    expr_ref(Expression::BareFunctionCall("date".into())),
                     arg(0)??.0,
-                    expr_ref(Expression::NumberLiteral("101".to_string())), // MM/DD/YY format
+                    expr_ref(Expression::NumberLiteral("101".into())), // MM/DD/YY format
                 ],
             },
             FieldType::Date,
@@ -379,7 +379,7 @@ pub fn translate_fn_call(
         // DATE() => CAST(GETDATE() AS date)
         F::DATE => ok(
             Expression::Cast(
-                expr_ref(Expression::BareFunctionCall("GETDATE()".to_string())),
+                expr_ref(Expression::BareFunctionCall("GETDATE()".into())),
                 "date",
             ),
             FieldType::Date,
@@ -479,16 +479,13 @@ pub fn translate_fn_call(
                 | FieldType::Numeric { .. } => {
                     let coalesce = expr_ref(Expression::FunctionCall {
                         name: "COALESCE".into(),
-                        args: vec![
-                            x.clone(),
-                            expr_ref(Expression::NumberLiteral("0".to_string())),
-                        ],
+                        args: vec![x.clone(), expr_ref(Expression::NumberLiteral("0".into()))],
                     });
                     ok(
                         Expression::BinaryOperator(
                             coalesce,
                             crate::translate::BinaryOp::Eq,
-                            expr_ref(Expression::NumberLiteral("0".to_string())),
+                            expr_ref(Expression::NumberLiteral("0".into())),
                             crate::translate::Parenthesize::No,
                         ),
                         FieldType::Logical,
@@ -509,7 +506,7 @@ pub fn translate_fn_call(
                         Expression::BinaryOperator(
                             coalesce,
                             crate::translate::BinaryOp::Eq,
-                            expr_ref(Expression::NumberLiteral("0".to_string())),
+                            expr_ref(Expression::NumberLiteral("0".into())),
                             crate::translate::Parenthesize::No,
                         ),
                         FieldType::Logical,
@@ -540,11 +537,11 @@ pub fn translate_fn_call(
         // STOD(x) => CONVERT(date, x, 112) -- format 112 is YYYYMMDD
         F::STOD => ok(
             Expression::FunctionCall {
-                name: "CONVERT".to_string(),
+                name: "CONVERT".into(),
                 args: vec![
-                    expr_ref(Expression::BareFunctionCall("date".to_string())),
+                    expr_ref(Expression::BareFunctionCall("date".into())),
                     arg(0)??.0,
-                    expr_ref(Expression::NumberLiteral("112".to_string())), // YYYYMMDD format
+                    expr_ref(Expression::NumberLiteral("112".into())), // YYYYMMDD format
                 ],
             },
             FieldType::Date,
@@ -564,7 +561,7 @@ pub fn translate_fn_call(
             // SQL Server STR function: STR(float_expression, length, decimal)
             ok(
                 Expression::FunctionCall {
-                    name: "STR".to_string(),
+                    name: "STR".into(),
                     args: vec![
                         arg(0)??.0,
                         expr_ref(Expression::NumberLiteral(len.to_string())),
@@ -589,6 +586,35 @@ pub fn translate_fn_call(
             },
             FieldType::Double,
         ),
+
+        // PADL(string, length) => RIGHT(REPLICATE(' ', length) + string, length)
+        F::PADL => {
+            let len: u32 = match &*arg(1)??.0.borrow() {
+                Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(1)),
+                _ => Err(wrong_type(1)),
+            }?;
+
+            let replicate_spaces = expr_ref(Expression::FunctionCall {
+                name: "REPLICATE".into(),
+                args: vec![
+                    expr_ref(Expression::SingleQuoteStringLiteral(" ".into())),
+                    arg(1)??.0,
+                ],
+            });
+
+            let padded_string = expr_ref(Expression::FunctionCall {
+                name: "CONCAT".into(),
+                args: vec![replicate_spaces, arg(0)??.0],
+            });
+
+            ok(
+                Expression::FunctionCall {
+                    name: "RIGHT".into(),
+                    args: vec![padded_string, arg(1)??.0],
+                },
+                FieldType::Character(len),
+            )
+        }
 
         F::SUBSTR => {
             let len: u32 = match &*arg(2)??.0.borrow() {
