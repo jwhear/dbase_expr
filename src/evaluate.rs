@@ -24,7 +24,9 @@ pub enum Error {
 
 #[derive(Clone, PartialEq)]
 pub enum Value {
-    FixedLenFieldStr(String, usize), //this is needed because fixed-length fields only compare the first n characters of the right side, where n is the field length
+    // FixedLenStr is needed because fixed-length fields only compare the first n characters of the right side, where n is the field length
+    // String literals on the left side of an expression are treated as fixed-length strings unless modified by functions like LEFT, TRIM, etc.
+    FixedLenStr(String, usize),
     Str(String),
     Bool(bool),
     Number(f64),
@@ -37,7 +39,7 @@ pub enum Value {
 impl Debug for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Value::FixedLenFieldStr(s, len) => {
+            Value::FixedLenStr(s, len) => {
                 write!(
                     f,
                     "FixedLenFieldString: '{}', Length: {}",
@@ -105,10 +107,13 @@ pub fn evaluate(
                         .map_err(|e| Error::FloatParseError(e.to_string()))?,
                 ),
 
-                Expression::StringLiteral(s) => results.push(Value::Str(s.clone())),
+                Expression::StringLiteral(s) => {
+                    // string literals are treated as fixed length strings unless modified by functions like LEFT, TRIM, etc.
+                    results.push(Value::FixedLenStr(s.clone(), s.len()))
+                }
 
                 Expression::Field { name, .. } => match get(name) {
-                    Some(Value::FixedLenFieldStr(s, len)) => {
+                    Some(Value::FixedLenStr(s, len)) => {
                         let padded = if s.len() < len {
                             let mut padded = s.to_string();
                             padded.extend(std::iter::repeat_n(' ', len - s.len()));
@@ -116,7 +121,7 @@ pub fn evaluate(
                         } else {
                             s.chars().take(len).collect()
                         };
-                        results.push(Value::FixedLenFieldStr(padded, len)) // fixed-length field are starts with unless trimmed
+                        results.push(Value::FixedLenStr(padded, len))
                     }
                     Some(v) => results.push(v),
                     None => return Err(Error::FieldNotFound(name.to_string())),
@@ -217,7 +222,7 @@ fn eval_function(
 ) -> Result<Value, Error> {
     match name {
         F::LTRIM => match args {
-            [Value::Str(s) | Value::FixedLenFieldStr(s, _)] => {
+            [Value::Str(s) | Value::FixedLenStr(s, _)] => {
                 Ok(Value::Str(s.trim_start().to_string()))
             }
             _ => Err(Error::InvalidArguments(
@@ -227,9 +232,7 @@ fn eval_function(
         },
 
         F::TRIM | F::RTRIM => match args {
-            [Value::Str(s) | Value::FixedLenFieldStr(s, _)] => {
-                Ok(Value::Str(s.trim_end().to_string()))
-            }
+            [Value::Str(s) | Value::FixedLenStr(s, _)] => Ok(Value::Str(s.trim_end().to_string())),
             _ => Err(Error::InvalidArguments(
                 name.clone(),
                 "RTRIM expects a single string argument".to_string(),
@@ -237,7 +240,7 @@ fn eval_function(
         },
 
         F::ALLTRIM => match args {
-            [Value::Str(s) | Value::FixedLenFieldStr(s, _)] => Ok(Value::Str(s.trim().to_string())),
+            [Value::Str(s) | Value::FixedLenStr(s, _)] => Ok(Value::Str(s.trim().to_string())),
             _ => Err(Error::InvalidArguments(
                 name.clone(),
                 "ALLTRIM expects a single string argument".to_string(),
@@ -256,7 +259,7 @@ fn eval_function(
         },
 
         F::CTOD | F::STOD => match args {
-            [Value::Str(s) | Value::FixedLenFieldStr(s, _)] => {
+            [Value::Str(s) | Value::FixedLenStr(s, _)] => {
                 if s.trim().is_empty() {
                     Ok(Value::Date(None))
                 } else {
@@ -289,11 +292,11 @@ fn eval_function(
                     None => " ".repeat(len),
                 };
                 let len = if name == &F::DTOC { 10 } else { 8 };
-                Ok(Value::FixedLenFieldStr(text, len))
+                Ok(Value::FixedLenStr(text, len))
             }
             [Value::Null] => {
                 let len: usize = if name == &F::DTOC { 10 } else { 8 };
-                Ok(Value::FixedLenFieldStr("".to_string(), len))
+                Ok(Value::FixedLenStr("".to_string(), len))
             }
             _ => Err(Error::InvalidArguments(
                 name.clone(),
@@ -321,7 +324,7 @@ fn eval_function(
         },
 
         F::EMPTY => match args {
-            [Value::FixedLenFieldStr(s, _) | Value::Str(s)] => Ok(Value::Bool(s.trim().is_empty())),
+            [Value::FixedLenStr(s, _) | Value::Str(s)] => Ok(Value::Bool(s.trim().is_empty())),
             _ => Err(Error::InvalidArguments(
                 name.clone(),
                 "EMPTY expects a single string argument".to_string(),
@@ -329,10 +332,7 @@ fn eval_function(
         },
 
         F::LEFT => match args {
-            [
-                Value::FixedLenFieldStr(s, _) | Value::Str(s),
-                Value::Number(n),
-            ] => {
+            [Value::FixedLenStr(s, _) | Value::Str(s), Value::Number(n)] => {
                 let n = *n as usize;
                 Ok(Value::Str(s.chars().take(n).collect()))
             }
@@ -347,10 +347,7 @@ fn eval_function(
         },
 
         F::PADL => match args {
-            [
-                Value::Str(s) | Value::FixedLenFieldStr(s, _),
-                Value::Number(n),
-            ] => {
+            [Value::Str(s) | Value::FixedLenStr(s, _), Value::Number(n)] => {
                 let n = *n as usize;
                 let mut padded = s.chars().take(n).collect::<String>();
                 if padded.len() < n {
@@ -365,10 +362,9 @@ fn eval_function(
         },
 
         F::RIGHT => match args {
-            [
-                Value::Str(s) | Value::FixedLenFieldStr(s, _),
-                Value::Number(n),
-            ] => Ok(Value::Str(right_str_n(s, *n))),
+            [Value::Str(s) | Value::FixedLenStr(s, _), Value::Number(n)] => {
+                Ok(Value::Str(right_str_n(s, *n)))
+            }
             [Value::Number(v), Value::Number(n)] => Ok(Value::Str(right_str_n(&v.to_string(), *n))),
             _ => Err(Error::InvalidArguments(
                 name.clone(),
@@ -378,7 +374,7 @@ fn eval_function(
 
         F::SUBSTR => match args {
             [
-                Value::FixedLenFieldStr(s, _) | Value::Str(s),
+                Value::FixedLenStr(s, _) | Value::Str(s),
                 Value::Number(start),
                 Value::Number(len),
             ] => {
@@ -394,9 +390,7 @@ fn eval_function(
         },
 
         F::UPPER => match args {
-            [Value::FixedLenFieldStr(s, len)] => {
-                Ok(Value::FixedLenFieldStr(s.to_uppercase(), *len))
-            }
+            [Value::FixedLenStr(s, len)] => Ok(Value::FixedLenStr(s.to_uppercase(), *len)),
             [Value::Str(s)] => Ok(Value::Str(s.to_uppercase())),
             _ => Err(Error::InvalidArguments(
                 name.clone(),
@@ -437,7 +431,7 @@ fn eval_function(
         },
 
         F::VAL => match args {
-            [Value::FixedLenFieldStr(s, _) | Value::Str(s)] => match s.trim().parse::<f64>() {
+            [Value::FixedLenStr(s, _) | Value::Str(s)] => match s.trim().parse::<f64>() {
                 Ok(v) => Ok(Value::Number(v)),
                 Err(_) => {
                     if s.trim().chars().all(|c| c == 'F' || c == 'f') {
@@ -463,8 +457,8 @@ fn eval_function(
                 let chosen = if *cond { when_true } else { when_false };
                 let value = match (when_true, when_false) {
                     (
-                        Value::FixedLenFieldStr(str_true, len_true),
-                        Value::FixedLenFieldStr(str_false, len_false),
+                        Value::FixedLenStr(str_true, len_true),
+                        Value::FixedLenStr(str_false, len_false),
                     ) => {
                         let max_len = *len_true.max(len_false); //get the max of the two because the length shouldn't depend on the values
                         let mut str_value = if *cond {
@@ -475,7 +469,7 @@ fn eval_function(
                         if str_value.len() < max_len {
                             str_value.extend(std::iter::repeat_n(' ', max_len - str_value.len()));
                         }
-                        Value::FixedLenFieldStr(str_value, max_len)
+                        Value::FixedLenStr(str_value, max_len)
                     }
                     _ => chosen.clone(),
                 };
@@ -544,15 +538,15 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
                     None => Ok(Value::Date(None)), //n + null = null
                 }
             }
-            (Value::FixedLenFieldStr(a, len_a), Value::FixedLenFieldStr(b, len_b)) => {
+            (Value::FixedLenStr(a, len_a), Value::FixedLenStr(b, len_b)) => {
                 let mut result = a.clone();
                 if result.len() < len_a {
                     result.extend(std::iter::repeat_n(' ', len_a - result.len()));
                 }
                 result.push_str(&b);
-                Ok(Value::FixedLenFieldStr(result, len_a + len_b))
+                Ok(Value::FixedLenStr(result, len_a + len_b))
             }
-            (Value::FixedLenFieldStr(a, len_a), Value::Str(b)) => {
+            (Value::FixedLenStr(a, len_a), Value::Str(b)) => {
                 let mut result = a.clone();
                 if result.len() < len_a {
                     result.extend(std::iter::repeat_n(' ', len_a - result.len()));
@@ -560,7 +554,7 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
                 result.push_str(&b);
                 Ok(Value::Str(result))
             }
-            (Value::Str(a), Value::FixedLenFieldStr(b, _) | Value::Str(b)) => {
+            (Value::Str(a), Value::FixedLenStr(b, _) | Value::Str(b)) => {
                 let mut result = a.clone();
                 result.push_str(&b);
                 Ok(Value::Str(result))
@@ -628,12 +622,12 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
         },
 
         BinaryOp::Eq | BinaryOp::Ne => Ok(Bool(match (left, right) {
-            (FixedLenFieldStr(a, a_len), Str(b) | FixedLenFieldStr(b, _)) => {
+            (FixedLenStr(a, a_len), Str(b) | FixedLenStr(b, _)) => {
                 let a_adjusted = with_len(&a, a_len);
                 let b_adjusted = with_len(&b, a_len);
                 cmp(&a_adjusted, &b_adjusted, op)
             }
-            (Str(a), Str(b) | FixedLenFieldStr(b, _)) => cmp(&a, &b, op),
+            (Str(a), Str(b) | FixedLenStr(b, _)) => cmp(&a, &b, op),
             (l, r) => match op {
                 BinaryOp::Eq => l == r,
                 BinaryOp::Ne => l != r,
@@ -643,12 +637,12 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
 
         BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => match (left, right) {
             (Number(a), Number(b)) => Ok(Bool(cmp(a, b, op))),
-            (FixedLenFieldStr(a, a_len), FixedLenFieldStr(b, _) | Str(b)) => {
+            (FixedLenStr(a, a_len), FixedLenStr(b, _) | Str(b)) => {
                 let a_adjusted = with_len(&a, a_len);
                 let b_adjusted = with_len(&b, a_len);
                 Ok(Bool(cmp(&a_adjusted, &b_adjusted, op)))
             }
-            (Str(a), FixedLenFieldStr(b, _) | Str(b)) => Ok(Bool(cmp(&a, &b, op))),
+            (Str(a), FixedLenStr(b, _) | Str(b)) => Ok(Bool(cmp(&a, &b, op))),
             (Date(a), Date(b)) => Ok(Bool(cmp(&a, &b, op))),
             _ => Err(Error::IncompatibleBinaryOp(
                 *op,
@@ -657,10 +651,9 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
         },
 
         BinaryOp::Contain => match (left, right) {
-            (
-                FixedLenFieldStr(needle, _) | Str(needle),
-                FixedLenFieldStr(haystack, _) | Str(haystack),
-            ) => Ok(Bool(haystack.contains(&needle))),
+            (FixedLenStr(needle, _) | Str(needle), FixedLenStr(haystack, _) | Str(haystack)) => {
+                Ok(Bool(haystack.contains(&needle)))
+            }
             _ => Err(Error::IncompatibleBinaryOp(
                 BinaryOp::Contain,
                 "Contain requires string operands".to_string(),
