@@ -623,9 +623,17 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
 
         BinaryOp::Eq | BinaryOp::Ne => Ok(Bool(match (left, right) {
             (FixedLenStr(a, a_len), Str(b) | FixedLenStr(b, _)) => {
-                let a_adjusted = with_len(&a, a_len);
-                let b_adjusted = with_len(&b, a_len);
-                cmp(&a_adjusted, &b_adjusted, op)
+                if a.len() == 0 {
+                    //codebase quirk: a starts-with with a blank string would always be true, but it's not. it doesn't use starts-with in this scenario
+                    cmp(a.as_str(), &b, op)
+                } else {
+                    let a_adjusted = with_len(&a, b.len()); //trims a to the length of b,effectively turning it into a starts-with
+                    //pad them both out now to the len of a (or trim if for some reason it's longer)
+                    //now they are both the same length but it's still in the pattern of a starts-with b
+                    let a_adjusted = with_len(&a_adjusted, a_len);
+                    let b_adjusted = with_len(&b, a_len);
+                    cmp(&a_adjusted, &b_adjusted, op)
+                }
             }
             (Str(a), Str(b) | FixedLenStr(b, _)) => cmp(&a, &b, op),
             (l, r) => match op {
