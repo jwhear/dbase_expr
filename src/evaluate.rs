@@ -29,7 +29,7 @@ pub enum Value {
     FixedLenStr(String, usize),
     Str(String),
     Bool(bool),
-    Number(f64),
+    Number(f64, bool), //value, is_field_value; the is_field_value determines if it is a raw field value and thus type 'N' instead of 'n'
     Date(Option<NaiveDate>),
     DateParseError(String), // this is used to indicate a date parsing error but to match codebase, we treat it as julian day zero for equations
     Blob(Vec<u8>),
@@ -49,7 +49,7 @@ impl Debug for Value {
             }
             Value::Str(s) => write!(f, "String: '{}'", s.replace('\'', "''")),
             Value::Bool(b) => write!(f, "Boolean: {}", if *b { ".T." } else { ".F." }),
-            Value::Number(n) => write!(f, "Number: {}", n),
+            Value::Number(n, _) => write!(f, "Number: {}", n),
             Value::Date(d) => write!(
                 f,
                 "Date: {}",
@@ -100,10 +100,10 @@ pub fn evaluate(
             EvalState::Expr(e) => match e {
                 Expression::BoolLiteral(b) => results.push(Value::Bool(*b)),
 
-                Expression::NumberLiteral(s) if s == "." => results.push(Value::Number(0.0)),
+                Expression::NumberLiteral(s) if s == "." => results.push(Value::Number(0.0, false)),
                 Expression::NumberLiteral(s) => results.push(
                     s.parse::<f64>()
-                        .map(Value::Number)
+                        .map(|v| Value::Number(v, false))
                         .map_err(|e| Error::FloatParseError(e.to_string()))?,
                 ),
 
@@ -160,7 +160,7 @@ pub fn evaluate(
                 let val = results.pop().unwrap();
                 let result = match (op, val) {
                     (UnaryOp::Not, Value::Bool(b)) => Value::Bool(!b),
-                    (UnaryOp::Neg, Value::Number(n)) => Value::Number(-n),
+                    (UnaryOp::Neg, Value::Number(n, _)) => Value::Number(-n, false),
                     _ => return Err(Error::InvalidUnaryOp(op)),
                 };
                 results.push(result);
@@ -248,7 +248,7 @@ fn eval_function(
         },
 
         F::CHR => match args {
-            [Value::Number(n)] => {
+            [Value::Number(n, _)] => {
                 let ch = (*n as u8) as char;
                 Ok(Value::Str(ch.to_string()))
             }
@@ -313,9 +313,9 @@ fn eval_function(
                         F::YEAR => date.year() as f64,
                         _ => unreachable!(),
                     };
-                    Ok(Value::Number(result))
+                    Ok(Value::Number(result, false))
                 }
-                None => Ok(Value::Number(0.0)),
+                None => Ok(Value::Number(0.0, false)),
             },
             _ => Err(Error::InvalidArguments(
                 name.clone(),
@@ -332,11 +332,14 @@ fn eval_function(
         },
 
         F::LEFT => match args {
-            [Value::FixedLenStr(s, _) | Value::Str(s), Value::Number(n)] => {
+            [
+                Value::FixedLenStr(s, _) | Value::Str(s),
+                Value::Number(n, _),
+            ] => {
                 let n = *n as usize;
                 Ok(Value::Str(s.chars().take(n).collect()))
             }
-            [Value::Number(v), Value::Number(n)] => {
+            [Value::Number(v, _), Value::Number(n, _)] => {
                 let n = *n as usize;
                 Ok(Value::Str(v.to_string().chars().take(n).collect()))
             }
@@ -347,7 +350,10 @@ fn eval_function(
         },
 
         F::PADL => match args {
-            [Value::Str(s) | Value::FixedLenStr(s, _), Value::Number(n)] => {
+            [
+                Value::Str(s) | Value::FixedLenStr(s, _),
+                Value::Number(n, _),
+            ] => {
                 let n = *n as usize;
                 let mut padded = s.chars().take(n).collect::<String>();
                 if padded.len() < n {
@@ -362,10 +368,13 @@ fn eval_function(
         },
 
         F::RIGHT => match args {
-            [Value::Str(s) | Value::FixedLenStr(s, _), Value::Number(n)] => {
-                Ok(Value::Str(right_str_n(s, *n)))
+            [
+                Value::Str(s) | Value::FixedLenStr(s, _),
+                Value::Number(n, _),
+            ] => Ok(Value::Str(right_str_n(s, *n))),
+            [Value::Number(v, _), Value::Number(n, _)] => {
+                Ok(Value::Str(right_str_n(&v.to_string(), *n)))
             }
-            [Value::Number(v), Value::Number(n)] => Ok(Value::Str(right_str_n(&v.to_string(), *n))),
             _ => Err(Error::InvalidArguments(
                 name.clone(),
                 "RIGHT expects (string, number) or (number, number)".to_string(),
@@ -375,8 +384,8 @@ fn eval_function(
         F::SUBSTR => match args {
             [
                 Value::FixedLenStr(s, _) | Value::Str(s),
-                Value::Number(start),
-                Value::Number(len),
+                Value::Number(start, _),
+                Value::Number(len, _),
             ] => {
                 let start = (*start as usize).saturating_sub(1);
                 let len = *len as usize;
@@ -399,11 +408,15 @@ fn eval_function(
         },
 
         F::STR => match args {
-            [Value::Number(n)] => {
+            [Value::Number(n, _)] => {
                 let fmt = format!("{:width$.prec$}", n, width = 10, prec = 0); // DBASE defaults: https://www.dbase.com/downloads/dBLLanguageReference2.6.pdf
                 Ok(Value::Str(fmt.trim_end().to_string()))
             }
-            [Value::Number(n), Value::Number(len), Value::Number(dec)] => {
+            [
+                Value::Number(n, _),
+                Value::Number(len, _),
+                Value::Number(dec, _),
+            ] => {
                 let len = (*len).max(0.0) as usize;
                 let mut dec = (*dec).max(0.0) as usize;
                 dec = dec.min(15);
@@ -432,10 +445,10 @@ fn eval_function(
 
         F::VAL => match args {
             [Value::FixedLenStr(s, _) | Value::Str(s)] => match s.trim().parse::<f64>() {
-                Ok(v) => Ok(Value::Number(v)),
+                Ok(v) => Ok(Value::Number(v, false)),
                 Err(_) => {
                     if s.trim().chars().all(|c| c == 'F' || c == 'f') {
-                        Ok(Value::Number(0.0)) // these are placeholders for float, we'll just use 0.0
+                        Ok(Value::Number(0.0, false)) // these are placeholders for float, we'll just use 0.0
                     } else {
                         Err(Error::InvalidArguments(
                             name.clone(),
@@ -484,7 +497,7 @@ fn eval_function(
         // DELETED() => __deleted
         F::DELETED => Ok(get("__deleted").unwrap_or(Value::Bool(false))),
 
-        F::RECNO => Ok(get("RECNO5").unwrap_or(Value::Number(0.0))),
+        F::RECNO => Ok(get("RECNO5").unwrap_or(Value::Number(0.0, true))),
 
         F::Unknown(unknown) => match custom_functions(unknown) {
             Some(v) => evaluate(&v, get, custom_functions),
@@ -514,8 +527,8 @@ use Value::*;
 fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Error> {
     match op {
         BinaryOp::Add => match (left, right) {
-            (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a + b)),
-            (Value::Date(d), Value::Number(n)) => {
+            (Value::Number(a, _), Value::Number(b, _)) => Ok(Value::Number(a + b, false)),
+            (Value::Date(d), Value::Number(n, false)) => {
                 match d {
                     Some(d) => {
                         // Add n days to date
@@ -527,7 +540,7 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
                     None => Ok(Value::Date(None)), //null + n = null
                 }
             }
-            (Value::Number(n), Value::Date(d)) => {
+            (Value::Number(n, _), Value::Date(d)) => {
                 match d {
                     Some(d) => {
                         let ndays = n as i64;
@@ -565,8 +578,8 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
             )),
         },
         BinaryOp::Sub => match (left, right) {
-            (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a - b)),
-            (Value::Date(d), Value::Number(n)) => {
+            (Value::Number(a, _), Value::Number(b, _)) => Ok(Value::Number(a - b, false)),
+            (Value::Date(d), Value::Number(n, _)) => {
                 match d {
                     Some(d) => {
                         // Subtract n days from date
@@ -581,32 +594,32 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
             (Value::Date(Some(d1)), Value::Date(Some(d2))) => {
                 // Difference in days as float
                 let duration = d1.signed_duration_since(d2);
-                Ok(Value::Number(duration.num_days() as f64))
+                Ok(Value::Number(duration.num_days() as f64, false))
             }
             (Value::Date(Some(d1)), Value::DateParseError(_)) => {
                 // Difference in days as float
-                Ok(Value::Number(days_since_jd0(d1) as f64))
+                Ok(Value::Number(days_since_jd0(d1) as f64, false))
             }
             (Value::DateParseError(_), Value::Date(Some(d1))) => {
                 // Difference in days as float
-                Ok(Value::Number(-days_since_jd0(d1) as f64))
+                Ok(Value::Number(-days_since_jd0(d1) as f64, false))
             }
-            (Value::DateParseError(_), Value::DateParseError(_)) => Ok(Value::Number(0.0)),
+            (Value::DateParseError(_), Value::DateParseError(_)) => Ok(Value::Number(0.0, false)),
             _ => Err(Error::IncompatibleBinaryOp(
                 BinaryOp::Sub,
                 "Incompatible types".to_string(),
             )),
         },
         BinaryOp::Mul => match (left, right) {
-            (Number(a), Number(b)) => Ok(Number(a * b)),
+            (Number(a, _), Number(b, _)) => Ok(Number(a * b, false)),
             _ => Err(Error::IncompatibleBinaryOp(
                 BinaryOp::Mul,
                 "Incompatible types".to_string(),
             )),
         },
         BinaryOp::Div => match (left, right) {
-            (Number(_), Number(0.0)) => Ok(Number(f64::NAN)),
-            (Number(a), Number(b)) => Ok(Number(a / b)),
+            (Number(_, _), Number(0.0, _)) => Ok(Number(f64::NAN, false)),
+            (Number(a, _), Number(b, _)) => Ok(Number(a / b, false)),
             _ => Err(Error::IncompatibleBinaryOp(
                 BinaryOp::Div,
                 "Incompatible types".to_string(),
@@ -614,7 +627,7 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
         },
 
         BinaryOp::Exp => match (left, right) {
-            (Number(a), Number(b)) => Ok(Number(a.powf(b))),
+            (Number(a, _), Number(b, _)) => Ok(Number(a.powf(b), false)),
             _ => Err(Error::IncompatibleBinaryOp(
                 BinaryOp::Exp,
                 "Incompatible types".to_string(),
@@ -623,9 +636,17 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
 
         BinaryOp::Eq | BinaryOp::Ne => Ok(Bool(match (left, right) {
             (FixedLenStr(a, a_len), Str(b) | FixedLenStr(b, _)) => {
-                let a_adjusted = with_len(&a, a_len);
-                let b_adjusted = with_len(&b, a_len);
-                cmp(&a_adjusted, &b_adjusted, op)
+                if a.len() == 0 {
+                    //codebase quirk: a starts-with with a blank string would always be true, but it's not. it doesn't use starts-with in this scenario
+                    cmp(a.as_str(), &b, op)
+                } else {
+                    let a_adjusted = with_len(&a, b.len()); //trims a to the length of b,effectively turning it into a starts-with
+                    //pad them both out now to the len of a (or trim if for some reason it's longer)
+                    //now they are both the same length but it's still in the pattern of a starts-with b
+                    let a_adjusted = with_len(&a_adjusted, a_len);
+                    let b_adjusted = with_len(&b, a_len);
+                    cmp(&a_adjusted, &b_adjusted, op)
+                }
             }
             (Str(a), Str(b) | FixedLenStr(b, _)) => cmp(&a, &b, op),
             (l, r) => match op {
@@ -636,7 +657,7 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
         })),
 
         BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => match (left, right) {
-            (Number(a), Number(b)) => Ok(Bool(cmp(a, b, op))),
+            (Number(a, _), Number(b, _)) => Ok(Bool(cmp(a, b, op))),
             (FixedLenStr(a, a_len), FixedLenStr(b, _) | Str(b)) => {
                 let a_adjusted = with_len(&a, a_len);
                 let b_adjusted = with_len(&b, a_len);
@@ -685,7 +706,7 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
         BinaryOp::Or => {
             let left_bool = match left {
                 Value::Bool(b) => b,
-                Value::Number(n) => n != 0.0,
+                Value::Number(n, _) => n != 0.0,
                 _ => {
                     return Err(Error::IncompatibleBinaryOp(
                         BinaryOp::Or,
@@ -695,7 +716,7 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
             };
             let right_bool = match right {
                 Value::Bool(b) => b,
-                Value::Number(n) => n != 0.0,
+                Value::Number(n, _) => n != 0.0,
                 _ => {
                     return Err(Error::IncompatibleBinaryOp(
                         BinaryOp::Or,
@@ -793,13 +814,13 @@ mod tests {
     //TODO: implement using decimal type and uncomment; KOB-78
     #[test]
     fn precision() {
-        assert_eq!(eval(".1 + 0.2"), Ok(Value::Number(0.3)));
+        assert_eq!(eval(".1 + 0.2"), Ok(Value::Number(0.3, false)));
         assert_eq!(eval(".1 + 0.2 = 000.3"), TRUE);
     }
 
     #[test]
     fn multiple_signs() {
-        assert_eq!(eval("-2"), Ok(Value::Number(-2.0)));
+        assert_eq!(eval("-2"), Ok(Value::Number(-2.0, false)));
         // Not allowed to stack signs; Codebase actually allows this but only
         //  because it's doing something very unexpected
         assert_any_err("--2"); // CB evals this to -2
