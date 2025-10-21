@@ -89,14 +89,7 @@ pub fn translate<C: TranslationContext>(source: &E, cx: &C) -> Result {
             let (name, field_type) = cx
                 .lookup_field(alias.as_deref(), name)
                 .map_err(Error::Other)?;
-            ok(
-                Expression::Field {
-                    alias: alias.clone(),
-                    name,
-                    field_type,
-                },
-                field_type,
-            )
+            ok(Expression::Field { name, field_type }, field_type)
         }
         E::UnaryOperator(op, r) => match op {
             ast::UnaryOp::Not => ok(
@@ -204,14 +197,10 @@ pub fn translate_fn_call(
             FieldType::Double,
         ),
         // DELETED() => __deleted
-        F::DELETED => ok(
-            Expression::Field {
-                alias: None,
-                name: "__deleted".into(),
-                field_type: FieldType::Logical,
-            },
-            FieldType::Logical,
-        ),
+        F::DELETED => {
+            let (name, field_type) = cx.lookup_field(None, "__deleted").map_err(Error::Other)?;
+            ok(Expression::Field { name, field_type }, field_type)
+        }
 
         // DTOC(x) => TO_CHAR(x, 'MM/DD/YY')
         F::DTOC => {
@@ -399,14 +388,10 @@ pub fn translate_fn_call(
         ),
 
         // RECNO() => RECNO5
-        F::RECNO => ok(
-            Expression::Field {
-                alias: None,
-                name: "RECNO5".into(),
-                field_type: FieldType::Integer,
-            },
-            FieldType::Integer,
-        ),
+        F::RECNO => {
+            let (name, field_type) = cx.lookup_field(None, "RECNO5").map_err(Error::Other)?;
+            ok(Expression::Field { name, field_type }, field_type)
+        }
 
         // RIGHT(x, n) => RIGHT(x, n)
         F::RIGHT => {
