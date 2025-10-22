@@ -79,7 +79,6 @@ pub enum Expression {
     NumberLiteral(String),
     SingleQuoteStringLiteral(String),
     Field {
-        alias: Option<String>,
         name: String,
         field_type: FieldType,
     },

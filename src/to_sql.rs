@@ -202,22 +202,13 @@ impl ToSQL for Expression {
             Expression::NumberLiteral(v) => write!(out, "{v}"),
             Expression::SingleQuoteStringLiteral(v) => write!(out, "'{v}'"),
 
-            Expression::Field {
-                alias,
-                name,
-                field_type,
-            } => {
-                let full_name = if let Some(alias) = alias {
-                    format!("{alias}.\"{name}\"")
-                } else {
-                    format!("\"{name}\"")
-                };
+            Expression::Field { name, field_type } => {
                 if let FieldType::Character(width) = field_type {
-                    conf.context.write_padding(out, &full_name, *width)
+                    conf.context.write_padding(out, &name, *width)
                 } else if let FieldType::Date = field_type {
-                    conf.context.coalesce_date(out, &full_name)
+                    conf.context.coalesce_date(out, &name)
                 } else {
-                    out.write_str(&full_name)
+                    out.write_str(&name)
                 }
             }
             Expression::UnaryOperator(op, exp) => {
