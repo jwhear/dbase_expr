@@ -6,8 +6,8 @@ use crate::{
 };
 
 // Simple value lookup for evaluation
-fn value_lookup() -> impl Fn(&str) -> Option<Value> {
-    |field_name: &str| -> Option<Value> {
+fn value_lookup() -> impl Fn(Option<&str>, &str) -> Option<Value> {
+    |_alias: Option<&str>, field_name: &str| -> Option<Value> {
         match field_name.to_uppercase().as_str() {
             "B_T" => Some(Value::Bool(true)),
             "B_F" => Some(Value::Bool(false)),

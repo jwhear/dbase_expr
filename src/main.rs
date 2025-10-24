@@ -180,7 +180,7 @@ fn expr_tests() {
         ".1 + 0.2 = 000.3",
     ];
 
-    let value_lookup = |field_name: &str| -> Option<evaluate::Value> {
+    let value_lookup = |_alias: Option<&str>, field_name: &str| -> Option<evaluate::Value> {
         match field_name.to_uppercase().as_str() {
             "B_T" => Some(evaluate::Value::Bool(true)),
             "B_F" => Some(evaluate::Value::Bool(false)),
