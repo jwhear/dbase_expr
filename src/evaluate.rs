@@ -62,7 +62,7 @@ impl Debug for Value {
     }
 }
 
-pub type FieldValueGetter<'a> = &'a dyn Fn(&str) -> Option<Value>;
+pub type FieldValueGetter<'a> = &'a dyn Fn(Option<&str>, &str) -> Option<Value>;
 pub type CustomFunctions<'a> = &'a dyn Fn(&str) -> Option<Expression>;
 
 pub fn evaluate(
@@ -112,7 +112,7 @@ pub fn evaluate(
                     results.push(Value::FixedLenStr(s.clone(), s.len()))
                 }
 
-                Expression::Field { name, .. } => match get(name) {
+                Expression::Field { alias, name, .. } => match get(alias.as_deref(), name) {
                     Some(Value::FixedLenStr(s, len)) => {
                         let padded = if s.len() < len {
                             let mut padded = s.to_string();
@@ -495,9 +495,9 @@ fn eval_function(
         },
 
         // DELETED() => __deleted
-        F::DELETED => Ok(get("__deleted").unwrap_or(Value::Bool(false))),
+        F::DELETED => Ok(get(None, "__deleted").unwrap_or(Value::Bool(false))),
 
-        F::RECNO => Ok(get("RECNO5").unwrap_or(Value::Number(0.0, true))),
+        F::RECNO => Ok(get(None, "RECNO5").unwrap_or(Value::Number(0.0, true))),
 
         F::Unknown(unknown) => match custom_functions(unknown) {
             Some(v) => evaluate(&v, get, custom_functions),
@@ -779,7 +779,7 @@ mod tests {
     fn eval(expr: &str) -> Result<Value, Error> {
         use crate::{ast, grammar::ExprParser};
         let parser = ExprParser::new();
-        let value_lookup = |_: &str| -> Option<Value> { None };
+        let value_lookup = |_: Option<&str>, _: &str| -> Option<Value> { None };
         let custom_functions = |_: &str| -> Option<Expression> { None };
         match parser.parse(expr) {
             Ok(t) => {
