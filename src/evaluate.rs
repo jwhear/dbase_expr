@@ -22,7 +22,7 @@ pub enum Error {
     Other(String),
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub enum Value {
     // FixedLenStr is needed because fixed-length fields only compare the first n characters of the right side, where n is the field length
     // String literals on the left side of an expression are treated as fixed-length strings unless modified by functions like LEFT, TRIM, etc.
@@ -34,6 +34,33 @@ pub enum Value {
     DateParseError(String), // this is used to indicate a date parsing error but to match codebase, we treat it as julian day zero for equations
     Blob(Vec<u8>),
     Null,
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::FixedLenStr(l, l_len), Self::FixedLenStr(r, _) | Self::Str(r)) => {
+                if l.len() == 0 {
+                    //codebase quirk: a starts-with with a blank string would always be true, but it's not. it doesn't use starts-with in this scenario
+                    cmp(l.as_str(), &r, &BinaryOp::Eq)
+                } else {
+                    let a_adjusted = with_len(&l, r.len()); //trims a to the length of b,effectively turning it into a starts-with
+                    //pad them both out now to the len of a (or trim if for some reason it's longer)
+                    //now they are both the same length but it's still in the pattern of a starts-with b
+                    let a_adjusted = with_len(&a_adjusted, *l_len);
+                    let b_adjusted = with_len(&r, *l_len);
+                    cmp(&a_adjusted, &b_adjusted, &BinaryOp::Eq)
+                }
+            }
+            (Self::Str(l), Self::Str(r) | Self::FixedLenStr(r, _)) => cmp(l, r, &BinaryOp::Eq),
+            (Self::Bool(l), Self::Bool(r)) => l == r,
+            (Self::Number(l, _), Self::Number(r, _)) => l == r,
+            (Self::Date(l), Self::Date(r)) => l == r,
+            (Self::DateParseError(l), Self::DateParseError(r)) => l == r,
+            (Self::Blob(l), Self::Blob(r)) => l == r,
+            _ => core::mem::discriminant(self) == core::mem::discriminant(other),
+        }
+    }
 }
 
 impl Debug for Value {
@@ -634,27 +661,8 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
             )),
         },
 
-        BinaryOp::Eq | BinaryOp::Ne => Ok(Bool(match (left, right) {
-            (FixedLenStr(a, a_len), Str(b) | FixedLenStr(b, _)) => {
-                if a.len() == 0 {
-                    //codebase quirk: a starts-with with a blank string would always be true, but it's not. it doesn't use starts-with in this scenario
-                    cmp(a.as_str(), &b, op)
-                } else {
-                    let a_adjusted = with_len(&a, b.len()); //trims a to the length of b,effectively turning it into a starts-with
-                    //pad them both out now to the len of a (or trim if for some reason it's longer)
-                    //now they are both the same length but it's still in the pattern of a starts-with b
-                    let a_adjusted = with_len(&a_adjusted, a_len);
-                    let b_adjusted = with_len(&b, a_len);
-                    cmp(&a_adjusted, &b_adjusted, op)
-                }
-            }
-            (Str(a), Str(b) | FixedLenStr(b, _)) => cmp(&a, &b, op),
-            (l, r) => match op {
-                BinaryOp::Eq => l == r,
-                BinaryOp::Ne => l != r,
-                _ => unreachable!(),
-            },
-        })),
+        BinaryOp::Eq => Ok(Bool(left == right)),
+        BinaryOp::Ne => Ok(Bool(left != right)),
 
         BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => match (left, right) {
             (Number(a, _), Number(b, _)) => Ok(Bool(cmp(a, b, op))),
