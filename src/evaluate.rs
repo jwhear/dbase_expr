@@ -58,7 +58,8 @@ impl PartialEq for Value {
             (Self::Date(l), Self::Date(r)) => l == r,
             (Self::DateParseError(l), Self::DateParseError(r)) => l == r,
             (Self::Blob(l), Self::Blob(r)) => l == r,
-            _ => core::mem::discriminant(self) == core::mem::discriminant(other),
+            (Self::Null, Self::Null) => true,
+            _ => false,
         }
     }
 }
