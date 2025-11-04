@@ -22,6 +22,7 @@ fn main() {
         (_, "PO_EXT") => FieldType::Character(2),
         (_, "PO_NO") => FieldType::Character(15),
         (_, "C_TYPE") => FieldType::Numeric { len: 2, dec: 0 },
+        (_, "INACTIVE") => FieldType::Logical,
 
         (Some(alias), _) => panic!("unknown field: {alias}.{field}"),
         (None, _) => panic!("unknown field: {field}"),
@@ -94,6 +95,37 @@ fn main() {
         "iif(po_ext=po_no, 'Match', 'No Match')",
         "iif(dtos(DATE) = '2001', 'Y', 'N')",
         "po_no + iif(EMPTY(po_ext),'', '.' + ALLTRIM(po_ext))",
+
+        // Tests for bit-typed expressions in SQL Server
+        // These should translate roughly to the commented SQL or something equivalent
+        // The main thing is that they should produce a valid expression that can be used as a SELECT column
+        ".t.", // 1
+        ".f.", // 0
+        "INACTIVE", // INACTIVE
+        ".not. INACTIVE", // ~INACTIVE
+        "INACTIVE = .f.", // IIF(INACTIVE = 0, 1, 0)
+        "INACTIVE = .f. = .f.", // Whatever this translates to, it should be equivalent to INACTIVE
+        "INACTIVE .or. A < 0", // INACTIVE | IIF(A < 0, 1, 0)
+        "DATE = SHIP_DATE", // IIF(DATE = SHIP_DATE, 1, 0)
+        "empty(C_TYPE)", // IIF(COALESCE(C_TYPE, 0) = 0, 1, 0)
+        "iif(INACTIVE, 'Inactive', 'Active')", // IIF(INACTIVE = 1, 'Inactive', 'Active')
+        "iif(INACTIVE = .t., 'Inactive', 'Active')", // IIF(INACTIVE = 1, 'Inactive', 'Active')
+        "iif(.not. INACTIVE, 'Active', 'Inactive')", // IIF(NOT INACTIVE = 1, 'Active', 'Inactive')
+        "iif(DATE < stod('19690720'), DATE > stod('19620220'), L_NAME = 'Armstrong' .or. L_NAME = 'Aldrin')", // IIF(DATE < '1969-07-20', IIF(DATE > '1962-02-20', 1, 0), IIF(L_NAME = 'Armstrong' OR L_NAME = 'Aldrin', 1, 0))
+
+        // Tests for boolean-typed conditions in SQL Server
+        // These should translate roughly to the commented SQL or something equivalent
+        // The main thing is that they should produce a valid condition that can be used as a WHERE clause
+        ".t.", // 1 = 1
+        ".f.", // 1 <> 1
+        "INACTIVE", // INACTIVE = 1
+        ".not. INACTIVE", // NOT INACTIVE = 1
+        "INACTIVE = .f.", // INACTIVE = 0
+        "INACTIVE = .f. = .f.", // Whatever this translates to, it should be equivalent to INACTIVE = 1
+        "INACTIVE .or. A < 0", // INACTIVE = 1 OR A < 0
+        "DATE = SHIP_DATE", // DATE = SHIP_DATE
+        "empty(C_TYPE)", // COALESCE(C_TYPE, 0) = 0
+        "iif(DATE < stod('19690720'), DATE > stod('19620220'), L_NAME = 'Armstrong' .or. L_NAME = 'Aldrin')", // IIF(DATE < '1969-07-20', IIF(DATE > '1962-02-20', 1, 0), IIF(L_NAME = 'Armstrong' OR L_NAME = 'Aldrin', 1, 0)) = 1
     ];
 
     for test in tests.iter() {
