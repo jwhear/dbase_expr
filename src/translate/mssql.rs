@@ -99,6 +99,14 @@ impl<F> MssqlTranslator<F>
 where
     F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
 {
+    pub fn translate_for_select(&self, source: &ast::Expression) -> Result {
+        self.translate(source).map(coerce_to_value)
+    }
+
+    pub fn translate_for_where(&self, source: &ast::Expression) -> Result {
+        self.translate(source).map(coerce_to_condition)
+    }
+
     fn translate_date_sequence(
         &self,
         first_expr: ExprRef,
@@ -186,6 +194,62 @@ where
             Ok((all_exprs.into_iter().next().unwrap(), result_type))
         }
     }
+}
+
+/// Will MS SQL see the translated node as a conditional?
+fn is_conditional(expr: &Expression) -> bool {
+    use super::BinaryOp::*;
+
+    matches!(
+        expr,
+        Expression::BinaryOperator(
+            _,
+            Eq | Ne | Lt | Le | Gt | Ge | NotBetween | Between | StartsWith | And | Or,
+            _,
+            _
+        ) | Expression::BinaryOperatorSequence(
+            Eq | Ne | Lt | Le | Gt | Ge | NotBetween | Between | StartsWith | And | Or,
+            _
+        ),
+    )
+}
+
+/// If the expression is a conditional, coerce it to a value (true = 1, false = 0).
+/// Coercion is only injected if `is_conditional(expr) == true` so this is safe to call
+///  preemptively wherever you need it.
+fn coerce_to_value((expr, ty): (ExprRef, FieldType)) -> (ExprRef, FieldType) {
+    if !is_conditional(&expr.borrow()) {
+        return (expr, ty);
+    }
+
+    // Wrap with `IIF(expr, 1, 0)`
+    (
+        expr_ref(Expression::Iif {
+            cond: expr,
+            when_true: expr_ref(Expression::NumberLiteral("1".into())),
+            when_false: expr_ref(Expression::NumberLiteral("0".into())),
+        }),
+        FieldType::Numeric { len: 1, dec: 0 },
+    )
+}
+
+/// If the expression is a value (non-condition), coerce to a condition by adding `$ = 1`.
+/// Coercion is only injected if `is_conditional(expr) == false` so this is safe
+///  to call wherever you need it.
+fn coerce_to_condition((expr, ty): (ExprRef, FieldType)) -> (ExprRef, FieldType) {
+    if is_conditional(&expr.borrow()) {
+        return (expr, ty);
+    }
+
+    (
+        expr_ref(Expression::BinaryOperator(
+            expr,
+            super::BinaryOp::Eq,
+            expr_ref(Expression::NumberLiteral("1".into())),
+            super::Parenthesize::No,
+        )),
+        FieldType::Logical,
+    )
 }
 
 fn dateadd_expr(interval: &str, amount: ExprRef, date: ExprRef) -> Expression {
@@ -515,6 +579,24 @@ pub fn translate_fn_call(
             }
         }
 
+        // IIF can be translated via the postgres implementation after coercing
+        //  the first argument to a conditional
+        F::IIF => {
+            if let [cond, when_true, when_false] = args {
+                // We need to coerce the ast Expression, not the result of
+                //  translation so that we can call the postgres translator
+                let cond = ast::coerce_to_condition(cond.clone());
+
+                postgres::translate_fn_call(
+                    &F::IIF,
+                    &[cond, when_true.clone(), when_false.clone()],
+                    cx,
+                )
+            } else {
+                Err(Error::IncorrectArgCount("IIF".into(), args.len()))
+            }
+        }
+
         F::LEFT => {
             let (x, ty) = arg(0)??;
             let n = match &*arg(1)??.0.borrow() {
@@ -632,5 +714,149 @@ pub fn translate_fn_call(
 
         // For all other functions, delegate to Postgres implementation
         other => postgres::translate_fn_call(other, args, cx),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn field_lookup(
+        alias: Option<&str>,
+        field: &str,
+    ) -> std::result::Result<(String, FieldType), String> {
+        let ty = match (alias, field) {
+            (_, "A" | "B" | "C") => FieldType::Integer,
+            (_, "BINDATAFIELD") => FieldType::MemoBinary,
+            (_, "SHIP_DATE") => FieldType::Date,
+            (_, "DATE") => FieldType::Date,
+            (_, "ID") => FieldType::Character(1),
+            (_, "QUOTE") => FieldType::Character(10),
+            (_, "L_NAME") => FieldType::Character(20),
+            (_, "DESCR_2") => FieldType::Memo,
+            (_, "DESCRIPTION") => FieldType::Memo,
+            (_, "PO_EXT") => FieldType::Character(2),
+            (_, "PO_NO") => FieldType::Character(15),
+            (_, "C_TYPE") => FieldType::Numeric { len: 2, dec: 0 },
+            (_, "INACTIVE") => FieldType::Logical,
+
+            (Some(alias), _) => panic!("unknown field: {alias}.{field}"),
+            (None, _) => panic!("unknown field: {field}"),
+        };
+        Ok((field.to_uppercase(), ty))
+    }
+
+    //TODO LIST
+    // * Insert coercions for binary operators (AND/OR, =, <>, etc.)
+    // * Insert coercion for IIF
+    // * Remove hardcoded coercions for EMPTY and any others that might exist
+
+    macro_rules! assert_tr_eq {
+        ($translate:ident, $src:expr, $witness:expr) => {
+            let translator = MssqlTranslator { field_lookup };
+            let mssql_config = crate::to_sql::PrinterConfig {
+                context: Box::new(crate::to_sql::MssqlPrinterContext),
+            };
+            let parser = crate::grammar::ExprParser::new();
+            let ast = parser.parse($src).map_err(|e| format!("{e}"))?;
+
+            let ast = crate::ast::simplify(*ast);
+            let (sql_ast, _ty) = translator.$translate(&ast).map_err(|e| format!("{e}"))?;
+            let sql = format!(
+                "{}",
+                crate::to_sql::Printer::new(sql_ast.clone(), mssql_config.clone())
+            );
+            assert_eq!($witness, &sql, "AST: {sql_ast:?}");
+        };
+    }
+
+    macro_rules! assert_select_eq {
+        ($src:expr, $witness:expr) => {
+            assert_tr_eq!(translate_for_select, $src, $witness)
+        };
+    }
+    macro_rules! assert_where_eq {
+        ($src:expr, $witness:expr) => {
+            assert_tr_eq!(translate_for_where, $src, $witness)
+        };
+    }
+
+    // To prevent confusion, let's introduce two new functions: `translate_for_select`
+    //  and `translate_for_where`. Aside from introducing these functions, we'll make
+    //  only one change to the existing MS SQL translator.
+    //
+    // `translate_for_select` looks at the top-level node of its input and, if it's
+    //   a comparison (`=`, `<`, etc), wraps it with an `IIF($, 1, 0)`. It then
+    //   calls the existing `translate` method.
+    // `translate_for_where` looks at the top-level node of its input and, if it's
+    //   not a comparison, wraps it with a `$ = 1`. It then calls the existing
+    //   `translate` method.
+    // We modify the MS SQL existing `translate_function_call` to use:
+    //  - `translate_for_where` when evaluating condition argument of an IIF call.
+    //  - EMPTY(x) already produces a comparison
+    //  - DELETED() would need to produce a comparison
+
+    // Tests for bit-typed expressions in SQL Server
+    // The main thing is that they should produce a valid expression that can be used as a SELECT column
+    #[test]
+    fn test_bool_as_bit_values() -> std::result::Result<(), String> {
+        assert_select_eq!(".t.", "1");
+        assert_select_eq!(".f.", "0");
+        assert_select_eq!("INACTIVE", "INACTIVE");
+        assert_select_eq!(".not. INACTIVE", "(NOT INACTIVE)");
+        assert_select_eq!("INACTIVE=.f.", "(CASE WHEN (INACTIVE=0) THEN 1 ELSE 0 END)");
+        assert_select_eq!(
+            "INACTIVE = .f. = .f.",
+            "(CASE WHEN ((INACTIVE=0)=0) THEN 1 ELSE 0 END)"
+        );
+        assert_select_eq!(
+            "INACTIVE .or. A < 0",
+            "(CASE WHEN (INACTIVE OR (A<0)) THEN 1 ELSE 0 END)"
+        );
+        assert_select_eq!(
+            "DATE = SHIP_DATE",
+            "(CASE WHEN (COALESCE(DATE, '0001-01-01')=COALESCE(SHIP_DATE, '0001-01-01')) THEN 1 ELSE 0 END)"
+        );
+        assert_select_eq!(
+            "empty(C_TYPE)",
+            "(CASE WHEN COALESCE(C_TYPE,0)=0 THEN 1 ELSE 0 END)"
+        );
+        assert_select_eq!(
+            "iif(INACTIVE, 'Inactive', 'Active')",
+            "(CASE WHEN (INACTIVE=1) THEN 'Inactive' ELSE 'Active' END) "
+        );
+        assert_select_eq!(
+            "iif(INACTIVE = .t., 'Inactive', 'Active')",
+            "(CASE WHEN ((INACTIVE=1)=1) THEN 'Inactive' ELSE 'Active' END) "
+        );
+        assert_select_eq!(
+            "iif(.not. INACTIVE, 'Active', 'Inactive')",
+            "(CASE WHEN (NOT (INACTIVE=1)) THEN 'Active' ELSE 'Inactive' END) "
+        );
+        assert_select_eq!(
+            "iif(DATE < stod('19690720'), DATE > stod('19620220'), L_NAME = 'Armstrong' .or. L_NAME = 'Aldrin')",
+            "(CASE WHEN (DATE<'1969-07-20') THEN IIF(DATE > '1962-02-20', 1, 0) ELSE IIF(L_NAME = 'Armstrong' OR L_NAME = 'Aldrin', 1, 0) END)"
+        );
+        Ok(())
+    }
+
+    // Tests for boolean-typed conditions in SQL Server
+    // The main thing is that they should produce a valid condition that can be used as a WHERE clause
+    #[test]
+    fn test_bool_as_conditionals() -> std::result::Result<(), String> {
+        assert_where_eq!(".t.", "1=1");
+        assert_where_eq!(".f.", "0=1");
+        assert_where_eq!("INACTIVE", "INACTIVE=1");
+        assert_where_eq!(".not. INACTIVE", "(NOT INACTIVE)=1");
+        assert_where_eq!("INACTIVE=.f.", "(INACTIVE=0)");
+        assert_where_eq!("INACTIVE = .f. = .f.", "((INACTIVE=0)=0)");
+        assert_where_eq!("INACTIVE .or. A < 0", "INACTIVE = 1 OR A < 0");
+        assert_where_eq!("DATE = SHIP_DATE", "DATE = SHIP_DATE");
+        assert_where_eq!("empty(C_TYPE)", "COALESCE(C_TYPE, 0) = 0");
+        assert_where_eq!(
+            "iif(DATE < stod('19690720'), DATE > stod('19620220'), L_NAME = 'Armstrong' .or. L_NAME = 'Aldrin')",
+            "IIF(DATE < '1969-07-20', IIF(DATE > '1962-02-20', 1, 0), IIF(L_NAME = 'Armstrong' OR L_NAME = 'Aldrin', 1, 0)) = 1"
+        );
+        Ok(())
     }
 }

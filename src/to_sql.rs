@@ -22,6 +22,10 @@ pub trait PrinterContext: std::fmt::Debug {
         write_binary_default(out, l, op, r, conf)
     }
     fn box_clone(&self) -> Box<dyn PrinterContext>;
+
+    fn bool_literal(&self, out: &mut Formatter<'_>, value: bool) -> std::fmt::Result {
+        write!(out, "{}", if value { "TRUE" } else { "FALSE" })
+    }
 }
 
 fn write_binary_default(
@@ -113,6 +117,10 @@ impl PrinterContext for MssqlPrinterContext {
             _ => write_binary_default(out, l, op, r, conf),
         }
     }
+
+    fn bool_literal(&self, out: &mut Formatter<'_>, value: bool) -> std::fmt::Result {
+        write!(out, "{}", if value { "1" } else { "0" })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -196,9 +204,7 @@ impl ToSQL for BinaryOp {
 impl ToSQL for Expression {
     fn to_sql(&self, out: &mut Formatter, conf: &PrinterConfig) -> Result {
         match self {
-            Expression::BoolLiteral(v) => {
-                write!(out, "{}", if *v { "TRUE" } else { "FALSE" })
-            }
+            Expression::BoolLiteral(v) => conf.context.bool_literal(out, *v),
             Expression::NumberLiteral(v) => write!(out, "{v}"),
             Expression::SingleQuoteStringLiteral(v) => write!(out, "'{v}'"),
 

@@ -148,6 +148,25 @@ fn concat(l: Box<Expression>, op: ConcatOp, r: Box<Expression>) -> Expression {
     Expression::Sequence(v, op)
 }
 
+/// If the expression is a value (non-condition), coerce to a condition by adding `$ = 1`.
+pub fn coerce_to_condition(expr: Box<Expression>) -> Box<Expression> {
+    use BinaryOp::*;
+    let is_already_conditional = matches!(
+        *expr,
+        Expression::BinaryOperator(_, Eq | Ne | Lt | Le | Gt | Ge | Contain | And | Or, _)
+    );
+
+    if is_already_conditional {
+        return expr;
+    }
+
+    Box::new(Expression::BinaryOperator(
+        expr,
+        BinaryOp::Eq,
+        Box::new(Expression::NumberLiteral("1".into())),
+    ))
+}
+
 const MAX_DEPTH: usize = 10;
 impl<'a> Arbitrary<'a> for BinaryOp {
     fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
@@ -213,6 +232,7 @@ fn arbitrary_expr(u: &mut Unstructured<'_>, depth: usize) -> arbitrary::Result<E
     }
 }
 
+#[derive(Debug)]
 pub enum ParseError {
     UnrecognizedToken(String),
     InvalidToken(String),
