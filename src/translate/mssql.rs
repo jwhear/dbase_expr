@@ -1,3 +1,14 @@
+//! Important implementation note!
+//! MS SQL has booleans (the result of `x = y`) but they're not values so you can't
+//!  return them or even use them in most expressions (e.g. CAST). They're basically
+//!  only valid as part of a boolean operation (AND/OR/NOT), within IIF/CASE, or
+//!  as a WHERE clause (or similar).
+//!
+//! As a result, this translator exposes two translate methods: [translate_for_select]
+//!  and [translate_for_where]. Conditionals are forced to values using:
+//!    `CASE WHEN (conditional) THEN 1 ELSE 0 END`
+//!  while values are forced to conditionals using `value = 1`.
+
 use crate::{
     ast,
     codebase_functions::CodebaseFunction as F,
@@ -812,21 +823,6 @@ mod tests {
             assert_tr_eq!(translate_for_where, $src, $witness)
         };
     }
-
-    // To prevent confusion, let's introduce two new functions: `translate_for_select`
-    //  and `translate_for_where`. Aside from introducing these functions, we'll make
-    //  only one change to the existing MS SQL translator.
-    //
-    // `translate_for_select` looks at the top-level node of its input and, if it's
-    //   a comparison (`=`, `<`, etc), wraps it with an `IIF($, 1, 0)`. It then
-    //   calls the existing `translate` method.
-    // `translate_for_where` looks at the top-level node of its input and, if it's
-    //   not a comparison, wraps it with a `$ = 1`. It then calls the existing
-    //   `translate` method.
-    // We modify the MS SQL existing `translate_function_call` to use:
-    //  - `translate_for_where` when evaluating condition argument of an IIF call.
-    //  - EMPTY(x) already produces a comparison
-    //  - DELETED() would need to produce a comparison
 
     // Tests for bit-typed expressions in SQL Server
     // The main thing is that they should produce a valid expression that can be used as a SELECT column
