@@ -148,15 +148,18 @@ fn concat(l: Box<Expression>, op: ConcatOp, r: Box<Expression>) -> Expression {
     Expression::Sequence(v, op)
 }
 
-/// If the expression is a value (non-condition), coerce to a condition by adding `$ = 1`.
-pub fn coerce_to_condition(expr: Box<Expression>) -> Box<Expression> {
+fn is_condition(expr: &Expression) -> bool {
     use BinaryOp::*;
-    let is_already_conditional = matches!(
+    matches!(
         *expr,
         Expression::BinaryOperator(_, Eq | Ne | Lt | Le | Gt | Ge | Contain | And | Or, _)
-    );
+            | Expression::UnaryOperator(UnaryOp::Not, _)
+    )
+}
 
-    if is_already_conditional {
+/// If the expression is a value (non-condition), coerce to a condition by adding `$ = 1`.
+pub fn coerce_to_condition(expr: Box<Expression>) -> Box<Expression> {
+    if is_condition(&expr) {
         return expr;
     }
 
@@ -165,6 +168,22 @@ pub fn coerce_to_condition(expr: Box<Expression>) -> Box<Expression> {
         BinaryOp::Eq,
         Box::new(Expression::NumberLiteral("1".into())),
     ))
+}
+
+/// If the expression is a condition, coerce to a value by adding `IFF($, 1, 0)`.
+pub fn coerce_to_value(expr: Box<Expression>) -> Box<Expression> {
+    if !is_condition(&expr) {
+        return expr;
+    }
+
+    Box::new(Expression::FunctionCall {
+        name: CodebaseFunction::IIF,
+        args: vec![
+            expr,
+            Box::new(Expression::NumberLiteral("1".into())),
+            Box::new(Expression::NumberLiteral("0".into())),
+        ],
+    })
 }
 
 const MAX_DEPTH: usize = 10;

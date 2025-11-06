@@ -664,18 +664,16 @@ pub fn translate_fn_call(
         }
 
         // IIF can be translated via the postgres implementation after coercing
-        //  the first argument to a conditional
+        //  the first argument to a conditional and the others to values
         F::IIF => {
             if let [cond, when_true, when_false] = args {
-                // We need to coerce the ast Expression, not the result of
+                // We need to coerce the ast::Expression, not the result of
                 //  translation so that we can call the postgres translator
                 let cond = ast::coerce_to_condition(cond.clone());
+                let when_true = ast::coerce_to_value(when_true.clone());
+                let when_false = ast::coerce_to_value(when_false.clone());
 
-                postgres::translate_fn_call(
-                    &F::IIF,
-                    &[cond, when_true.clone(), when_false.clone()],
-                    cx,
-                )
+                postgres::translate_fn_call(&F::IIF, &[cond, when_true, when_false], cx)
             } else {
                 Err(Error::IncorrectArgCount("IIF".into(), args.len()))
             }
@@ -907,11 +905,11 @@ mod tests {
         );
         assert_select_eq!(
             "iif(.not. INACTIVE, 'Active', 'Inactive')",
-            "(CASE WHEN (CASE WHEN (NOT INACTIVE=1) THEN 1 ELSE 0 END)=1 THEN 'Active' ELSE 'Inactive' END) "
+            "(CASE WHEN (NOT INACTIVE=1) THEN 'Active' ELSE 'Inactive' END) "
         );
         assert_select_eq!(
             "iif(DATE < stod('19690720'), DATE > stod('19620220'), L_NAME = 'Armstrong' .or. L_NAME = 'Aldrin')",
-            "(CASE WHEN (COALESCE(DATE, '0001-01-01')<CONVERT( date ,'19690720',112)) THEN (COALESCE(DATE, '0001-01-01')>CONVERT( date ,'19620220',112)) ELSE LEFT(COALESCE(L_NAME, '') + REPLICATE(' ', 20), 20)='Armstrong' OR LEFT(COALESCE(L_NAME, '') + REPLICATE(' ', 20), 20)='Aldrin' END) "
+            "(CASE WHEN (COALESCE(DATE, '0001-01-01')<CONVERT( date ,'19690720',112)) THEN (CASE WHEN (COALESCE(DATE, '0001-01-01')>CONVERT( date ,'19620220',112)) THEN 1 ELSE 0 END)  WHEN LEFT(COALESCE(L_NAME, '') + REPLICATE(' ', 20), 20)='Armstrong' OR LEFT(COALESCE(L_NAME, '') + REPLICATE(' ', 20), 20)='Aldrin' THEN 1 ELSE 0 END) "
         );
         Ok(())
     }
@@ -937,7 +935,7 @@ mod tests {
         assert_where_eq!("empty(C_TYPE)", "COALESCE(C_TYPE,0)=0");
         assert_where_eq!(
             "iif(DATE < stod('19690720'), DATE > stod('19620220'), L_NAME = 'Armstrong' .or. L_NAME = 'Aldrin')",
-            "(CASE WHEN (COALESCE(DATE, '0001-01-01')<CONVERT( date ,'19690720',112)) THEN (COALESCE(DATE, '0001-01-01')>CONVERT( date ,'19620220',112)) ELSE LEFT(COALESCE(L_NAME, '') + REPLICATE(' ', 20), 20)='Armstrong' OR LEFT(COALESCE(L_NAME, '') + REPLICATE(' ', 20), 20)='Aldrin' END) =1"
+            "(CASE WHEN (COALESCE(DATE, '0001-01-01')<CONVERT( date ,'19690720',112)) THEN (CASE WHEN (COALESCE(DATE, '0001-01-01')>CONVERT( date ,'19620220',112)) THEN 1 ELSE 0 END)  WHEN LEFT(COALESCE(L_NAME, '') + REPLICATE(' ', 20), 20)='Armstrong' OR LEFT(COALESCE(L_NAME, '') + REPLICATE(' ', 20), 20)='Aldrin' THEN 1 ELSE 0 END) =1"
         );
         Ok(())
     }
