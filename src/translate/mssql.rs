@@ -348,28 +348,72 @@ pub fn translate_binary_op<T: TranslationContext>(
     op: &ast::BinaryOp,
     r: &ast::Expression,
 ) -> Result {
-    // AND and OR need to coerce their operands to conditionals
-    if *op == ast::BinaryOp::And || *op == ast::BinaryOp::Or {
-        let op = if *op == ast::BinaryOp::And {
-            super::BinaryOp::And
-        } else {
-            super::BinaryOp::Or
-        };
-        let l = cx.translate(l)?;
-        let r = cx.translate(r)?;
-        return ok(
+    let (translated_l, ty_l) = cx.translate(l)?;
+    match (op, &ty_l) {
+        // And needs to coerce its operands to conditionals
+        (ast::BinaryOp::And, _) => ok(
             Expression::BinaryOperator(
-                coerce_to_condition(l).0,
-                op,
-                coerce_to_condition(r).0,
+                coerce_to_condition((translated_l, ty_l)).0,
+                super::BinaryOp::And,
+                coerce_to_condition(cx.translate(r)?).0,
                 super::Parenthesize::No,
             ),
             FieldType::Logical,
-        );
-    }
+        ),
+        // Or needs to coerce its operands to conditionals
+        (ast::BinaryOp::Or, _) => ok(
+            Expression::BinaryOperator(
+                coerce_to_condition((translated_l, ty_l)).0,
+                super::BinaryOp::Or,
+                coerce_to_condition(cx.translate(r)?).0,
+                super::Parenthesize::No,
+            ),
+            FieldType::Logical,
+        ),
 
-    let (translated_l, ty_l) = cx.translate(l)?;
-    match (op, &ty_l) {
+        // Eq needs to coerce its arguments to values
+        (ast::BinaryOp::Eq, _) => {
+            match r {
+                // We can save on awkward conditional->value conversions with a
+                //  few optimizations:
+                // `$ = .t.` -> `$`
+                // `$ = .f.` -> `NOT $`
+                /*
+                NOTE: these optimizations are currently disabled; MS SQL doesn't
+                 actually allow a field name where a boolean is expected or
+                 `NOT fieldname`
+                // $ = .t. -> $
+                ast::Expression::BoolLiteral(true) => Ok((translated_l, ty_l)),
+                // $ = .f. -> NOT $
+                ast::Expression::BoolLiteral(false) => ok(
+                    Expression::UnaryOperator(super::UnaryOp::Not, translated_l),
+                    FieldType::Logical,
+                ),
+                */
+                // All others: ensure both operands are values
+                _ => ok(
+                    Expression::BinaryOperator(
+                        coerce_to_value((translated_l, ty_l)).0,
+                        super::BinaryOp::Eq,
+                        coerce_to_value(cx.translate(r)?).0,
+                        super::Parenthesize::No,
+                    ),
+                    FieldType::Logical,
+                ),
+            }
+        }
+
+        // Ne needs to coerce its arguments to values
+        (ast::BinaryOp::Ne, _) => ok(
+            Expression::BinaryOperator(
+                coerce_to_value((translated_l, ty_l)).0,
+                super::BinaryOp::Ne,
+                coerce_to_value(cx.translate(r)?).0,
+                super::Parenthesize::No,
+            ),
+            FieldType::Logical,
+        ),
+
         // Date arithmetic
         (ast::BinaryOp::Add, FieldType::Date) => {
             let (translated_r, ty_r) = cx.translate(r)?;
@@ -786,9 +830,6 @@ mod tests {
         Ok((field.to_uppercase(), ty))
     }
 
-    //TODO LIST
-    // * Remove hardcoded coercions for EMPTY and any others that might exist
-
     macro_rules! assert_tr_eq {
         ($translate:ident, $src:expr, $witness:expr) => {
             let translator = MssqlTranslator { field_lookup };
@@ -835,10 +876,10 @@ mod tests {
             ".not. INACTIVE",
             "(CASE WHEN (NOT INACTIVE=1) THEN 1 ELSE 0 END)"
         );
-        assert_select_eq!("INACTIVE=.f.", "(CASE WHEN (INACTIVE=0) THEN 1 ELSE 0 END)");
+        assert_select_eq!("INACTIVE=.f.", "(CASE WHEN INACTIVE=0 THEN 1 ELSE 0 END)");
         assert_select_eq!(
             "INACTIVE = .f. = .f.",
-            "(CASE WHEN ((INACTIVE=0)=0) THEN 1 ELSE 0 END)"
+            "(CASE WHEN (CASE WHEN INACTIVE=0 THEN 1 ELSE 0 END)=0 THEN 1 ELSE 0 END)"
         );
         assert_select_eq!(
             "INACTIVE .or. A < 0",
@@ -846,27 +887,31 @@ mod tests {
         );
         assert_select_eq!(
             "DATE = SHIP_DATE",
-            "(CASE WHEN (COALESCE(DATE, '0001-01-01')=COALESCE(SHIP_DATE, '0001-01-01')) THEN 1 ELSE 0 END)"
+            "(CASE WHEN COALESCE(DATE, '0001-01-01')=COALESCE(SHIP_DATE, '0001-01-01') THEN 1 ELSE 0 END)"
         );
         assert_select_eq!(
             "empty(C_TYPE)",
             "(CASE WHEN COALESCE(C_TYPE,0)=0 THEN 1 ELSE 0 END)"
         );
         assert_select_eq!(
+            "empty(C_TYPE) = .f.",
+            "(CASE WHEN (CASE WHEN COALESCE(C_TYPE,0)=0 THEN 1 ELSE 0 END)=0 THEN 1 ELSE 0 END)"
+        );
+        assert_select_eq!(
             "iif(INACTIVE, 'Inactive', 'Active')",
-            "(CASE WHEN (INACTIVE=1) THEN 'Inactive' ELSE 'Active' END) "
+            "(CASE WHEN INACTIVE=1 THEN 'Inactive' ELSE 'Active' END) "
         );
         assert_select_eq!(
             "iif(INACTIVE = .t., 'Inactive', 'Active')",
-            "(CASE WHEN (INACTIVE=1) THEN 'Inactive' ELSE 'Active' END) "
+            "(CASE WHEN INACTIVE=1 THEN 'Inactive' ELSE 'Active' END) "
         );
         assert_select_eq!(
             "iif(.not. INACTIVE, 'Active', 'Inactive')",
-            "(CASE WHEN ((NOT INACTIVE=1)=1) THEN 'Active' ELSE 'Inactive' END) "
+            "(CASE WHEN (CASE WHEN (NOT INACTIVE=1) THEN 1 ELSE 0 END)=1 THEN 'Active' ELSE 'Inactive' END) "
         );
         assert_select_eq!(
             "iif(DATE < stod('19690720'), DATE > stod('19620220'), L_NAME = 'Armstrong' .or. L_NAME = 'Aldrin')",
-            "(CASE WHEN (COALESCE(DATE, '0001-01-01')<CONVERT( date ,'19690720',112)) THEN (COALESCE(DATE, '0001-01-01')>CONVERT( date ,'19620220',112)) ELSE (LEFT(COALESCE(L_NAME, '') + REPLICATE(' ', 20), 20)=SUBSTRING('Armstrong',1,20)) OR (LEFT(COALESCE(L_NAME, '') + REPLICATE(' ', 20), 20)=SUBSTRING('Aldrin',1,20)) END) "
+            "(CASE WHEN (COALESCE(DATE, '0001-01-01')<CONVERT( date ,'19690720',112)) THEN (COALESCE(DATE, '0001-01-01')>CONVERT( date ,'19620220',112)) ELSE LEFT(COALESCE(L_NAME, '') + REPLICATE(' ', 20), 20)='Armstrong' OR LEFT(COALESCE(L_NAME, '') + REPLICATE(' ', 20), 20)='Aldrin' END) "
         );
         Ok(())
     }
@@ -879,17 +924,20 @@ mod tests {
         assert_where_eq!(".f.", "0=1");
         assert_where_eq!("INACTIVE", "INACTIVE=1");
         assert_where_eq!(".not. INACTIVE", "(NOT INACTIVE=1)");
-        assert_where_eq!("INACTIVE=.f.", "(INACTIVE=0)");
-        assert_where_eq!("INACTIVE = .f. = .f.", "((INACTIVE=0)=0)");
+        assert_where_eq!("INACTIVE=.f.", "INACTIVE=0");
+        assert_where_eq!(
+            "INACTIVE = .f. = .f.",
+            "(CASE WHEN INACTIVE=0 THEN 1 ELSE 0 END)=0"
+        );
         assert_where_eq!("INACTIVE .or. A < 0", "INACTIVE=1 OR (A<0)");
         assert_where_eq!(
             "DATE = SHIP_DATE",
-            "(COALESCE(DATE, '0001-01-01')=COALESCE(SHIP_DATE, '0001-01-01'))"
+            "COALESCE(DATE, '0001-01-01')=COALESCE(SHIP_DATE, '0001-01-01')"
         );
         assert_where_eq!("empty(C_TYPE)", "COALESCE(C_TYPE,0)=0");
         assert_where_eq!(
             "iif(DATE < stod('19690720'), DATE > stod('19620220'), L_NAME = 'Armstrong' .or. L_NAME = 'Aldrin')",
-            "(CASE WHEN (COALESCE(DATE, '0001-01-01')<CONVERT( date ,'19690720',112)) THEN (COALESCE(DATE, '0001-01-01')>CONVERT( date ,'19620220',112)) ELSE (LEFT(COALESCE(L_NAME, '') + REPLICATE(' ', 20), 20)=SUBSTRING('Armstrong',1,20)) OR (LEFT(COALESCE(L_NAME, '') + REPLICATE(' ', 20), 20)=SUBSTRING('Aldrin',1,20)) END) =1"
+            "(CASE WHEN (COALESCE(DATE, '0001-01-01')<CONVERT( date ,'19690720',112)) THEN (COALESCE(DATE, '0001-01-01')>CONVERT( date ,'19620220',112)) ELSE LEFT(COALESCE(L_NAME, '') + REPLICATE(' ', 20), 20)='Armstrong' OR LEFT(COALESCE(L_NAME, '') + REPLICATE(' ', 20), 20)='Aldrin' END) =1"
         );
         Ok(())
     }
