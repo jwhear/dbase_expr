@@ -819,10 +819,10 @@ pub fn get_str_fn_args(
     let fmt = if dec > 0 {
         let x = len - dec - 1;
         let y = dec;
-        format!("FM{:9<x$}.{:0<y$}", "", "")
+        format!("FM{:9<x$}0.{:0<y$}", "", "")
     } else {
         let x = len;
-        format!("FM{:9<x$}", "")
+        format!("FM{:9<x$}0", "")
     };
 
     Ok(StrArgs::WithArgs(val_arg, fmt, len))
