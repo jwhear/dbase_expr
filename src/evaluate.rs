@@ -40,15 +40,15 @@ impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::FixedLenStr(l, _) | Self::Str(l), Self::FixedLenStr(r, _) | Self::Str(r))
-                if l.len() == 0 =>
+                if r.len() == 0 =>
             {
                 //codebase quirk: a starts-with with a blank string would always be true, but it's not. it doesn't use starts-with in this scenario
                 cmp(l.as_str(), &r, &BinaryOp::Eq)
             }
             (Self::FixedLenStr(l, l_len), Self::FixedLenStr(r, _) | Self::Str(r)) => {
-                let l_adjusted = with_len(&l, r.len()); //trims a to the length of b,effectively turning it into a starts-with
-                //pad them both out now to the len of a (or trim if for some reason it's longer)
-                //now they are both the same length but it's still in the pattern of a starts-with b
+                let l_adjusted = with_len(&l, r.len()); //trims l to the length of r,effectively turning it into a starts-with
+                //pad them both out now to the len of l (or trim if for some reason it's longer)
+                //now they are both the same length but it's still in the pattern of l starts-with r
                 let l_adjusted = with_len(&l_adjusted, *l_len);
                 let r_adjusted = with_len(&r, *l_len);
                 cmp(&l_adjusted, &r_adjusted, &BinaryOp::Eq)
