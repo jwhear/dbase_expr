@@ -64,6 +64,7 @@ pub mod ast;
 pub mod codebase_functions;
 pub mod evaluate;
 pub mod fuzz_helper;
+pub mod simple_text_expr;
 pub mod to_sql;
 pub mod translate;
 pub use ast::ParseError;
