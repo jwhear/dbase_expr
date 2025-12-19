@@ -821,6 +821,7 @@ mod tests {
             (_, "PO_NO") => FieldType::Character(15),
             (_, "C_TYPE") => FieldType::Numeric { len: 2, dec: 0 },
             (_, "INACTIVE") => FieldType::Logical,
+            (_, "__deleted") => FieldType::Logical,
 
             (Some(alias), _) => panic!("unknown field: {alias}.{field}"),
             (None, _) => panic!("unknown field: {field}"),
@@ -828,6 +829,14 @@ mod tests {
         Ok((field.to_uppercase(), ty))
     }
 
+    // Helper for testing the correct translation from dbase to MS SQL.
+    // This macro is motivated by the fact that testing both translate_for_select
+    //  and translate_for_where need essentially the same harness and just
+    //  invoke a different method.
+    //
+    // $translate is a method on the MssqlTranslator
+    // $src is the dbase expression
+    // $witness is the expected MS SQL query
     macro_rules! assert_tr_eq {
         ($translate:ident, $src:expr, $witness:expr) => {
             let translator = MssqlTranslator { field_lookup };
@@ -851,12 +860,13 @@ mod tests {
             );
         };
     }
-
+    // Asserts that running translate_for_select($src) == $witness
     macro_rules! assert_select_eq {
         ($src:expr, $witness:expr) => {
             assert_tr_eq!(translate_for_select, $src, $witness)
         };
     }
+    // Asserts that running translate_for_where($src) == $witness
     macro_rules! assert_where_eq {
         ($src:expr, $witness:expr) => {
             assert_tr_eq!(translate_for_where, $src, $witness)
@@ -910,6 +920,11 @@ mod tests {
         assert_select_eq!(
             "iif(DATE < stod('19690720'), DATE > stod('19620220'), L_NAME = 'Armstrong' .or. L_NAME = 'Aldrin')",
             "(CASE WHEN (COALESCE(DATE, '0001-01-01')<CONVERT( date ,'19690720',112)) THEN (CASE WHEN (COALESCE(DATE, '0001-01-01')>CONVERT( date ,'19620220',112)) THEN 1 ELSE 0 END)  WHEN LEFT(COALESCE(L_NAME, '') + REPLICATE(' ', 20), 20)='Armstrong' OR LEFT(COALESCE(L_NAME, '') + REPLICATE(' ', 20), 20)='Aldrin' THEN 1 ELSE 0 END) "
+        );
+
+        assert_select_eq!(
+            "empty(C_TYPE) <> deleted()",
+            "(CASE WHEN (CASE WHEN COALESCE(C_TYPE,0)=0 THEN 1 ELSE 0 END)!=__DELETED THEN 1 ELSE 0 END)"
         );
         Ok(())
     }
