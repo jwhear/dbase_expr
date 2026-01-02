@@ -40,7 +40,7 @@ impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::FixedLenStr(l, _) | Self::Str(l), Self::FixedLenStr(r, _) | Self::Str(r))
-                if r.len() == 0 =>
+                if r.is_empty() =>
             {
                 //codebase quirk: a starts-with with a blank string would always be true, but it's not. it doesn't use starts-with in this scenario
                 cmp(l.as_str(), &r, &BinaryOp::Eq)
