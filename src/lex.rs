@@ -11,8 +11,8 @@ pub enum TokenType {
     Minus,
     Asterisk,
     ForwardSlash,
-    DoubleAsterisk,
-    Arrow, // ->, used in [db alias]->field_name
+    DoubleAsterisk, // ** is exponentiation
+    Arrow,          // ->, used in [db alias]->field_name
     Dollar,
     Equals,    // =
     NotEquals, // <>
@@ -33,7 +33,7 @@ pub enum TokenType {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Token {
-    ty: TokenType,
+    pub ty: TokenType,
 
     // Byte indexes into the source
     start: usize,
@@ -253,14 +253,14 @@ impl<'input> Lexer<'input> {
 
     /// Returns the slice of the source that this token was lexed from.
     #[inline]
-    pub fn source_of(&self, token: &Token) -> &[u8] {
+    pub fn source_of(&self, token: &Token) -> &'input [u8] {
         &self.source[token.start..token.end]
     }
 
     /// Like [source_of] but omits the opening and closing quotes of string
     ///  literal tokens.
     #[inline]
-    pub fn contents(&self, token: &Token) -> &[u8] {
+    pub fn contents(&self, token: &Token) -> &'input [u8] {
         let s = self.source_of(token);
         match token.ty {
             TokenType::StringSingleQuote | TokenType::StringDoubleQuote => &s[1..s.len() - 1],
@@ -296,6 +296,8 @@ impl<'input> Lexer<'input> {
             b'/' => tok!(ForwardSlash),
             b'$' => tok!(Dollar),
             b'=' => tok!(Equals),
+            b'^' => tok!(DoubleAsterisk),
+            b'#' => tok!(NotEquals),
 
             // While +/- could be the start of a number, we treat them as
             //  operators and allow the parser to interpret them as unary or

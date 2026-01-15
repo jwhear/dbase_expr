@@ -218,6 +218,10 @@ impl FieldType {
 ///             .map(|t| (norm, *t))
 ///             .ok_or(format!("No field named {field}"))
 ///     }
+///
+///     fn custom_function(&self, func: &str) -> Option<ast::Expression> {
+///         None
+///     }
 ///     
 ///     fn translate(&self, source: &ast::Expression) -> std::result::Result<(ExprRef, FieldType), Error> {
 ///         // This is the place to handle specific cases which are different from Postgres,

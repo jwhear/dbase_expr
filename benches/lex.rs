@@ -13,6 +13,8 @@ const TESTS: [&str; 7] = [
 ];
 fn new_lexer() {
     use dbase_expr::lex::Lexer;
+    // we'll track the number of tokens seen to ensure that the loop below doesn't
+    //  get optimized out
     let mut num_tokens: u64 = 0;
     for test in TESTS {
         let mut lexer = Lexer::new(test.as_bytes());

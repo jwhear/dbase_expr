@@ -26,6 +26,7 @@
 //! let parse_tree = parser.parse(r#"(DATE() + 1) - STOD("20240731")"#)
 //!     .map_err(|e| format!("{e}"))?;
 //! let translator = postgres::Translator {
+//!    custom_function: |_| None,
 //!    field_lookup: |opt_table_alias, field_name| {
 //!       // opt_table_alias will be Some(&str) if a table alias was provided
 //!       //  (e.g. "bar.foo") and None otherwise.
@@ -65,6 +66,7 @@ pub mod codebase_functions;
 pub mod evaluate;
 pub mod fuzz_helper;
 pub mod lex;
+pub mod parser;
 pub mod simple_text_expr;
 pub mod to_sql;
 pub mod translate;
