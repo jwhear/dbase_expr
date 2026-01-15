@@ -62,6 +62,16 @@ pub enum UnaryOp {
     Not,
     Neg,
 }
+impl TryFrom<Token> for UnaryOp {
+    type Error = Error;
+    fn try_from(value: Token) -> Result<Self, Self::Error> {
+        match value.ty {
+            TokenType::Minus => Ok(UnaryOp::Neg),
+            TokenType::Not => Ok(UnaryOp::Not),
+            _ => Err(Error::UnexpectedToken(value)),
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expression<'input> {
@@ -194,24 +204,12 @@ fn parse_binary_op<'input>(
             }
             Ok(lhs)
         }
-        // Prefix '-'
-        Token {
-            ty: TokenType::Minus,
-            ..
-        } => {
-            let ((), pow) = prefix_binding(TokenType::Minus).unwrap();
+        // Prefix '-' or '.NOT.'
+        prefix if prefix.ty == TokenType::Minus || prefix.ty == TokenType::Not => {
+            let ((), pow) = prefix_binding(prefix.ty).unwrap();
             let rhs = parse_binary_op(lexer, tree, scratch, pow)?;
             let rhs = tree.push_expr(rhs);
-            Ok(Expression::UnaryOperator(UnaryOp::Neg, rhs))
-        }
-        // Prefix '.NOT.'
-        Token {
-            ty: TokenType::Not, ..
-        } => {
-            let ((), pow) = prefix_binding(TokenType::Not).unwrap();
-            let rhs = parse_binary_op(lexer, tree, scratch, pow)?;
-            let rhs = tree.push_expr(rhs);
-            Ok(Expression::UnaryOperator(UnaryOp::Not, rhs))
+            Ok(Expression::UnaryOperator(prefix.try_into()?, rhs))
         }
         // Numbers, strings, and boolean literals
         tok if is_literal(&tok) => parse_literal(lexer, &tok),
@@ -332,24 +330,26 @@ fn parse_fn_call<'input>(
     let scratch_start = scratch.len();
 
     // Expect an open paren
-    let mut t = lexer.next_token()?.ok_or(Error::UnexpectedEof)?;
-    if t.ty != TokenType::ParenLeft {
-        return Err(Error::UnexpectedToken(t));
+    if !lexer.consume(TokenType::ParenLeft)? {
+        return Err(Error::UnexpectedEof);
     }
 
     // Some number of arguments
     let mut first = true;
     loop {
-        t = lexer.next_token()?.ok_or(Error::UnexpectedEof)?;
+        let mut peeker = lexer.clone();
+        let t = peeker.next_token()?.ok_or(Error::UnexpectedEof)?;
         if t.ty == TokenType::ParenRight {
+            // consume the )
+            _ = lexer.next_token();
             break;
         }
 
         if !first {
             // Expect a comma
-            if t.ty != TokenType::Comma {
+            if !lexer.consume(TokenType::Comma)? {
                 return Err(Error::UnexpectedToken(t));
-            }
+            };
         } else {
             first = false;
         }
@@ -406,116 +406,145 @@ mod tests {
     fn basic1() {
         let (tree, root) = parse(r#"(1 + -2.0) <> 3."#).expect("a valid parse");
         let root = tree.get_expr(root).expect("a root expression");
-        if let Expression::BinaryOperator(lhs, BinaryOp::Ne, rhs) = root {
-            let lhs = tree.get_expr(*lhs).expect("lhs");
-            let rhs = tree.get_expr(*rhs).expect("rhs");
+        let Expression::BinaryOperator(lhs, BinaryOp::Ne, rhs) = root else {
+            panic!("Expected a Ne, got a {root:?}")
+        };
 
-            assert_eq!(*rhs, Expression::NumberLiteral(b"3."));
+        let lhs = tree.get_expr(*lhs).expect("lhs");
+        let rhs = tree.get_expr(*rhs).expect("rhs");
 
-            if let Expression::BinaryOperator(lhs, BinaryOp::Add, rhs) = lhs {
-                let lhs = tree.get_expr(*lhs).expect("lhs");
-                let rhs = tree.get_expr(*rhs).expect("rhs");
+        assert_eq!(*rhs, Expression::NumberLiteral(b"3."));
 
-                assert_eq!(*lhs, Expression::NumberLiteral(b"1"));
+        let Expression::BinaryOperator(lhs, BinaryOp::Add, rhs) = lhs else {
+            panic!("Expected an Add, got a {lhs:?}")
+        };
 
-                if let Expression::UnaryOperator(UnaryOp::Neg, rhs) = rhs {
-                    let rhs = tree.get_expr(*rhs).expect("rhs");
-                    assert_eq!(*rhs, Expression::NumberLiteral(b"2.0"));
-                }
-            }
-        } else {
-            panic!("Expected a Ne root");
-        }
+        let lhs = tree.get_expr(*lhs).expect("lhs");
+        let rhs = tree.get_expr(*rhs).expect("rhs");
+
+        assert_eq!(*lhs, Expression::NumberLiteral(b"1"));
+
+        let Expression::UnaryOperator(UnaryOp::Neg, rhs) = rhs else {
+            panic!("Expected a Neg, got a {rhs:?}")
+        };
+        let rhs = tree.get_expr(*rhs).expect("rhs");
+        assert_eq!(*rhs, Expression::NumberLiteral(b"2.0"));
     }
     #[test]
     fn basic2() {
         let (tree, root) = parse(r#"'Hello' + (" " + "World")"#).expect("a valid parse");
         let root = tree.get_expr(root).expect("a root expression");
-        if let Expression::BinaryOperator(lhs, BinaryOp::Add, rhs) = root {
-            let lhs = tree.get_expr(*lhs).expect("lhs");
-            let rhs = tree.get_expr(*rhs).expect("rhs");
+        let Expression::BinaryOperator(lhs, BinaryOp::Add, rhs) = root else {
+            panic!("Expected a Add, got a {root:?}")
+        };
 
-            assert_eq!(*lhs, Expression::StringLiteral(b"Hello"));
+        let lhs = tree.get_expr(*lhs).expect("lhs");
+        let rhs = tree.get_expr(*rhs).expect("rhs");
 
-            if let Expression::BinaryOperator(lhs, BinaryOp::Add, rhs) = rhs {
-                let lhs = tree.get_expr(*lhs).expect("lhs");
-                let rhs = tree.get_expr(*rhs).expect("rhs");
+        assert_eq!(*lhs, Expression::StringLiteral(b"Hello"));
 
-                assert_eq!(*lhs, Expression::StringLiteral(b" "));
-                assert_eq!(*rhs, Expression::StringLiteral(b"World"));
-            }
-        } else {
-            panic!("Expected a Ne root");
-        }
+        let Expression::BinaryOperator(lhs, BinaryOp::Add, rhs) = rhs else {
+            panic!("Expected an Add, got a {rhs:?}")
+        };
+        let lhs = tree.get_expr(*lhs).expect("lhs");
+        let rhs = tree.get_expr(*rhs).expect("rhs");
+
+        assert_eq!(*lhs, Expression::StringLiteral(b" "));
+        assert_eq!(*rhs, Expression::StringLiteral(b"World"));
     }
     #[test]
     fn basic3() {
         let (tree, root) = parse(r#"'Hello ' + (F_NAME + CUST->L_NAME)"#).expect("a valid parse");
         let root = tree.get_expr(root).expect("a root expression");
-        if let Expression::BinaryOperator(lhs, BinaryOp::Add, rhs) = root {
-            let lhs = tree.get_expr(*lhs).expect("lhs");
-            let rhs = tree.get_expr(*rhs).expect("rhs");
+        let Expression::BinaryOperator(lhs, BinaryOp::Add, rhs) = root else {
+            panic!("Expected a Add, got a {root:?}")
+        };
+        let lhs = tree.get_expr(*lhs).expect("lhs");
+        let rhs = tree.get_expr(*rhs).expect("rhs");
 
-            assert_eq!(*lhs, Expression::StringLiteral(b"Hello "));
+        assert_eq!(*lhs, Expression::StringLiteral(b"Hello "));
 
-            if let Expression::BinaryOperator(lhs, BinaryOp::Add, rhs) = rhs {
-                let lhs = tree.get_expr(*lhs).expect("lhs");
-                let rhs = tree.get_expr(*rhs).expect("rhs");
+        let Expression::BinaryOperator(lhs, BinaryOp::Add, rhs) = rhs else {
+            panic!("Expected a Add, got {rhs:?}")
+        };
+        let lhs = tree.get_expr(*lhs).expect("lhs");
+        let rhs = tree.get_expr(*rhs).expect("rhs");
 
-                assert_eq!(
-                    *lhs,
-                    Expression::Field {
-                        alias: None,
-                        name: b"F_NAME"
-                    }
-                );
-                assert_eq!(
-                    *rhs,
-                    Expression::Field {
-                        alias: Some(b"CUST"),
-                        name: b"L_NAME"
-                    }
-                );
+        assert_eq!(
+            *lhs,
+            Expression::Field {
+                alias: None,
+                name: b"F_NAME"
             }
-        } else {
-            panic!("Expected a Ne root");
-        }
+        );
+        assert_eq!(
+            *rhs,
+            Expression::Field {
+                alias: Some(b"CUST"),
+                name: b"L_NAME"
+            }
+        );
+    }
+    #[test]
+    fn logical() {
+        let (tree, root) = parse(r#"(.t. = .NOT..f.) .OR. .t."#).expect("a valid parse");
+        let root = tree.get_expr(root).expect("a root expression");
+        let Expression::BinaryOperator(lhs, BinaryOp::Or, rhs) = root else {
+            panic!("Expected an OR, got a {root:?}");
+        };
+        let lhs = tree.get_expr(*lhs).expect("lhs");
+        let rhs = tree.get_expr(*rhs).expect("rhs");
+
+        assert_eq!(*rhs, Expression::BoolLiteral(true));
+
+        let Expression::BinaryOperator(lhs, BinaryOp::Eq, rhs) = lhs else {
+            panic!("Expected a Eq, got a {lhs:?}");
+        };
+        let lhs = tree.get_expr(*lhs).expect("lhs");
+        let rhs = tree.get_expr(*rhs).expect("rhs");
+
+        assert_eq!(*lhs, Expression::BoolLiteral(true));
+        let Expression::UnaryOperator(UnaryOp::Not, rhs) = rhs else {
+            panic!("Expected a NOT")
+        };
+        let rhs = tree.get_expr(*rhs).expect("rhs");
+        assert_eq!(*rhs, Expression::BoolLiteral(false));
     }
     #[test]
     fn fn_calls() {
         let (tree, root) = parse(r#"CTOD(TRIM("a date?"), TEST)"#).expect("a valid parse");
         let root = tree.get_expr(root).expect("a root expression");
-        if let Expression::FunctionCall {
+        let Expression::FunctionCall {
             name: CodebaseFunction::CTOD,
             args,
         } = root
-        {
-            let args = tree.get_args(args);
-            assert_eq!(args.len(), 2);
-            let first = tree.get_expr(args[0]).expect("first");
-            let second = tree.get_expr(args[1]).expect("second");
+        else {
+            panic!("Expected a FunctionCall, got a {root:?}")
+        };
+        let args = tree.get_args(args);
+        assert_eq!(args.len(), 2);
+        let first = tree.get_expr(args[0]).expect("first");
+        let second = tree.get_expr(args[1]).expect("second");
 
-            assert_eq!(
-                *second,
-                Expression::Field {
-                    alias: None,
-                    name: b"TEST"
-                }
-            );
-
-            if let Expression::FunctionCall {
-                name: CodebaseFunction::TRIM,
-                args,
-            } = first
-            {
-                let args = tree.get_args(args);
-                assert_eq!(args.len(), 1);
-                let first = tree.get_expr(args[0]).expect("first");
-
-                assert_eq!(*first, Expression::StringLiteral(b"a date?"));
+        assert_eq!(
+            *second,
+            Expression::Field {
+                alias: None,
+                name: b"TEST"
             }
-        } else {
-            panic!("Expected a Ne root");
-        }
+        );
+
+        let Expression::FunctionCall {
+            name: CodebaseFunction::TRIM,
+            args,
+        } = first
+        else {
+            panic!("Expected a FunctionCall, got a {first:?}")
+        };
+        let args = tree.get_args(args);
+        assert_eq!(args.len(), 1);
+        let first = tree.get_expr(args[0]).expect("first");
+
+        assert_eq!(*first, Expression::StringLiteral(b"a date?"));
     }
 }

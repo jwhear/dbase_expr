@@ -191,7 +191,7 @@ impl<'input> Lexer<'input> {
     }
 
     /// If current starts with [prefix], consume it and return true.
-    pub fn consume1(&mut self, prefix: u8) -> bool {
+    fn consume1(&mut self, prefix: u8) -> bool {
         if let Some(c) = self.peek()
             && c == prefix
         {
@@ -266,6 +266,16 @@ impl<'input> Lexer<'input> {
             TokenType::StringSingleQuote | TokenType::StringDoubleQuote => &s[1..s.len() - 1],
             _ => s,
         }
+    }
+
+    /// Consumes the first token and returns whether its type is equal to `[ty]`
+    pub fn consume(&mut self, ty: TokenType) -> Result<bool, Error> {
+        let tok = self.next_token()?;
+        Ok(if let Some(tok) = tok {
+            tok.ty == ty
+        } else {
+            false
+        })
     }
 
     pub fn next_token(&mut self) -> Result<Option<Token>, Error> {
