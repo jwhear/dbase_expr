@@ -26,3 +26,7 @@ path = "src/main_test_mssql.rs"
 [[bench]]
 name = "parse"
 harness = false
+
+[[bench]]
+name = "lex"
+harness = false
