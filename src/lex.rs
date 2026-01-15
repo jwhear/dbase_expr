@@ -59,6 +59,71 @@ impl std::fmt::Display for Error {
     }
 }
 
+/// Assumes that [word] is eight ASCII characters packed into a u64 and
+///  returns the lowercased equivalent.
+#[inline]
+fn lowercase_u64(word: u64) -> u64 {
+    // Ok, this code is a bit obtuse but it's also branchless and just a handful
+    //  of instructions.
+    // Key insight is that a character `b` is in A..=Z if:
+    //   (b + 0x1F) & ~(b + 0x05) & 0x20 != 0
+    // Once we've identified the capitals we can lowercase them by setting the
+    //  fifth bit ('A' = 65, 'a' = 97, difference = 32)
+    const ADD_1F: u64 = 0x1F1F1F1F1F1F1F1F;
+    const ADD_05: u64 = 0x0505050505050505;
+    const FIFTH_BIT: u64 = 0x2020202020202020;
+
+    let mask = word.wrapping_add(ADD_1F) & !word.wrapping_add(ADD_05) & FIFTH_BIT;
+    word | mask
+}
+
+/// We generally call [Lexer::consume_ignore_ascii_case] with a string literal;
+///  this macro effectively generates a check for that particular literal and
+///  advances the [Lexer] if the source starts with it (case insensitive).
+///
+/// The cool thing is that all our literals are eight characters or less, so
+///  this macro turns the check into an unaligned read, ANDing a mask, and an
+///  equality check.
+macro_rules! consume_literal {
+    ($self:expr, $prefix:literal) => {{
+        const LEN: usize = $prefix.len();
+        // Lowercase prefix at compile time
+        const PREFIX_LOWER_U64: u64 = {
+            let mut bytes = [0u8; 8];
+            let mut i = 0;
+            while i < LEN {
+                bytes[i] = $prefix[i].to_ascii_lowercase();
+                i += 1;
+            }
+            u64::from_le_bytes(bytes)
+        };
+        // Mask for the actual length: e.g., 0x0000FFFF for len=2.
+        const MASK: u64 = if LEN == 8 {
+            u64::MAX
+        } else {
+            (1u64 << (LEN * 8)) - 1
+        };
+
+        if $self.remaining_len() < LEN {
+            false
+        } else {
+            // Reading unaligned can be dangerous: this intrinsic makes it safe
+            //  and it has a pretty negligible performance impact on modern chips
+            let word = unsafe { std::ptr::read_unaligned($self.current_ptr() as *const u64) };
+            let word = lowercase_u64(word);
+            if (word & MASK) == PREFIX_LOWER_U64 {
+                $self.current += LEN;
+                true
+            } else {
+                false
+            }
+        }
+    }};
+}
+
+/// This type simply holds a reference to the source bytes and an index, so it's
+///  cheap to copy, making lookahead/rewind operations in the parser very easy.
+#[derive(Clone)]
 pub struct Lexer<'input> {
     source: &'input [u8],
     current: usize,
@@ -69,10 +134,12 @@ impl<'input> Lexer<'input> {
         Self { source, current: 0 }
     }
 
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.current >= self.source.len()
     }
 
+    #[inline]
     pub fn peek(&self) -> Option<u8> {
         if self.is_empty() {
             None
@@ -81,10 +148,18 @@ impl<'input> Lexer<'input> {
         }
     }
 
+    #[inline]
     pub fn peek_unchecked(&self) -> u8 {
         self.source[self.current]
     }
 
+    #[inline]
+    pub fn peek_at(&self, at: usize) -> Option<u8> {
+        let at = self.current + at;
+        self.source.get(at).copied()
+    }
+
+    #[inline]
     pub fn pop(&mut self) -> Option<u8> {
         let res = self.peek();
         if res.is_some() {
@@ -93,15 +168,45 @@ impl<'input> Lexer<'input> {
         res
     }
 
+    #[inline]
     fn pop_unchecked(&mut self) -> u8 {
         let res = self.peek_unchecked();
         self.current += 1;
         res
     }
 
+    #[inline]
+    fn current_ptr(&self) -> *const u8 {
+        &self.source[self.current]
+    }
+
+    #[inline]
+    pub fn remaining(&self) -> &[u8] {
+        &self.source[self.current..]
+    }
+
+    #[inline]
+    pub fn remaining_len(&self) -> usize {
+        self.remaining().len()
+    }
+
+    /// If current starts with [prefix], consume it and return true.
+    pub fn consume1(&mut self, prefix: u8) -> bool {
+        if let Some(c) = self.peek()
+            && c == prefix
+        {
+            self.current += 1;
+            true
+        } else {
+            false
+        }
+    }
+
     /// If current starts with [prefix] (compared ASCII case-insensitive),
     ///  consume and return true. Otherwise, return false and leave current
     ///  unchanged.
+    /// If you know [prefix] at compile time and it's eight characters or less,
+    ///  use [consume_ignore_ascii_case_lit] instead.
     fn consume_ignore_ascii_case(&mut self, prefix: &[u8]) -> bool {
         let remainder = &self.source[self.current..];
 
@@ -120,6 +225,7 @@ impl<'input> Lexer<'input> {
         is_prefix
     }
 
+    #[inline]
     fn consume_while(&mut self, predicate: impl Fn(u8) -> bool) {
         while let Some(c) = self.peek()
             && predicate(c)
@@ -128,34 +234,37 @@ impl<'input> Lexer<'input> {
         }
     }
 
+    #[inline]
     fn consume_whitespace(&mut self) {
         self.consume_while(|b| b == b' ' || b == b'\t');
     }
 
     fn consume_number(&mut self) {
         // Start with zero or more digits
-        self.consume_while(|b| matches!(b, b'0'..=b'9'));
+        self.consume_while(|b| b.is_ascii_digit());
 
         // Optional dot
         if let Some(b'.') = self.peek() {
             self.current += 1; // consume '.'
             // Followed by zero or more digits
-            self.consume_while(|b| matches!(b, b'0'..=b'9'));
+            self.consume_while(|b| b.is_ascii_digit());
         }
     }
 
     /// Returns the slice of the source that this token was lexed from.
+    #[inline]
     pub fn source_of(&self, token: &Token) -> &[u8] {
         &self.source[token.start..token.end]
     }
 
     /// Like [source_of] but omits the opening and closing quotes of string
     ///  literal tokens.
+    #[inline]
     pub fn contents(&self, token: &Token) -> &[u8] {
         let s = self.source_of(token);
         match token.ty {
             TokenType::StringSingleQuote | TokenType::StringDoubleQuote => &s[1..s.len() - 1],
-            _ => &s,
+            _ => s,
         }
     }
 
@@ -194,7 +303,7 @@ impl<'input> Lexer<'input> {
             b'+' => tok!(Plus),
             b'-' => {
                 // Arrow?
-                if self.consume_ignore_ascii_case(b">") {
+                if self.consume1(b'>') {
                     tok!(Arrow)
                 } else {
                     tok!(Minus)
@@ -202,23 +311,23 @@ impl<'input> Lexer<'input> {
             }
             b'*' => {
                 // Exponentiation?
-                if self.consume_ignore_ascii_case(b"*") {
+                if self.consume1(b'*') {
                     tok!(DoubleAsterisk)
                 } else {
                     tok!(Asterisk)
                 }
             }
             b'<' => {
-                if self.consume_ignore_ascii_case(b">") {
+                if self.consume1(b'>') {
                     tok!(NotEquals)
-                } else if self.consume_ignore_ascii_case(b"=") {
+                } else if self.consume1(b'=') {
                     tok!(LTE)
                 } else {
                     tok!(LT)
                 }
             }
             b'>' => {
-                if self.consume_ignore_ascii_case(b"=") {
+                if self.consume1(b'=') {
                     tok!(GTE)
                 } else {
                     tok!(GT)
@@ -244,15 +353,12 @@ impl<'input> Lexer<'input> {
 
             // Identifiers start with a-Z or underscore
             b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
-                self.consume_while(|b| match b {
-                    b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' => true,
-                    _ => false,
-                });
+                self.consume_while(|b| matches!(b, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'));
                 tok!(Identifier)
             }
 
             // Digits mean it's a number
-            b'0'..b'9' => {
+            b'0'..=b'9' => {
                 self.consume_number();
                 tok!(Number)
             }
@@ -273,11 +379,12 @@ impl<'input> Lexer<'input> {
                     };
                 }
                 table_to_if_else!(
-                    self.consume_ignore_ascii_case(b"and.") => And,
-                    self.consume_ignore_ascii_case(b"not.") => Not,
-                    self.consume_ignore_ascii_case(b"or.") => Or,
-                    self.consume_ignore_ascii_case(b"t.") => True,
-                    self.consume_ignore_ascii_case(b"f.") => False,
+                    // We've already popped the leading '.'
+                    consume_literal!(self, b"and.") => And,
+                    consume_literal!(self, b"not.") => Not,
+                    consume_literal!(self, b"or.") => Or,
+                    consume_literal!(self, b"t.") => True,
+                    consume_literal!(self, b"f.") => False,
 
                     // Default case: assume it's a number.
                     // Even a bare '.' is a valid number (0.0)
@@ -297,12 +404,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_lex_basic() {
+    fn lex_basic() {
         //NOTE this test doesn't use the handy assert_toks macro because we're
         //  checking that the token boundaries are correct as well.
         //              0         1         2         3
         //              012345678901234567890123456789012
-        let source = r#"'single' $ "double" (,/) .not..t."#;
+        let source = r#"'single' $ "double" (,/) .NOT..t."#;
         let mut lexer = Lexer::new(source.as_bytes());
 
         // 'single'
@@ -395,7 +502,7 @@ mod tests {
     }
 
     #[test]
-    fn test_lex_numbers() {
+    fn lex_numbers() {
         //NOTE this test doesn't use the handy assert_toks macro because we're
         //  checking that the token boundaries are correct as well.
         //             0         1
@@ -479,16 +586,39 @@ mod tests {
     }
 
     #[test]
-    fn test_lex_arrow() {
+    fn lex_arrow() {
         let source = b"-tbl->field";
         let mut lexer = Lexer::new(source);
         assert_toks!(lexer, Minus, Identifier, Arrow, Identifier);
     }
 
     #[test]
-    fn test_lex_comparisons() {
+    fn lex_comparisons() {
         let source = b"= <> < > <= >=";
         let mut lexer = Lexer::new(source);
         assert_toks!(lexer, Equals, NotEquals, LT, GT, LTE, GTE);
+    }
+
+    #[test]
+    fn degenerate_numbers() {
+        let source = b".+.=."; // 0.0 + 0.0 = 0.0
+        let mut lexer = Lexer::new(source);
+        assert_toks!(lexer, Number, Plus, Number, Equals, Number);
+    }
+
+    #[test]
+    fn test_lowercase_u8() {
+        let source = u64::from_le_bytes(*b"Hello Z!");
+        let result = lowercase_u64(source);
+        let witness = u64::from_le_bytes(*b"hello z!");
+        assert_eq!(witness, result);
+
+        let source = u64::from_le_bytes(*b"aBcDvXyZ");
+        let result = lowercase_u64(source);
+        let witness = u64::from_le_bytes(*b"abcdvxyz");
+        assert_eq!(witness, result);
+
+        let source = u64::from_le_bytes(*b"@3-+/`&)");
+        assert_eq!(source, lowercase_u64(source));
     }
 }

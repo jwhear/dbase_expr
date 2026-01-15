@@ -1,6 +1,7 @@
 use chrono::NaiveDate;
 use dbase_expr::{
     codebase_functions::CodebaseFunction,
+    lex::Lexer,
     to_sql::PrinterConfig,
     translate::{
         Error, ExprRef, Expression, FieldType, TranslationContext, expr_ref,
@@ -19,6 +20,7 @@ fn main() {
     // Plain vanilla translation
     println!("Running to_sql tests...");
     let get_type = |alias: Option<&str>, field: &str| match (alias, field) {
+        (_, "__DELETED") => FieldType::Logical,
         (_, "A" | "B" | "C") => FieldType::Integer,
         (_, "BINDATAFIELD") => FieldType::MemoBinary,
         (_, "SHIP_DATE") => FieldType::Date,
@@ -109,6 +111,15 @@ fn main() {
         custom_functions: custom_functions(),
     };
     to_sql_tests(&cx);
+
+    println!("Benchmarking custom lexer");
+    let src = "deleted() = .f. .and. substr(id, 1, 3 ) <> \"($)\"";
+    let mut lexer = Lexer::new(src.as_bytes());
+    while let Ok(Some(tok)) = lexer.next_token() {
+        println!("{tok:?} | '{}'", unsafe {
+            std::str::from_utf8_unchecked(lexer.source_of(&tok))
+        });
+    }
 }
 
 fn expr_tests() {
