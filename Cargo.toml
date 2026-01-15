@@ -13,9 +13,16 @@ serde = { version = "1.0.219", features = ["derive"], optional = true }
 [build-dependencies]
 lalrpop = "0.20.2"
 
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
 [features]
 serde = ["dep:serde"]
 
 [[example]]
 name = "mssql_test"
 path = "src/main_test_mssql.rs"
+
+[[bench]]
+name = "parse"
+harness = false

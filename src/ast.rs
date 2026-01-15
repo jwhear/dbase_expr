@@ -39,7 +39,6 @@ impl ConcatOp {
 pub enum UnaryOp {
     Not,
     Neg,
-    Pos,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,7 +132,6 @@ fn concat(l: Box<Expression>, op: ConcatOp, r: Box<Expression>) -> Expression {
     //  [c, b, a]
     // Then reverse it at the end. For addition proper it's not a big deal
     //  but '+' is also used for concatenation and order is very important
-    //TODO simplify elements?
 
     let expected_op = op.get_op();
     let mut v = vec![r];
@@ -180,7 +178,7 @@ impl<'a> Arbitrary<'a> for ConcatOp {
 
 impl<'a> Arbitrary<'a> for UnaryOp {
     fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
-        Ok(*u.choose(&[UnaryOp::Not, UnaryOp::Neg])?)
+        Ok(*u.choose(&[UnaryOp::Not])?)
     }
 }
 

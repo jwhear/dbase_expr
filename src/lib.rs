@@ -32,7 +32,7 @@
 //!       // field_name is a &str with the name of the field as sliced out of
 //!       //  the input: you will probably want to normalize this (e.g. uppercase).
 //!
-//!       //TODO normalize the field name if needed and produce the Codebase type
+//!       // Normalize the field name if needed and produce the Codebase type
 //!       // Return a Ok((<normalized field name>, <field_type>))
 //!       //  or
 //!       // Err(<string describing the problem>)

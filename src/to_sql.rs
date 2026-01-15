@@ -8,7 +8,32 @@ use std::{
 pub trait PrinterContext: std::fmt::Debug {
     fn write_padding(&self, out: &mut Formatter<'_>, inner: &str, width: u32) -> std::fmt::Result;
     fn coalesce_date(&self, out: &mut Formatter<'_>, inner: &str) -> std::fmt::Result;
+    /// Write a full binary operator expression: `l <op> r`.
+    /// Default behavior prints `l`, the dialect token, then `r`.
+    /// Dialects can override to customize behavior (e.g., MSSQL STARTSWITH).
+    fn write_operator(
+        &self,
+        out: &mut Formatter,
+        l: &Rc<RefCell<Expression>>,
+        op: &BinaryOp,
+        r: &Rc<RefCell<Expression>>,
+        conf: &PrinterConfig,
+    ) -> std::fmt::Result {
+        write_binary_default(out, l, op, r, conf)
+    }
     fn box_clone(&self) -> Box<dyn PrinterContext>;
+}
+
+fn write_binary_default(
+    out: &mut Formatter,
+    l: &Rc<RefCell<Expression>>,
+    op: &BinaryOp,
+    r: &Rc<RefCell<Expression>>,
+    conf: &PrinterConfig,
+) -> std::fmt::Result {
+    l.to_sql(out, conf)?;
+    op.to_sql(out, conf)?;
+    r.to_sql(out, conf)
 }
 
 impl Clone for Box<dyn PrinterContext> {
@@ -74,6 +99,19 @@ impl PrinterContext for MssqlPrinterContext {
     }
     fn box_clone(&self) -> Box<dyn PrinterContext> {
         Box::new(*self)
+    }
+    fn write_operator(
+        &self,
+        out: &mut Formatter,
+        l: &Rc<RefCell<Expression>>,
+        op: &BinaryOp,
+        r: &Rc<RefCell<Expression>>,
+        conf: &PrinterConfig,
+    ) -> std::fmt::Result {
+        match op {
+            BinaryOp::StartsWith => write_binary_default(out, l, &BinaryOp::Eq, r, conf),
+            _ => write_binary_default(out, l, op, r, conf),
+        }
     }
 }
 
@@ -193,9 +231,7 @@ impl ToSQL for Expression {
             }
             Expression::BinaryOperator(l, op, r, p) => {
                 p.open(out)?;
-                l.to_sql(out, conf)?;
-                op.to_sql(out, conf)?;
-                r.to_sql(out, conf)?;
+                conf.context.write_operator(out, l, op, r, conf)?;
                 p.close(out)
             }
             Expression::BinaryOperatorSequence(op, exprs) => {
@@ -232,16 +268,16 @@ impl ToSQL for Expression {
                 when_true,
                 when_false,
             } => {
-                write!(out, "CASE WHEN ")?;
+                write!(out, "(CASE WHEN ")?;
                 cond.to_sql(out, conf)?;
                 write!(out, " THEN ")?;
                 when_true.to_sql(out, conf)?;
                 write!(out, " ELSE ")?;
                 when_false.to_sql(out, conf)?;
-                write!(out, " END")
+                write!(out, " END)")
             }
             Expression::Case { branches, r#else } => {
-                write!(out, "CASE")?;
+                write!(out, "(CASE")?;
                 for branch in branches {
                     write!(out, " WHEN ")?;
                     branch.cond.to_sql(out, conf)?;
@@ -250,7 +286,7 @@ impl ToSQL for Expression {
                 }
                 write!(out, " ELSE ")?;
                 r#else.to_sql(out, conf)?;
-                write!(out, " END ")
+                write!(out, " END) ")
             }
             Expression::BareFunctionCall(name) => write!(out, " {name} "),
         }

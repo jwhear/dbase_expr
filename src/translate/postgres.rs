@@ -1,6 +1,6 @@
 use super::{
     BinaryOp, Error, Expression, FieldType, Result, TranslationContext, UnaryOp,
-    escape_single_quotes, ok, string_comp_left, string_comp_right,
+    escape_single_quotes, ok,
 };
 use crate::{
     ast::{self, Expression as E},
@@ -17,6 +17,7 @@ where
     F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
 {
     pub field_lookup: F,
+    pub custom_function: fn(&str) -> Option<ast::Expression>,
 }
 
 impl<F> TranslationContext for Translator<F>
@@ -29,6 +30,10 @@ where
         field: &str,
     ) -> std::result::Result<(String, FieldType), String> {
         (self.field_lookup)(alias, field)
+    }
+
+    fn custom_function(&self, func: &str) -> Option<ast::Expression> {
+        (self.custom_function)(func)
     }
 
     fn translate(&self, source: &ast::Expression) -> Result {
@@ -102,8 +107,6 @@ pub fn translate<C: TranslationContext>(source: &E, cx: &C) -> Result {
                 let r = translate(r, cx)?;
                 ok(Expression::UnaryOperator(UnaryOp::Neg, r.0), r.1)
             }
-            // Pos does nothing, just passes its argument through
-            ast::UnaryOp::Pos => translate(r, cx),
         },
         E::BinaryOperator(l, op, r) => {
             // Add, Sub are ambiguous: could be numeric, concat, or days (for dates)
@@ -186,10 +189,9 @@ pub fn translate_fn_call(
             FieldType::Character(1),
         ),
         // CTOD(x) => COALESCE(TO_DATE(NULLIF(TRIM(x),''),'MM/DD/YY'),'0001-01-01')
-        F::CTOD => date("MM/DD/YY"), //TODO the date format can be changed on the Codebase object
+        F::CTOD => date("MM/DD/YY"), //TODO KOB-104
         // DATE() => CURRENT_DATE
         F::DATE => ok(
-            //TODO do we need to format as a string here?
             Expression::BareFunctionCall("CURRENT_DATE".to_string()),
             FieldType::Date,
         ),
@@ -228,7 +230,7 @@ pub fn translate_fn_call(
                         name: "TO_CHAR".into(),
                         args: vec![
                             arg(0)??.0,
-                            //TODO this is controlled by the Code4
+                            //TODO KOB-104
                             expr_ref("MM/DD/YY".into()),
                         ],
                     },
@@ -244,6 +246,81 @@ pub fn translate_fn_call(
             FieldType::Character(8),
         ),
 
+        //the result of EMPTY depends on the type
+        F::EMPTY => {
+            let (arg, ty) = arg(0)??;
+            let expression = match ty {
+                FieldType::Logical => {
+                    // COALESCE(x, false) = false
+                    let coalesce = expr_ref(Expression::FunctionCall {
+                        name: "COALESCE".into(),
+                        args: vec![arg.clone(), expr_ref(Expression::BoolLiteral(false))],
+                    });
+                    Expression::BinaryOperator(
+                        coalesce,
+                        BinaryOp::Eq,
+                        expr_ref(Expression::BoolLiteral(false)),
+                        Parenthesize::No,
+                    )
+                }
+                FieldType::Integer
+                | FieldType::Currency
+                | FieldType::Double
+                | FieldType::Float
+                | FieldType::Numeric { .. } => {
+                    // COALESCE(x, 0) = 0
+                    let coalesce = expr_ref(Expression::FunctionCall {
+                        name: "COALESCE".into(),
+                        args: vec![arg.clone(), expr_ref(Expression::NumberLiteral("0".into()))],
+                    });
+                    Expression::BinaryOperator(
+                        coalesce,
+                        BinaryOp::Eq,
+                        expr_ref(Expression::NumberLiteral("0".into())),
+                        Parenthesize::No,
+                    )
+                }
+                FieldType::Character(_)
+                | FieldType::Memo
+                | FieldType::Date
+                | FieldType::DateTime => {
+                    // COALESCE(TRIM(CAST(x AS TEXT)), '') = ''
+                    let trim = expr_ref(Expression::Cast(arg, "text"));
+                    let trim = expr_ref(Expression::FunctionCall {
+                        name: "TRIM".into(),
+                        args: vec![trim],
+                    });
+                    let coalesce = expr_ref(Expression::FunctionCall {
+                        name: "COALESCE".into(),
+                        args: vec![trim, expr_ref("".into())],
+                    });
+                    Expression::BinaryOperator(
+                        coalesce,
+                        BinaryOp::Eq,
+                        expr_ref("".into()),
+                        Parenthesize::No,
+                    )
+                }
+                FieldType::MemoBinary | FieldType::CharacterBinary(_) | FieldType::General => {
+                    // COALESCE(LENGTH(x), 0) = 0
+                    let length_call = expr_ref(Expression::FunctionCall {
+                        name: "length".into(),
+                        args: vec![arg],
+                    });
+                    let coalesce_call = expr_ref(Expression::FunctionCall {
+                        name: "COALESCE".into(),
+                        args: vec![length_call, expr_ref(Expression::NumberLiteral("0".into()))],
+                    });
+                    Expression::BinaryOperator(
+                        coalesce_call,
+                        BinaryOp::Eq,
+                        expr_ref(Expression::NumberLiteral("0".into())),
+                        Parenthesize::No,
+                    )
+                }
+            };
+            ok(expression, FieldType::Logical)
+        }
         // Translate nested IIFs to a flat CASE WHEN. This optimization is
         //  important because some databases (looking at you, SQL Server) have
         //  a limit how deeply nested control flow like CASE and IIF can go.
@@ -258,7 +335,7 @@ pub fn translate_fn_call(
 
             let mut branches = Vec::new();
             // We have to take ownership of args for the loop to work
-            //TODO(justin): come back and try to rework this
+            //OPT: come back and try to rework this
             let mut inner_args = Vec::from(args);
 
             // Add this IIF as a When branch. If when_false is an IIF, traverse
@@ -273,7 +350,7 @@ pub fn translate_fn_call(
                             then: cx.translate(when_true)?.0,
                         });
 
-                        //TODO there's probably a way to work around this clone
+                        //OPT there's probably a way to work around this clone
                         let expr: ast::Expression = (**when_false).clone();
                         if let ast::Expression::FunctionCall { name: F::IIF, args } = expr {
                             inner_args = args.clone();
@@ -311,6 +388,14 @@ pub fn translate_fn_call(
                 args: vec![expr_ref("MONTH".into()), arg(0)??.0],
             },
             FieldType::Double,
+        ),
+
+        F::PADL => ok(
+            Expression::FunctionCall {
+                name: "LPAD".into(),
+                args: vec![arg(0)??.0, arg(1)??.0, expr_ref(" ".into())],
+            },
+            FieldType::Memo,
         ),
 
         // RECNO() => RECNO5
@@ -355,35 +440,39 @@ pub fn translate_fn_call(
         F::STOD => date("YYYYMMDD"),
         // STR(num, len, dec) => PRINTF("%{len}.{dec}f", num)
         F::STR => {
-            // `len` and dec` must be constants according to CB docs, so we can
-            //   get them and convert to integers, then mix up a printf call
-            let len: i64 = match &*arg(1)??.0.borrow() {
-                Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(1)),
-                _ => Err(wrong_type(1)),
-            }?;
-            let dec: i64 = match &*arg(2)??.0.borrow() {
-                Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(2)),
-                _ => Err(wrong_type(2)),
-            }?;
-            // We need FMx.y where 'x' is '9' repeated len - dec - 1 times and
-            //  'y' is '0' repeated dec times
-            let fmt = format!(
-                "FM{:9<x$}.{:0<y$}",
-                "",
-                "",
-                x = (len - dec - 1) as usize,
-                y = dec as usize
-            );
-            ok(
-                Expression::FunctionCall {
-                    name: "TO_CHAR".to_string(),
-                    args: vec![
-                        arg(0)??.0, // value to be formatted
-                        expr_ref(fmt.into()),
-                    ],
-                },
-                FieldType::Character(len as u32),
-            )
+            match get_str_fn_args(args, cx)? {
+                StrArgs::WithArgs(val_arg, fmt, len) => {
+                    let expression = expr_ref(Expression::FunctionCall {
+                        name: "TO_CHAR".to_string(),
+                        args: vec![
+                            val_arg, // value to be formatted
+                            expr_ref(fmt.into()),
+                        ],
+                    });
+                    //if the length of the evaluated expression is greater than the specified len, fill the len with asterisks instead of showing any value at all
+                    let len_expr: std::rc::Rc<std::cell::RefCell<Expression>> =
+                        expr_ref(Expression::FunctionCall {
+                            name: "LENGTH".into(),
+                            args: vec![expression.clone()],
+                        });
+                    let cond = expr_ref(Expression::BinaryOperator(
+                        len_expr,
+                        BinaryOp::Le,
+                        expr_ref((len as i64).into()),
+                        Parenthesize::No,
+                    ));
+                    let asterisks = "*".repeat(len);
+                    let iif = Expression::Iif {
+                        cond,
+                        when_true: expression,
+                        when_false: expr_ref(asterisks.into()),
+                    };
+                    ok(iif, FieldType::Character(len as u32))
+                }
+                StrArgs::WithoutArgs(val_arg) => {
+                    ok(Expression::Cast(val_arg, "text"), FieldType::Memo)
+                }
+            }
         }
         F::SUBSTR => {
             let len: u32 = match &*arg(2)??.0.borrow() {
@@ -430,25 +519,39 @@ pub fn translate_fn_call(
             FieldType::Double,
         ),
 
-        F::Unknown(unsupported) => Err(Error::UnsupportedFunction(unsupported.clone())),
+        F::Unknown(unknown) => match cx.custom_function(unknown) {
+            Some(v) => cx.translate(&v),
+            None => Err(Error::UnsupportedFunction(unknown.clone())),
+        },
     }
 }
 
 pub fn translate_binary_op<T: TranslationContext>(
     cx: &T,
-    l: &ast::Expression,
+    ast_l: &ast::Expression,
+    op: &ast::BinaryOp,
+    r: &ast::Expression,
+) -> Result {
+    let (l, ty) = translate(ast_l, cx)?;
+    translate_binary_op_right(cx, ast_l, l, ty, op, r)
+}
+
+/// The same as translate_binary_op but useful if you've already translated l and don't want to do it again
+pub fn translate_binary_op_right<T: TranslationContext>(
+    cx: &T,
+    ast_l: &ast::Expression,
+    l: ExprRef,
+    ty: FieldType,
     op: &ast::BinaryOp,
     r: &ast::Expression,
 ) -> Result {
     let tr_binop = |l, op, r, ty| ok(Expression::BinaryOperator(l, op, r, Parenthesize::Yes), ty);
     let binop = |l, op, r, ty| {
-        //TODO(justin): order of operations is preserved by parenthesizing
-        // everything.  It'd be nice to analyze precedence to only do so
-        // when necessary.
+        //OPT: order of operations is preserved by parenthesizing everything.
+        // It'd be nice to analyze precedence to only do so when necessary.
         let r = translate(r, cx)?.0;
         tr_binop(l, op, r, ty)
     };
-    let (l, ty) = translate(l, cx)?;
     match (op, ty) {
         // For these types, simple addition is fine
         (
@@ -586,58 +689,67 @@ pub fn translate_binary_op<T: TranslationContext>(
         (ast::BinaryOp::Or, FieldType::Logical) => binop(l, BinaryOp::Or, r, FieldType::Logical),
         (ast::BinaryOp::Lt, FieldType::Character(len)) => {
             let r_tr = translate(r, cx)?.0;
-            let left = string_comp_left(l, r_tr.clone());
-            let right = string_comp_right(r_tr, len);
+            let left = cx.string_comp_left(l, r_tr.clone());
+            let right = cx.string_comp_right(r_tr, len);
             tr_binop(left, BinaryOp::Lt, right, FieldType::Logical)
         }
         (ast::BinaryOp::Le, FieldType::Character(len)) => {
             let r_tr = translate(r, cx)?.0;
-            let left = string_comp_left(l, r_tr.clone());
-            let right = string_comp_right(r_tr, len);
+            let left = cx.string_comp_left(l, r_tr.clone());
+            let right = cx.string_comp_right(r_tr, len);
             tr_binop(left, BinaryOp::Le, right, FieldType::Logical)
         }
         (ast::BinaryOp::Gt, FieldType::Character(len)) => {
             let r_tr = translate(r, cx)?.0;
-            let left = string_comp_left(l, r_tr.clone());
-            let right = string_comp_right(r_tr, len);
+            let left = cx.string_comp_left(l, r_tr.clone());
+            let right = cx.string_comp_right(r_tr, len);
             tr_binop(left, BinaryOp::Gt, right, FieldType::Logical)
         }
         (ast::BinaryOp::Ge, FieldType::Character(len)) => {
             let r_tr = translate(r, cx)?.0;
-            let left = string_comp_left(l, r_tr.clone());
-            let right = string_comp_right(r_tr, len);
+            let left = cx.string_comp_left(l, r_tr.clone());
+            let right = cx.string_comp_right(r_tr, len);
             tr_binop(left, BinaryOp::Ge, right, FieldType::Logical)
         }
         (ast::BinaryOp::Lt, FieldType::Memo) => {
-            let left = string_comp_left(l, translate(r, cx)?.0);
+            let left = cx.string_comp_left(l, translate(r, cx)?.0);
             binop(left, BinaryOp::Lt, r, FieldType::Logical)
         }
         (ast::BinaryOp::Le, FieldType::Memo) => {
-            let left = string_comp_left(l, translate(r, cx)?.0);
+            let left = cx.string_comp_left(l, translate(r, cx)?.0);
             binop(left, BinaryOp::Le, r, FieldType::Logical)
         }
         (ast::BinaryOp::Gt, FieldType::Memo) => {
-            let left = string_comp_left(l, translate(r, cx)?.0);
+            let left = cx.string_comp_left(l, translate(r, cx)?.0);
             binop(left, BinaryOp::Gt, r, FieldType::Logical)
         }
         (ast::BinaryOp::Ge, FieldType::Memo) => {
-            let left = string_comp_left(l, translate(r, cx)?.0);
+            let left = cx.string_comp_left(l, translate(r, cx)?.0);
             binop(left, BinaryOp::Ge, r, FieldType::Logical)
         }
-        (ast::BinaryOp::Eq, FieldType::Character(_) | FieldType::Memo) => {
+        (ast::BinaryOp::Eq, FieldType::Memo | FieldType::Character(_)) if is_trim(ast_l) => {
+            binop(l, BinaryOp::Eq, r, FieldType::Logical)
+        }
+        (ast::BinaryOp::Ne, FieldType::Memo | FieldType::Character(_)) if is_trim(ast_l) => {
+            binop(l, BinaryOp::Ne, r, FieldType::Logical)
+        }
+        (ast::BinaryOp::Eq, FieldType::Memo) => {
             binop(l, BinaryOp::StartsWith, r, FieldType::Logical)
         }
-        (ast::BinaryOp::Ne, FieldType::Character(_) | FieldType::Memo) => {
-            let starts_with = Expression::BinaryOperator(
-                l,
-                BinaryOp::StartsWith,
-                translate(r, cx)?.0,
-                Parenthesize::Yes,
-            );
-            ok(
-                Expression::UnaryOperator(UnaryOp::Not, expr_ref(starts_with)),
-                FieldType::Logical,
-            )
+        (ast::BinaryOp::Eq, FieldType::Character(len)) => {
+            let trimmed_r = cx.string_comp_right(translate(r, cx)?.0, len);
+            tr_binop(l, BinaryOp::StartsWith, trimmed_r, FieldType::Logical)
+        }
+        (ast::BinaryOp::Ne, FieldType::Memo) => {
+            let starts_with = binop(l, BinaryOp::StartsWith, r, FieldType::Logical);
+            let expr = Expression::UnaryOperator(UnaryOp::Not, starts_with?.0);
+            ok(expr, FieldType::Logical)
+        }
+        (ast::BinaryOp::Ne, FieldType::Character(len)) => {
+            let trimmed_r = cx.string_comp_right(translate(r, cx)?.0, len);
+            let starts_with = tr_binop(l, BinaryOp::StartsWith, trimmed_r, FieldType::Logical);
+            let expr = Expression::UnaryOperator(UnaryOp::Not, starts_with?.0);
+            ok(expr, FieldType::Logical)
         }
         (
             ast::BinaryOp::Eq,
@@ -675,6 +787,62 @@ pub fn translate_binary_op<T: TranslationContext>(
     }
 }
 
+pub enum StrArgs {
+    WithArgs(ExprRef, String, usize),
+    WithoutArgs(ExprRef),
+}
+
+pub fn get_str_fn_args(
+    args: &[Box<ast::Expression>],
+    cx: &impl TranslationContext,
+) -> std::result::Result<StrArgs, Error> {
+    if args.len() == 1 {
+        let (val_arg, _) = get_arg(0, args, cx, &F::STR)??;
+        return Ok(StrArgs::WithoutArgs(val_arg));
+    }
+
+    let arg = |index: usize| get_arg(index, args, cx, &F::STR);
+    let wrong_type = |index| wrong_type(index, &F::STR, args);
+
+    let val_arg = arg(0)??.0;
+    let len_arg = arg(1)??.0;
+    let dec_arg = arg(2)??.0;
+
+    // `len` and dec` must be constants according to CB docs, so we can get them and convert to integers
+    let len: i64 = match &*len_arg.borrow() {
+        Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(1)),
+        _ => Err(wrong_type(1)),
+    }?;
+    let len: usize = len
+        .try_into()
+        .map_err(|_| Error::Other("STR length must be a positive integer".into()))?;
+    let dec: i64 = match &*dec_arg.borrow() {
+        Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(2)),
+        _ => Err(wrong_type(2)),
+    }?;
+    let dec: usize = dec
+        .try_into()
+        .map_err(|_| Error::Other("STR dec must be a positive integer".into()))?;
+
+    //clamp dec to 15 (codebase max)
+    let mut dec: usize = dec.min(15);
+
+    if len <= dec + 1 {
+        dec = (len.saturating_sub(2)).max(0); //to allow space for the '.', something like 2,1 doesn't make sense since there would be no space for the leading 0 so codebase just removes the dec
+    }
+
+    let fmt = if dec > 0 {
+        let x = len - dec - 1;
+        let y = dec;
+        format!("FM{:9<x$}.{:0<y$}", "", "")
+    } else {
+        let x = len;
+        format!("FM{:9<x$}", "")
+    };
+
+    Ok(StrArgs::WithArgs(val_arg, fmt, len))
+}
+
 pub fn get_arg(
     index: usize,
     args: &[Box<ast::Expression>],
@@ -701,4 +869,12 @@ pub fn wrong_type(index: usize, name: &F, args: &[Box<ast::Expression>]) -> Erro
         },
         wrong_arg_index: index,
     }
+}
+
+fn is_trim(ast_l: &ast::Expression) -> bool {
+    matches!(
+        ast_l,
+        ast::Expression::FunctionCall { name, .. }
+            if *name == crate::codebase_functions::CodebaseFunction::TRIM
+    )
 }

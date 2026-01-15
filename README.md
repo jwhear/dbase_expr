@@ -11,14 +11,6 @@ A library for parsing CodeBase (dBase) expressions and mechanically translating 
 ## Running
 `cargo run` will run the sample program (`src/main.rs`) which runs a bunch of test strings through the parse-translate-print cycle.
 
-## TODO
-
-- [x] Correctly parse dBase expressions into an parse tree
-- [x] Translate the dBase parse tree to a SQL parse tree
-- [x] Serialize the SQL parse tree as SQL
-- [x] Use type context to implement overloaded operations (primarily `+`, `-`)
-- [ ] Pretty-printing of SQL
-
 ## Design
 * The parsing of dBase expressions is implemented with a Lalrpop grammar (`src/grammar.lalrpop`) and supported by the AST in `src/ast.rs`.
 * The SQL AST and translation code is in `src/sql.rs`

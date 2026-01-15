@@ -221,8 +221,8 @@ impl FieldType {
 ///     }
 ///     
 ///     fn translate(&self, source: &ast::Expression) -> std::result::Result<(ExprRef, FieldType), Error> {
-///         //TODO handle specific cases which are different from Postgres,
-///         // including cases which should be errors
+///         // This is the place to handle specific cases which are different from Postgres,
+///         //  including cases which should be errors
 ///
 ///         // Everything else can be delegated:
 ///         translate::postgres::translate(source, self)
@@ -233,8 +233,8 @@ impl FieldType {
 ///         name: &CodebaseFunction,
 ///         args: &[Box<ast::Expression>],
 ///     ) -> std::result::Result<(ExprRef, FieldType), Error> {
-///         //TODO similar pattern: most function calls probably resolve to the
-///         // same thing that Postgres uses but handle the differences here
+///         // Use a similar pattern here: most function calls probably resolve to the
+///         //  same thing that Postgres uses but handle the differences here
 ///
 ///         // and delegate the rest...
 ///         translate::postgres::translate_fn_call(name, args, self)
@@ -263,6 +263,8 @@ pub trait TranslationContext {
         field: &str,
     ) -> std::result::Result<(String, FieldType), String>;
 
+    fn custom_function(&self, func: &str) -> Option<ast::Expression>;
+
     /// Called to translate an expression generally.
     fn translate(&self, source: &ast::Expression) -> Result;
 
@@ -277,12 +279,41 @@ pub trait TranslationContext {
         args: &[Box<ast::Expression>],
     ) -> std::result::Result<(ExprRef, FieldType), Error>;
 
+    /// Called to translate a binary operator expression.
     fn translate_binary_op(
         &self,
         l: &ast::Expression,
         op: &ast::BinaryOp,
         r: &ast::Expression,
     ) -> Result;
+
+    /// Truncate the right side of a string comparison to a fixed length.
+    fn string_comp_right(&self, r: ExprRef, len: u32) -> ExprRef {
+        expr_ref(Expression::FunctionCall {
+            name: "SUBSTR".into(),
+            args: vec![
+                r,
+                expr_ref(Expression::NumberLiteral("1".into())),
+                expr_ref(Expression::NumberLiteral(len.to_string())),
+            ],
+        })
+    }
+
+    /// The left side of the string comparison should be truncated to the length of the right side (basically a startswith compare)
+    fn string_comp_left(&self, l: ExprRef, r: ExprRef) -> ExprRef {
+        let right_side_len_expression = expr_ref(Expression::FunctionCall {
+            name: "LENGTH".into(),
+            args: vec![r],
+        });
+        expr_ref(Expression::FunctionCall {
+            name: "SUBSTR".into(),
+            args: vec![
+                l,
+                expr_ref(Expression::NumberLiteral("1".into())),
+                right_side_len_expression,
+            ],
+        })
+    }
 }
 
 //NOTE(justin): This function almost certainly has a bug hiding in it.
@@ -301,34 +332,6 @@ fn escape_single_quotes(s: &str) -> String {
         res.push(c);
     }
     res
-}
-
-// The left side of the string comparison should be truncated to the length of the right side (basically a startswith compare)
-pub fn string_comp_left(l: ExprRef, r: ExprRef) -> ExprRef {
-    let right_side_len_expression = expr_ref(Expression::FunctionCall {
-        name: "LENGTH".into(),
-        args: vec![r],
-    });
-    expr_ref(Expression::FunctionCall {
-        name: "SUBSTR".into(),
-        args: vec![
-            l,
-            expr_ref(Expression::NumberLiteral("1".into())),
-            right_side_len_expression,
-        ],
-    })
-}
-
-// The right side of the string comparison should be truncated to the fixed length, no need to evaluate additional characters
-pub fn string_comp_right(r: ExprRef, len: u32) -> ExprRef {
-    expr_ref(Expression::FunctionCall {
-        name: "SUBSTR".into(),
-        args: vec![
-            r,
-            expr_ref(Expression::NumberLiteral("1".into())),
-            expr_ref(Expression::NumberLiteral(len.to_string())),
-        ],
-    })
 }
 
 #[cfg(test)]

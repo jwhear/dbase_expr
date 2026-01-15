@@ -5,22 +5,25 @@ use crate::{
         BinaryOp, COALESCE_DATE, Error, ExprRef, Expression, FieldType, Parenthesize, Result,
         TranslationContext, expr_ref, ok,
         postgres::{
-            self, get_all_args, get_arg, translate as default_translate, translate_binary_op,
+            self, get_all_args, get_arg, translate as default_translate, translate_binary_op_right,
             wrong_type,
         },
     },
 };
 
-pub struct SqliteTranslator<F>
+pub struct SqliteTranslator<F, C>
 where
     F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
+    C: Fn(&str) -> Option<ast::Expression>,
 {
     pub field_lookup: F,
+    pub custom_function: C,
 }
 
-impl<F> TranslationContext for SqliteTranslator<F>
+impl<F, C> TranslationContext for SqliteTranslator<F, C>
 where
     F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
+    C: Fn(&str) -> Option<ast::Expression>,
 {
     fn lookup_field(
         &self,
@@ -28,6 +31,10 @@ where
         field: &str,
     ) -> std::result::Result<(String, FieldType), String> {
         (self.field_lookup)(alias, field)
+    }
+
+    fn custom_function(&self, func: &str) -> Option<ast::Expression> {
+        (self.custom_function)(func)
     }
 
     fn translate(&self, source: &ast::Expression) -> Result {
@@ -66,7 +73,7 @@ where
                     FieldType::Logical,
                 )
             }
-            _ => translate_binary_op(self, l, op, r),
+            _ => translate_binary_op_right(self, l, translated_l, ty, op, r),
         }
     }
 }
