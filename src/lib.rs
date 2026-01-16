@@ -59,9 +59,6 @@
 //! New translation backends can be implemented using the [TranslationContext]
 //!  trait and, if needed, the [PrinterConfig] context.
 
-use lalrpop_util::lalrpop_mod;
-
-pub mod ast;
 pub mod codebase_functions;
 pub mod evaluate;
 pub mod fuzz_helper;
@@ -70,10 +67,8 @@ pub mod parser;
 pub mod simple_text_expr;
 pub mod to_sql;
 pub mod translate;
-pub use ast::ParseError;
-pub use ast::parse;
-
-lalrpop_mod!(#[allow(clippy::all)] pub grammar);
+pub use parser::Error;
+pub use parser::parse;
 
 // These imports are just to make the documentation nicer
 #[allow(unused_imports)]

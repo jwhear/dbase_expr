@@ -1,6 +1,6 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 
-const TESTS: [&str; 7] = [
+const TESTS: [&str; 8] = [
     r#"("DSGCJPNREJ4FNK00")"#,
     r#"("                        ") + ("          ") + "(none)""#,
     r#"iif(((0)=2.or.(0)=3.or.(0)=4.or.(0)=9.or.(0)=11.or.(0)=7),(0.000000) + (0.000000),0.0)"#,
@@ -10,6 +10,7 @@ const TESTS: [&str; 7] = [
     r#""E-MAIL"$UPPER(("               ")) .or. "EMAIL"$UPPER(("
        │        "))"#,
     r#"(0.000000) + (0.000000)"#,
+    r#"TRIM(TRIM(TRIM(TRIM(TRIM(TRIM(TRIM(TRIM(TRIM(TRIM(""))))))))))"#,
 ];
 
 fn old_parser() {

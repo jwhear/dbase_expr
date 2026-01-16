@@ -239,6 +239,9 @@ fn parse_binary_op<'input>(
         unexpected => Err(Error::UnexpectedToken(unexpected)),
     }?;
 
+    // Sequence needs to be implemented at the parser level because it's
+    //  going to be a wasteful pain to implement it as a later optimization.
+
     // now that we have our left side, expect a series of operators or EOF
     loop {
         let op = match lexer.peek_token()? {
@@ -246,19 +249,18 @@ fn parse_binary_op<'input>(
             Some(op) => op,
         };
 
-        //TODO if op is the same as previous, make it a sequence
-
         if let Some((l_pow, r_pow)) = infix_binding(op.ty) {
             if l_pow < min_binding_power {
                 break;
             }
+            let op: BinaryOp = op.try_into()?;
             // We've only peeked the op token, consume it now
             _ = lexer.next_token()?;
 
             let lhs_id = tree.push_expr(lhs);
             let rhs = parse_binary_op(lexer, tree, scratch, r_pow)?;
             let rhs_id = tree.push_expr(rhs);
-            lhs = Expression::BinaryOperator(lhs_id, op.try_into()?, rhs_id);
+            lhs = Expression::BinaryOperator(lhs_id, op, rhs_id);
             continue;
         }
 
