@@ -31,7 +31,7 @@ pub enum TokenType {
     StringDoubleQuote,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Token {
     pub ty: TokenType,
 

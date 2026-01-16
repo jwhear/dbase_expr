@@ -84,10 +84,10 @@ pub fn simplify_impl(expr: Expression) -> (Expression, bool) {
         | Expression::Field { .. } => (expr, false),
 
         // Attempt to simplify a chain of BinaryOp(Add) to a sequence of operators
-        Expression::BinaryOperator(l, BinaryOp::Add, r) => (concat(l, BinaryOp::Add, r), true),
+        Expression::BinaryOperator(l, BinaryOp::Add, r) => (concat(l, ConcatOp::Add, r), true),
 
         // Attempt to simplify a chain of BinaryOp(Sub) to a sequence
-        Expression::BinaryOperator(l, BinaryOp::Sub, r) => (concat(l, BinaryOp::Sub, r), true),
+        Expression::BinaryOperator(l, BinaryOp::Sub, r) => (concat(l, ConcatOp::Sub, r), true),
 
         // No optimizations below this line: simply recursively simplify operands
         // Recursively simplify operands
@@ -124,7 +124,7 @@ pub fn simplify_impl(expr: Expression) -> (Expression, bool) {
     }
 }
 
-fn concat(l: Box<Expression>, op: BinaryOp, r: Box<Expression>) -> Expression {
+fn concat(l: Box<Expression>, op: ConcatOp, r: Box<Expression>) -> Expression {
     // Trees nest to the left: a + b + c => ((a + b) + c)
     // We'll build up our vector in a loop like so:
     //  [c]
@@ -133,11 +133,12 @@ fn concat(l: Box<Expression>, op: BinaryOp, r: Box<Expression>) -> Expression {
     // Then reverse it at the end. For addition proper it's not a big deal
     //  but '+' is also used for concatenation and order is very important
 
+    let expected_op = op.get_op();
     let mut v = vec![r];
     let mut tree = l;
     while let Expression::BinaryOperator(l, binop, r) = *tree {
         tree = l;
-        if &binop != op {
+        if &binop != expected_op {
             break;
         }
         v.push(r);

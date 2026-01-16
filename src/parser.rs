@@ -158,6 +158,114 @@ impl<'input> ParseTree<'input> {
     pub fn get_args(&self, list: &ArgList) -> &[ExpressionId] {
         &self.arg_lists[list.start..list.start + list.len]
     }
+
+    pub fn print_tree(
+        &self,
+        e: &Expression,
+        f: &mut std::fmt::Formatter,
+    ) -> Result<(), std::fmt::Error> {
+        match e {
+            Expression::BoolLiteral(b) => write!(f, "{b}"),
+            Expression::NumberLiteral(s) => {
+                if let Ok(as_str) = std::str::from_utf8(s) {
+                    write!(f, "{as_str}")
+                } else {
+                    write!(f, "Number({s:?})")
+                }
+            }
+            Expression::StringLiteral(s) => {
+                if let Ok(as_str) = std::str::from_utf8(s) {
+                    write!(f, "\"{as_str}\"")
+                } else {
+                    write!(f, "String({s:?})")
+                }
+            }
+            Expression::Field { alias: None, name } => {
+                if let Ok(name) = std::str::from_utf8(name) {
+                    write!(f, "{name}")
+                } else {
+                    write!(f, "Field({name:?})")
+                }
+            }
+            Expression::Field {
+                alias: Some(alias),
+                name,
+            } => {
+                if let Ok(alias) = std::str::from_utf8(alias)
+                    && let Ok(name) = std::str::from_utf8(name)
+                {
+                    write!(f, "{alias}->{name}")
+                } else {
+                    write!(f, "Field({alias:?}, {name:?})")
+                }
+            }
+            Expression::UnaryOperator(UnaryOp::Not, child) => {
+                write!(f, "(NOT ")?;
+                self.print_tree(self.get_expr_unchecked(*child), f)?;
+                write!(f, ")")
+            }
+            Expression::UnaryOperator(UnaryOp::Neg, child) => {
+                write!(f, "(-")?;
+                self.print_tree(self.get_expr_unchecked(*child), f)?;
+                write!(f, ")")
+            }
+            Expression::BinaryOperator(l, op, r) => {
+                write!(f, "(")?;
+                self.print_tree(self.get_expr_unchecked(*l), f)?;
+                write!(
+                    f,
+                    "{}",
+                    match op {
+                        BinaryOp::Add => "+",
+                        BinaryOp::Sub => "-",
+                        BinaryOp::Mul => "*",
+                        BinaryOp::Div => "/",
+                        BinaryOp::Exp => "^",
+                        BinaryOp::Eq => "=",
+                        BinaryOp::Ne => "<>",
+                        BinaryOp::Lt => "<",
+                        BinaryOp::Le => "<=",
+                        BinaryOp::Gt => ">",
+                        BinaryOp::Ge => ">=",
+                        BinaryOp::Contain => "$",
+                        BinaryOp::Or => " OR ",
+                        BinaryOp::And => " AND ",
+                    }
+                )?;
+                self.print_tree(self.get_expr_unchecked(*r), f)?;
+                write!(f, ")")
+            }
+            Expression::FunctionCall { name, args } => {
+                write!(f, "{name}(")?;
+                let mut first = true;
+                for arg in self.get_args(args) {
+                    if first {
+                        first = false;
+                    } else {
+                        write!(f, ", ")?;
+                    }
+                    self.print_tree(self.get_expr_unchecked(*arg), f)?;
+                }
+                write!(f, ")")
+            }
+            Expression::Sequence(args, op) => {
+                write!(f, "({}", if *op == BinaryOp::Add { "+" } else { "-" })?;
+                for arg in self.get_args(args) {
+                    write!(f, " ")?;
+                    self.print_tree(self.get_expr_unchecked(*arg), f)?;
+                }
+                write!(f, ")")
+            }
+        }
+    }
+}
+
+pub struct TreePrinter<'input>(pub ParseTree<'input>, pub Expression<'input>);
+
+impl<'input> std::fmt::Display for TreePrinter<'input> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.print_tree(&self.1, f)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -178,6 +286,26 @@ impl From<LexerError> for Error {
     }
 }
 
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoExpression => write!(f, "Empty input"),
+            Self::Lexical(l) => write!(f, "Lexical error: {l}"),
+            Self::MissingCloseParen => write!(f, "Missing closing parenthesis"),
+            Self::UnexpectedToken(t) => write!(f, "Unexpected token, got {t:?}"),
+            Self::UnexpectedEof => write!(f, "Unexpected end of input"),
+            Self::UnknownFunction(name) => {
+                if let Ok(name) = std::str::from_utf8(name) {
+                    write!(f, "Unknown function '{name}'")
+                } else {
+                    write!(f, "Unknown function: {name:?}")
+                }
+            }
+            Self::Other(msg) => write!(f, "{msg}"),
+        }
+    }
+}
+
 pub fn parse<'input>(input: &'input str) -> Result<(ParseTree<'input>, Expression<'input>), Error> {
     let mut lexer = Lexer::new(input.as_bytes());
     let mut arg_scratch = Vec::with_capacity(100);
@@ -187,7 +315,13 @@ pub fn parse<'input>(input: &'input str) -> Result<(ParseTree<'input>, Expressio
     };
 
     let root = parse_binary_op(&mut lexer, &mut pt, &mut arg_scratch, 0)?;
-    Ok((pt, root))
+
+    // Make sure we've completely parsed the input
+    if let Ok(Some(tok)) = lexer.next_token() {
+        Err(Error::UnexpectedToken(tok))
+    } else {
+        Ok((pt, root))
+    }
 }
 
 fn parse_binary_op<'input>(
@@ -239,32 +373,80 @@ fn parse_binary_op<'input>(
         unexpected => Err(Error::UnexpectedToken(unexpected)),
     }?;
 
-    // Sequence needs to be implemented at the parser level because it's
-    //  going to be a wasteful pain to implement it as a later optimization.
-
     // now that we have our left side, expect a series of operators or EOF
     loop {
-        let op = match lexer.peek_token()? {
+        let op_tok = match lexer.peek_token()? {
             None => break,
             Some(op) => op,
         };
 
-        if let Some((l_pow, r_pow)) = infix_binding(op.ty) {
-            if l_pow < min_binding_power {
-                break;
-            }
-            let op: BinaryOp = op.try_into()?;
-            // We've only peeked the op token, consume it now
-            _ = lexer.next_token()?;
+        let Some((l_pow, r_pow)) = infix_binding(op_tok.ty) else {
+            break;
+        };
 
+        if l_pow < min_binding_power {
+            break;
+        }
+
+        let op: BinaryOp = op_tok.try_into()?;
+
+        // Consume the operator token
+        _ = lexer.next_token()?;
+
+        // Special handling for Add/Sub sequences
+        let seq_binding_power = infix_binding(TokenType::Plus).unwrap().0;
+        if matches!(op, BinaryOp::Add | BinaryOp::Sub) && min_binding_power <= seq_binding_power {
+            let seq_op = op;
+            let scratch_start = scratch.len();
+            scratch.push(tree.push_expr(lhs));
+
+            // Parse the initial RHS for this operator
+            let mut rhs = parse_binary_op(lexer, tree, scratch, r_pow)?;
+            scratch.push(tree.push_expr(rhs));
+
+            // Collect additional RHS if the next operator matches exactly
+            // (same op, sufficient binding power)
+            loop {
+                let next_op_tok = match lexer.peek_token()? {
+                    None => break,
+                    Some(t) => t,
+                };
+
+                let Some((next_l_pow, next_r_pow)) = infix_binding(next_op_tok.ty) else {
+                    break;
+                };
+
+                if next_l_pow < min_binding_power || next_op_tok.ty != op_tok.ty {
+                    break;
+                }
+
+                // Only continue the sequence if it's the exact same op
+                let next_op: BinaryOp = next_op_tok.try_into()?;
+                if next_op != seq_op {
+                    break;
+                }
+                _ = lexer.next_token()?;
+
+                // Parse the next RHS
+                rhs = parse_binary_op(lexer, tree, scratch, next_r_pow)?;
+                scratch.push(tree.push_expr(rhs));
+            }
+
+            // If just the two operands, use a BinaryOperator
+            if let [l_id, r_id] = scratch[scratch_start..] {
+                lhs = Expression::BinaryOperator(l_id, seq_op, r_id);
+                scratch.truncate(scratch_start); // clean up my usage
+            } else {
+                let arg_list = tree.push_args(scratch.drain(scratch_start..));
+                lhs = Expression::Sequence(arg_list, seq_op);
+            }
+        } else {
+            // Standard binary operator handling for non-Add/Sub ops
             let lhs_id = tree.push_expr(lhs);
             let rhs = parse_binary_op(lexer, tree, scratch, r_pow)?;
             let rhs_id = tree.push_expr(rhs);
             lhs = Expression::BinaryOperator(lhs_id, op, rhs_id);
-            continue;
         }
-
-        break;
     }
 
     Ok(lhs)
@@ -373,8 +555,7 @@ fn parse_fn_call<'input>(
         // For the actual argument we'll leave the token(s) in the lexer and
         //  let parse_binary_op do the work. This is why we only peeked above.
         let arg = parse_binary_op(lexer, tree, scratch, 0)?;
-        let arg_id = tree.push_expr(arg);
-        scratch.push(arg_id);
+        scratch.push(tree.push_expr(arg));
     }
 
     // Get the name and map it into a CodebaseFunction
@@ -564,5 +745,65 @@ mod tests {
         let first = tree.get_expr(args[0]).expect("first");
 
         assert_eq!(*first, Expression::StringLiteral(b"a date?"));
+    }
+    #[test]
+    fn sequence() {
+        let (tree, root) = parse(r#"a+b+c+d*e+f"#).expect("a valid parse");
+        let Expression::Sequence(args, BinaryOp::Add) = root else {
+            panic!("Expect a Sequence, got a {root:?}")
+        };
+        let args = tree.get_args(&args);
+        assert_eq!(args.len(), 5); // a, b, c, (d+e), f
+
+        assert_eq!(
+            tree.get_expr(args[0]).expect("arg"),
+            &Expression::Field {
+                alias: None,
+                name: b"a"
+            }
+        );
+        assert_eq!(
+            tree.get_expr(args[1]).expect("arg"),
+            &Expression::Field {
+                alias: None,
+                name: b"b"
+            }
+        );
+        assert_eq!(
+            tree.get_expr(args[2]).expect("arg"),
+            &Expression::Field {
+                alias: None,
+                name: b"c"
+            }
+        );
+        assert_eq!(
+            tree.get_expr(args[4]).expect("arg"),
+            &Expression::Field {
+                alias: None,
+                name: b"f"
+            }
+        );
+
+        // Arg 3 is a multiply
+        let arg3 = tree.get_expr(args[3]).expect("arg 3");
+        let Expression::BinaryOperator(lhs, BinaryOp::Mul, rhs) = arg3 else {
+            panic!("Expected a Mul, got a {arg3:?}")
+        };
+        let lhs = tree.get_expr(*lhs).expect("lhs");
+        let rhs = tree.get_expr(*rhs).expect("rhs");
+        assert_eq!(
+            *lhs,
+            Expression::Field {
+                alias: None,
+                name: b"d"
+            }
+        );
+        assert_eq!(
+            *rhs,
+            Expression::Field {
+                alias: None,
+                name: b"e"
+            }
+        );
     }
 }

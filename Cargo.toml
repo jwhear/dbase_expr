@@ -9,6 +9,8 @@ chrono = "0.4.41"
 lalrpop-util = { version = "0.20.2", features = ["lexer"] }
 regex = "1.11.1"
 serde = { version = "1.0.219", features = ["derive"], optional = true }
+strum = "0.27.2"
+strum_macros = "0.27.2"
 
 [build-dependencies]
 lalrpop = "0.20.2"

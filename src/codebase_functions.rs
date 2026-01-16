@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(strum_macros::Display, Debug, Clone, PartialEq, Eq)]
 pub enum CodebaseFunction {
     ALLTRIM,
     CHR,

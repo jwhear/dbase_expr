@@ -1,6 +1,6 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 
-const TESTS: [&str; 8] = [
+const TESTS: [&str; 9] = [
     r#"("DSGCJPNREJ4FNK00")"#,
     r#"("                        ") + ("          ") + "(none)""#,
     r#"iif(((0)=2.or.(0)=3.or.(0)=4.or.(0)=9.or.(0)=11.or.(0)=7),(0.000000) + (0.000000),0.0)"#,
@@ -11,13 +11,19 @@ const TESTS: [&str; 8] = [
        │        "))"#,
     r#"(0.000000) + (0.000000)"#,
     r#"TRIM(TRIM(TRIM(TRIM(TRIM(TRIM(TRIM(TRIM(TRIM(TRIM(""))))))))))"#,
+    "a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c",
 ];
 
 fn old_parser() {
-    use dbase_expr::grammar::ExprParser;
+    use dbase_expr::{ast::simplify, grammar::ExprParser};
     let parser = ExprParser::new();
     for test in TESTS.iter() {
-        _ = std::hint::black_box(parser.parse(test));
+        _ = std::hint::black_box({
+            let p = parser.parse(test).expect("parsed");
+            // With the old parser, we have to simplify to get the same results
+            //  as with the new one
+            let p = simplify(*p);
+        });
     }
 }
 
