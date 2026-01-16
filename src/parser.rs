@@ -43,21 +43,6 @@ impl TryFrom<Token> for BinaryOp {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConcatOp {
-    Add,
-    Sub,
-}
-
-impl ConcatOp {
-    pub fn get_op(&self) -> &BinaryOp {
-        match self {
-            ConcatOp::Add => &BinaryOp::Add,
-            ConcatOp::Sub => &BinaryOp::Sub,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOp {
     Not,
     Neg,
@@ -92,7 +77,7 @@ pub enum Expression<'input> {
     /// These sequences result in a deep tree of BinaryOps that can cause the
     ///  translate and evaluation code to blow out their stacks. We can simplify
     ///  to a single op and an arg list.
-    Sequence(ArgList, ConcatOp),
+    Sequence(ArgList, BinaryOp),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -116,10 +101,31 @@ pub struct ArgList {
     len: usize,
 }
 
+/// Instead of generating a tree of references or smart pointers (Rc), we'll
+///  pack all expressions into a flat array and have them refer to each other by
+///  an id (which is simply an index into that array).
+///
+/// Argument lists require a bit of special handling because we don't want
+///  FunctionCall and ConcatOp to actually carry a Vec and own the subexpressions.
+/// To handle these, all arguments get parsed as Expressions and stored in
+///  [expressions], then their ids are stored in [arg_lists]. A particular argument
+///  list is contiguous within [arg_lists]. For example, when this expression is
+///  parsed:
+///     fn_a(fn_b(1), 2)
+///
+/// This will get parsed into an expressions list:
+///        id=0,                              id=1,     id=2,                              id=3
+///  [Number(1), FunctionCall(fn_b, ArgList(0, 1)), Number(2), FunctionCall(fn_a, ArgList(1, 2))]
+///
+/// The two ArgLists reference spans of arg_lists:
+///  [ExpressionId(0), ExpressionId(1), Expression(2)]
+///
+/// The So fn_a's ArgList (1,2) is the span at arg_lists[1..1+2], that is, ExpressionId's 1 and 2.
+/// These in turn map to FunctionCall(fn_b) and Number(2), which are indeed its two arguments.
 pub struct ParseTree<'input> {
     /// All expressions are stored in a flat list. References are via ExpressionId.
     expressions: Vec<Expression<'input>>,
-    /// All argument lists are stored flat packed
+    /// All argument lists are stored packed contiguously
     arg_lists: Vec<ExpressionId>,
 }
 
@@ -147,6 +153,7 @@ impl<'input> ParseTree<'input> {
         self.expressions.get(id.0)
     }
 
+    /// Get the ExpressionIds representing a particular argument list
     #[inline]
     pub fn get_args(&self, list: &ArgList) -> &[ExpressionId] {
         &self.arg_lists[list.start..list.start + list.len]
@@ -161,6 +168,7 @@ pub enum Error {
     MissingCloseParen,
     UnexpectedToken(Token),
     UnexpectedEof,
+    UnknownFunction(Vec<u8>),
     Other(String),
 }
 
@@ -170,7 +178,7 @@ impl From<LexerError> for Error {
     }
 }
 
-pub fn parse<'input>(input: &'input str) -> Result<(ParseTree<'input>, ExpressionId), Error> {
+pub fn parse<'input>(input: &'input str) -> Result<(ParseTree<'input>, Expression<'input>), Error> {
     let mut lexer = Lexer::new(input.as_bytes());
     let mut arg_scratch = Vec::with_capacity(100);
     let mut pt = ParseTree::<'input> {
@@ -178,8 +186,7 @@ pub fn parse<'input>(input: &'input str) -> Result<(ParseTree<'input>, Expressio
         arg_lists: Vec::with_capacity(32),
     };
 
-    let root_exp = parse_binary_op(&mut lexer, &mut pt, &mut arg_scratch, 0)?;
-    let root = pt.push_expr(root_exp);
+    let root = parse_binary_op(&mut lexer, &mut pt, &mut arg_scratch, 0)?;
     Ok((pt, root))
 }
 
@@ -211,16 +218,17 @@ fn parse_binary_op<'input>(
             let rhs = tree.push_expr(rhs);
             Ok(Expression::UnaryOperator(prefix.try_into()?, rhs))
         }
+
         // Numbers, strings, and boolean literals
         tok if is_literal(&tok) => parse_literal(lexer, &tok),
+
         // Either a field reference or a function call
         tok if tok.ty == TokenType::Identifier => {
             // If next token is a left paren, it's a function call
-            let mut peeker = lexer.clone();
             if let Ok(Some(Token {
                 ty: TokenType::ParenLeft,
                 ..
-            })) = peeker.next_token()
+            })) = lexer.peek_token()
             {
                 parse_fn_call(lexer, tree, scratch, &tok)
             } else {
@@ -233,8 +241,7 @@ fn parse_binary_op<'input>(
 
     // now that we have our left side, expect a series of operators or EOF
     loop {
-        let mut peeker = lexer.clone();
-        let op = match peeker.next_token()? {
+        let op = match lexer.peek_token()? {
             None => break,
             Some(op) => op,
         };
@@ -296,28 +303,30 @@ fn parse_field_ref<'input>(
     token: &Token,
 ) -> Result<Expression<'input>, Error> {
     // Peek for an Arrow
-    let mut peeker = lexer.clone();
-    if let Ok(Some(Token {
+    let Ok(Some(Token {
         ty: TokenType::Arrow,
         ..
-    })) = peeker.next_token()
-    {
-        _ = lexer.next_token()?;
-        let field = lexer.next_token()?.ok_or(Error::UnexpectedEof)?;
-
-        if field.ty == TokenType::Identifier {
-            Ok(Expression::Field {
-                alias: Some(lexer.contents(token)),
-                name: lexer.contents(&field),
-            })
-        } else {
-            Err(Error::UnexpectedToken(field))
-        }
-    } else {
-        Ok(Expression::Field {
+    })) = lexer.peek_token()
+    else {
+        // If there's no Arrow then it's just a plain Field reference
+        return Ok(Expression::Field {
             alias: None,
             name: lexer.contents(&token),
+        });
+    };
+
+    let alias = Some(lexer.contents(token));
+    // We've only peeked the Arrow, consume it now
+    _ = lexer.next_token();
+    let name = lexer.next_token()?.ok_or(Error::UnexpectedEof)?;
+
+    if name.ty == TokenType::Identifier {
+        Ok(Expression::Field {
+            alias,
+            name: lexer.contents(&name),
         })
+    } else {
+        Err(Error::UnexpectedToken(name))
     }
 }
 
@@ -327,26 +336,31 @@ fn parse_fn_call<'input>(
     scratch: &mut Vec<ExpressionId>,
     name_token: &Token,
 ) -> Result<Expression<'input>, Error> {
+    // We'll use the scratch buffer to accumulate the ExpressionIds of the args
+    // At the end we'll drain them into the ParseTree. We do need to track where
+    //  we're starting because we might be recursed multiple levels and prior
+    //  stack frames are also using this buffer so it might not be empty.
     let scratch_start = scratch.len();
 
-    // Expect an open paren
+    // We've already popped the function name [name_token], so expect a ParenLeft
     if !lexer.consume(TokenType::ParenLeft)? {
         return Err(Error::UnexpectedEof);
     }
 
-    // Some number of arguments
+    // Zero or more arguments
     let mut first = true;
     loop {
-        let mut peeker = lexer.clone();
-        let t = peeker.next_token()?.ok_or(Error::UnexpectedEof)?;
+        // Peek to see if we're getting a right paren to end the list
+        let t = lexer.peek_token()?.ok_or(Error::UnexpectedEof)?;
         if t.ty == TokenType::ParenRight {
-            // consume the )
+            // consume the ), we only peeked it
             _ = lexer.next_token();
             break;
         }
 
+        // If not closing the list, it must be another argument.
+        // If this isn't the first argument, expect a comment
         if !first {
-            // Expect a comma
             if !lexer.consume(TokenType::Comma)? {
                 return Err(Error::UnexpectedToken(t));
             };
@@ -354,15 +368,18 @@ fn parse_fn_call<'input>(
             first = false;
         }
 
-        // Expect an argument
+        // For the actual argument we'll leave the token(s) in the lexer and
+        //  let parse_binary_op do the work. This is why we only peeked above.
         let arg = parse_binary_op(lexer, tree, scratch, 0)?;
         let arg_id = tree.push_expr(arg);
         scratch.push(arg_id);
     }
 
-    let name = unsafe { std::str::from_utf8_unchecked(lexer.contents(name_token)) }
-        .parse()
-        .map_err(|s| Error::Other(s))?;
+    // Get the name and map it into a CodebaseFunction
+    let name = lexer.contents(name_token);
+    let name = name
+        .try_into()
+        .map_err(|()| Error::UnknownFunction(name.to_vec()))?;
     let args = tree.push_args(scratch.drain(scratch_start..scratch.len()));
 
     Ok(Expression::FunctionCall { name, args })
@@ -371,7 +388,7 @@ fn parse_fn_call<'input>(
 // NOTE prefix_binding and infix_binding specify the "binding power" of the
 //  various prefix and infix operators. Binding power is a more intuitive
 //  version of "precedence": higher binding power means the operator binds
-//  more tightly.
+//  more tightly. So multiplication has a higher binding power than addition.
 fn prefix_binding(ty: TokenType) -> Option<((), u8)> {
     match ty {
         TokenType::Plus | TokenType::Minus => Some(((), 90)),
@@ -380,6 +397,10 @@ fn prefix_binding(ty: TokenType) -> Option<((), u8)> {
     }
 }
 
+// NOTE for infix bindings we specify a left and right side of the operator,
+//  this slight assymetry prevents us from getting stuck on ties and allows
+//  us to change the associativity of operators, a feature not particularly
+//  needed by dbase expressions.
 fn infix_binding(ty: TokenType) -> Option<(u8, u8)> {
     match ty {
         TokenType::Plus | TokenType::Minus => Some((50, 51)),
@@ -405,13 +426,12 @@ mod tests {
     #[test]
     fn basic1() {
         let (tree, root) = parse(r#"(1 + -2.0) <> 3."#).expect("a valid parse");
-        let root = tree.get_expr(root).expect("a root expression");
         let Expression::BinaryOperator(lhs, BinaryOp::Ne, rhs) = root else {
             panic!("Expected a Ne, got a {root:?}")
         };
 
-        let lhs = tree.get_expr(*lhs).expect("lhs");
-        let rhs = tree.get_expr(*rhs).expect("rhs");
+        let lhs = tree.get_expr(lhs).expect("lhs");
+        let rhs = tree.get_expr(rhs).expect("rhs");
 
         assert_eq!(*rhs, Expression::NumberLiteral(b"3."));
 
@@ -433,13 +453,12 @@ mod tests {
     #[test]
     fn basic2() {
         let (tree, root) = parse(r#"'Hello' + (" " + "World")"#).expect("a valid parse");
-        let root = tree.get_expr(root).expect("a root expression");
         let Expression::BinaryOperator(lhs, BinaryOp::Add, rhs) = root else {
             panic!("Expected a Add, got a {root:?}")
         };
 
-        let lhs = tree.get_expr(*lhs).expect("lhs");
-        let rhs = tree.get_expr(*rhs).expect("rhs");
+        let lhs = tree.get_expr(lhs).expect("lhs");
+        let rhs = tree.get_expr(rhs).expect("rhs");
 
         assert_eq!(*lhs, Expression::StringLiteral(b"Hello"));
 
@@ -455,12 +474,11 @@ mod tests {
     #[test]
     fn basic3() {
         let (tree, root) = parse(r#"'Hello ' + (F_NAME + CUST->L_NAME)"#).expect("a valid parse");
-        let root = tree.get_expr(root).expect("a root expression");
         let Expression::BinaryOperator(lhs, BinaryOp::Add, rhs) = root else {
             panic!("Expected a Add, got a {root:?}")
         };
-        let lhs = tree.get_expr(*lhs).expect("lhs");
-        let rhs = tree.get_expr(*rhs).expect("rhs");
+        let lhs = tree.get_expr(lhs).expect("lhs");
+        let rhs = tree.get_expr(rhs).expect("rhs");
 
         assert_eq!(*lhs, Expression::StringLiteral(b"Hello "));
 
@@ -488,12 +506,11 @@ mod tests {
     #[test]
     fn logical() {
         let (tree, root) = parse(r#"(.t. = .NOT..f.) .OR. .t."#).expect("a valid parse");
-        let root = tree.get_expr(root).expect("a root expression");
         let Expression::BinaryOperator(lhs, BinaryOp::Or, rhs) = root else {
             panic!("Expected an OR, got a {root:?}");
         };
-        let lhs = tree.get_expr(*lhs).expect("lhs");
-        let rhs = tree.get_expr(*rhs).expect("rhs");
+        let lhs = tree.get_expr(lhs).expect("lhs");
+        let rhs = tree.get_expr(rhs).expect("rhs");
 
         assert_eq!(*rhs, Expression::BoolLiteral(true));
 
@@ -513,7 +530,6 @@ mod tests {
     #[test]
     fn fn_calls() {
         let (tree, root) = parse(r#"CTOD(TRIM("a date?"), TEST)"#).expect("a valid parse");
-        let root = tree.get_expr(root).expect("a root expression");
         let Expression::FunctionCall {
             name: CodebaseFunction::CTOD,
             args,
@@ -521,7 +537,7 @@ mod tests {
         else {
             panic!("Expected a FunctionCall, got a {root:?}")
         };
-        let args = tree.get_args(args);
+        let args = tree.get_args(&args);
         assert_eq!(args.len(), 2);
         let first = tree.get_expr(args[0]).expect("first");
         let second = tree.get_expr(args[1]).expect("second");

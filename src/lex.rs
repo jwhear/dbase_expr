@@ -62,7 +62,7 @@ impl std::fmt::Display for Error {
 /// Assumes that [word] is eight ASCII characters packed into a u64 and
 ///  returns the lowercased equivalent.
 #[inline]
-fn lowercase_u64(word: u64) -> u64 {
+pub fn lowercase_u64(word: u64) -> u64 {
     // Ok, this code is a bit obtuse but it's also branchless and just a handful
     //  of instructions.
     // Key insight is that a character `b` is in A..=Z if:
@@ -140,7 +140,7 @@ impl<'input> Lexer<'input> {
     }
 
     #[inline]
-    pub fn peek(&self) -> Option<u8> {
+    fn peek(&self) -> Option<u8> {
         if self.is_empty() {
             None
         } else {
@@ -149,18 +149,18 @@ impl<'input> Lexer<'input> {
     }
 
     #[inline]
-    pub fn peek_unchecked(&self) -> u8 {
+    fn peek_unchecked(&self) -> u8 {
         self.source[self.current]
     }
 
     #[inline]
-    pub fn peek_at(&self, at: usize) -> Option<u8> {
+    fn peek_at(&self, at: usize) -> Option<u8> {
         let at = self.current + at;
         self.source.get(at).copied()
     }
 
     #[inline]
-    pub fn pop(&mut self) -> Option<u8> {
+    fn pop(&mut self) -> Option<u8> {
         let res = self.peek();
         if res.is_some() {
             self.current += 1;
@@ -276,6 +276,13 @@ impl<'input> Lexer<'input> {
         } else {
             false
         })
+    }
+
+    /// Look at the next token without actually consuming it
+    pub fn peek_token(&self) -> Result<Option<Token>, Error> {
+        // This clone is super cheap, just a fat pointer and an index
+        let mut peeker = self.clone();
+        peeker.next_token()
     }
 
     pub fn next_token(&mut self) -> Result<Option<Token>, Error> {
