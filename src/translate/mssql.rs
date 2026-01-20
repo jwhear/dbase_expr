@@ -617,14 +617,26 @@ pub fn translate_fn_call(
         }
 
         F::SUBSTR => {
-            let len: u32 = match &*arg(2)??.0.borrow() {
+            let mut args = all_args()?;
+            let parsed_index: u32 = {
+                match &*args[1].borrow() {
+                    Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(1)),
+                    _ => Err(wrong_type(1)),
+                }?
+            };
+            if parsed_index == 0 {
+                //SUBSTR in codebase treats 0 and 1 exactly the same
+                args[1] = expr_ref(Expression::NumberLiteral("1".into()));
+            }
+
+            let len: u32 = match &*args[2].borrow() {
                 Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(2)),
                 _ => Err(wrong_type(2)),
             }?;
             ok(
                 Expression::FunctionCall {
                     name: "SUBSTRING".into(),
-                    args: all_args()?,
+                    args,
                 },
                 FieldType::Character(len),
             )
