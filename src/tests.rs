@@ -85,49 +85,58 @@ mod tests {
 
     #[test]
     fn substr_test() {
-        let (expression, field_type) = parse_expression("substr(ID, 1, 3)").unwrap();
-        match (&*expression.borrow(), field_type) {
-            (Expression::FunctionCall { name, args }, FieldType::Character(3)) => {
-                assert_eq!(name, "SUBSTR");
-                assert_eq!(args.len(), 3);
-                assert_eq!(
-                    *args[0].borrow(),
-                    Expression::Field {
-                        name: "ID".to_string(),
-                        field_type: FieldType::Character(10),
-                    }
-                );
-                assert_eq!(
-                    *args[1].borrow(),
-                    Expression::NumberLiteral("1".to_string())
-                );
-                assert_eq!(
-                    *args[2].borrow(),
-                    Expression::NumberLiteral("3".to_string())
-                );
+        let (expression, field_type) = parse_expression("substr(ID, 0, 3)").unwrap();
+        let Expression::FunctionCall { name, args } = &*expression.borrow() else {
+            panic!("Expected FunctionCall, got {:?}", expression)
+        };
+        assert_eq!(name, "SUBSTR");
+        assert_eq!(args.len(), 3);
+        assert_eq!(field_type, FieldType::Character(3));
+        assert_eq!(
+            *args[0].borrow(),
+            Expression::Field {
+                name: "ID".to_string(),
+                field_type: FieldType::Character(10),
             }
-            _ => panic!("Expected FunctionCall, got {:?}", expression),
+        );
+        assert_eq!(
+            *args[1].borrow(),
+            Expression::NumberLiteral("1".to_string())
+        );
+        assert_eq!(
+            *args[2].borrow(),
+            Expression::NumberLiteral("3".to_string())
+        );
+    }
+
+    #[test]
+    fn substr_wrong_params_test() {
+        match parse_expression("substr(ID)") {
+            Err(Error::IncorrectArgCount(func, count)) => {
+                assert_eq!(func, "SUBSTR");
+                assert_eq!(count, 1);
+            }
+            other => panic!("Expected IncorrectArgCount error, got {:?}", other),
         }
     }
 
     #[test]
     fn substr_replace_0_with_1_test() {
         let (expression, field_type) = parse_expression("substr(ID, 0, 3)").unwrap();
-        match (&*expression.borrow(), field_type) {
-            (Expression::FunctionCall { name, args }, FieldType::Character(3)) => {
-                assert_eq!(name, "SUBSTR");
-                assert_eq!(args.len(), 3);
-                assert_eq!(
-                    *args[1].borrow(),
-                    Expression::NumberLiteral("1".to_string())
-                );
-                assert_eq!(
-                    *args[2].borrow(),
-                    Expression::NumberLiteral("3".to_string())
-                );
-            }
-            _ => panic!("Expected FunctionCall, got {:?}", expression),
-        }
+        let Expression::FunctionCall { name, args } = &*expression.borrow() else {
+            panic!("Expected FunctionCall, got {:?}", expression)
+        };
+        assert_eq!(name, "SUBSTR");
+        assert_eq!(args.len(), 3);
+        assert_eq!(field_type, FieldType::Character(3));
+        assert_eq!(
+            *args[1].borrow(),
+            Expression::NumberLiteral("1".to_string())
+        );
+        assert_eq!(
+            *args[2].borrow(),
+            Expression::NumberLiteral("3".to_string())
+        );
     }
 
     fn parse_expression(expr: &str) -> translate::Result {

@@ -418,8 +418,14 @@ fn eval_function(
             ] => {
                 let start = (*start as usize).saturating_sub(1);
                 let len = *len as usize;
-                let substr: String = s.chars().skip(start).take(len).collect();
-                Ok(Value::Str(substr))
+                Ok(Value::Str(s.chars().skip(start).take(len).collect()))
+            }
+            [
+                Value::FixedLenStr(s, _) | Value::Str(s),
+                Value::Number(start, _),
+            ] => {
+                let start = (*start as usize).saturating_sub(1);
+                Ok(Value::Str(s.chars().skip(start).collect()))
             }
             _ => Err(Error::InvalidArguments(
                 name.clone(),
@@ -854,5 +860,26 @@ mod tests {
     #[test]
     fn addition_or_sign() {
         assert_eq!(eval("7+1=8"), TRUE);
+    }
+
+    #[test]
+    fn substr_test_with_1() {
+        assert_eq!(
+            eval("SUBSTR('TEST', 1, 2)"),
+            Ok(Value::Str("TE".to_string()))
+        );
+    }
+
+    #[test]
+    fn substr_test_with_0() {
+        assert_eq!(
+            eval("SUBSTR('TEST', 0, 2)"),
+            Ok(Value::Str("TE".to_string()))
+        );
+    }
+
+    #[test]
+    fn substr_test_without_len() {
+        assert_eq!(eval("SUBSTR('TEST', 3)"), Ok(Value::Str("ST".to_string())));
     }
 }
