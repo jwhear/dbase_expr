@@ -1,13 +1,8 @@
 use chrono::NaiveDate;
 use dbase_expr::{
-    codebase_functions::CodebaseFunction,
+    tests::{TestTranslator, custom_functions},
     to_sql::PrinterConfig,
-    translate::{
-        Error, ExprRef, Expression, FieldType, TranslationContext, expr_ref,
-        postgres::{
-            Translator, translate as default_translate, translate_binary_op, translate_fn_call,
-        },
-    },
+    translate::{FieldType, TranslationContext, postgres::Translator},
     *,
 };
 use to_sql::Printer;
@@ -24,6 +19,7 @@ fn main() {
         (_, "SHIP_DATE") => FieldType::Date,
         (_, "ID") => FieldType::Character(1),
         (_, "L_NAME") => FieldType::Character(20),
+        (_, "__DELETED") => FieldType::Logical,
         (Some(alias), _) => panic!("unknown field: {alias}.{field}"),
         (None, _) => panic!("unknown field: {field}"),
     };
@@ -40,67 +36,7 @@ fn main() {
 
     // Overriding the DTOS function
     println!("Running to_sql tests with function overriding...");
-    pub struct CustomTranslator<F>
-    where
-        F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
-    {
-        field_lookup: F,
-        custom_functions: fn(&str) -> Option<ast::Expression>,
-    }
-    impl<F> TranslationContext for CustomTranslator<F>
-    where
-        F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
-    {
-        fn lookup_field(
-            &self,
-            alias: Option<&str>,
-            field: &str,
-        ) -> std::result::Result<(String, FieldType), String> {
-            (self.field_lookup)(alias, field)
-        }
-
-        fn custom_function(&self, func: &str) -> Option<ast::Expression> {
-            (self.custom_functions)(func)
-        }
-
-        fn translate(&self, source: &ast::Expression) -> translate::Result {
-            default_translate(source, self)
-        }
-
-        fn translate_fn_call(
-            &self,
-            name: &CodebaseFunction,
-            args: &[Box<ast::Expression>],
-        ) -> std::result::Result<(ExprRef, FieldType), Error> {
-            let arg = |index: usize| {
-                args.get(index)
-                    .map(|a| default_translate(a, self))
-                    .ok_or(Error::IncorrectArgCount(format!("{:?}", name), index))
-            };
-
-            if name == &CodebaseFunction::DTOS {
-                Ok((
-                    expr_ref(Expression::FunctionCall {
-                        name: "CB_DATE_TO_TEXT".into(),
-                        args: vec![arg(0)??.0, expr_ref("YYYYMMDD".into())],
-                    }),
-                    FieldType::Character(8),
-                ))
-            } else {
-                translate_fn_call(name, args, self)
-            }
-        }
-
-        fn translate_binary_op(
-            &self,
-            l: &ast::Expression,
-            op: &ast::BinaryOp,
-            r: &ast::Expression,
-        ) -> translate::Result {
-            translate_binary_op(self, l, op, r)
-        }
-    }
-    let cx = CustomTranslator {
+    let cx = TestTranslator {
         field_lookup: |alias: Option<&str>, field: &str| -> Result<(String, FieldType), String> {
             let field = field.to_string().to_uppercase();
             let field_type = get_type(alias, &field);
@@ -282,16 +218,5 @@ fn to_sql_tests<T: TranslationContext>(cx: &T) {
             // Any other kind of error, just print it
             Err(e) => println!("{:?}", e),
         };
-    }
-}
-
-fn custom_functions() -> fn(&str) -> Option<ast::Expression> {
-    custom_functions_impl
-}
-
-fn custom_functions_impl(func: &str) -> Option<ast::Expression> {
-    match func.to_uppercase().as_str() {
-        "USER" => Some(ast::Expression::StringLiteral("my user".to_string())),
-        _ => None,
     }
 }

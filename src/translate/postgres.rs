@@ -459,19 +459,7 @@ pub fn translate_fn_call(
                 }
             }
         }
-        F::SUBSTR => {
-            let len: u32 = match &*arg(2)??.0.borrow() {
-                Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(2)),
-                _ => Err(wrong_type(2)),
-            }?;
-            ok(
-                Expression::FunctionCall {
-                    name: "SUBSTR".into(),
-                    args: all_args()?,
-                },
-                FieldType::Character(len),
-            )
-        }
+        F::SUBSTR => translate_substr("SUBSTR".to_string(), args, cx),
         F::TRIM => ok(
             Expression::FunctionCall {
                 name: "RTRIM".into(),
@@ -826,6 +814,41 @@ pub fn get_str_fn_args(
     };
 
     Ok(StrArgs::WithArgs(val_arg, fmt, len))
+}
+
+pub fn translate_substr(
+    func: String,
+    ast_args: &[Box<ast::Expression>],
+    cx: &impl TranslationContext,
+) -> std::result::Result<(ExprRef, FieldType), Error> {
+    let mut args = get_all_args(ast_args, cx)?;
+    let wrong_type = |index| wrong_type(index, &F::SUBSTR, ast_args);
+
+    let parsed_index: u32 = {
+        match &*args
+            .get(1)
+            .ok_or(Error::IncorrectArgCount(func.clone(), args.len()))?
+            .borrow()
+        {
+            Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(1)),
+            _ => Err(wrong_type(1)),
+        }?
+    };
+    if parsed_index == 0 {
+        //SUBSTR in codebase treats 0 and 1 exactly the same
+        args[1] = expr_ref(Expression::NumberLiteral("1".into()));
+    }
+
+    let ty = if args.len() >= 3 {
+        let len: u32 = match &*args[2].borrow() {
+            Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(2)),
+            _ => Err(wrong_type(2)),
+        }?;
+        FieldType::Character(len)
+    } else {
+        FieldType::Memo
+    };
+    ok(Expression::FunctionCall { name: func, args }, ty)
 }
 
 pub fn get_arg(

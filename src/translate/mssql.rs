@@ -616,19 +616,7 @@ pub fn translate_fn_call(
             )
         }
 
-        F::SUBSTR => {
-            let len: u32 = match &*arg(2)??.0.borrow() {
-                Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(2)),
-                _ => Err(wrong_type(2)),
-            }?;
-            ok(
-                Expression::FunctionCall {
-                    name: "SUBSTRING".into(),
-                    args: all_args()?,
-                },
-                FieldType::Character(len),
-            )
-        }
+        F::SUBSTR => postgres::translate_substr("SUBSTRING".to_string(), args, cx),
 
         // For all other functions, delegate to Postgres implementation
         other => postgres::translate_fn_call(other, args, cx),
