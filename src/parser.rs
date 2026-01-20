@@ -1,6 +1,9 @@
 use crate::codebase_functions::CodebaseFunction;
 use crate::lex::{Error as LexerError, Lexer, Token, TokenType};
 
+//TODO check size of Expression
+// Make the enums all much smaller. See if it impacts performance.
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOp {
     Add,

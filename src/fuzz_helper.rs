@@ -1,7 +1,6 @@
 use crate::{
-    ast,
     evaluate::{self, Value},
-    grammar::ExprParser,
+    parser,
     translate::{FieldType, TranslationContext, postgres::Translator},
 };
 
@@ -26,13 +25,13 @@ fn value_lookup() -> impl Fn(Option<&str>, &str) -> Option<Value> {
     }
 }
 
-fn custom_functions() -> fn(&str) -> Option<ast::Expression> {
+fn custom_functions() -> fn(&str) -> Option<parser::Expression> {
     custom_functions_impl
 }
 
-fn custom_functions_impl(func: &str) -> Option<ast::Expression> {
+fn custom_functions_impl(func: &str) -> Option<parser::Expression> {
     match func.to_uppercase().as_str() {
-        "USER" => Some(ast::Expression::StringLiteral("my user".to_string())),
+        "USER" => Some(parser::Expression::StringLiteral("my user".to_string())),
         _ => None,
     }
 }
@@ -54,31 +53,28 @@ fn field_lookup() -> impl Fn(Option<&str>, &str) -> Result<(String, FieldType), 
 
 pub fn translate_expr(expr: &str) {
     // Try parsing
-    let parser = ExprParser::new();
-    if let Ok(parsed) = parser.parse(expr) {
-        let simplified = crate::ast::simplify(*parsed);
+    if let Ok((tree, root)) = parser::parse(expr) {
         // Evaluate, ignore errors
-        let _ = evaluate::evaluate(&simplified, &value_lookup(), &custom_functions());
+        let _ = evaluate::evaluate(&root, &tree, &value_lookup(), &custom_functions());
 
         let translator = Translator {
             field_lookup: field_lookup(),
             custom_function: custom_functions(),
         };
-        _ = translator.translate(&simplified);
+        _ = translator.translate(&root, &tree);
     }
 }
 
-pub fn translate_ast(expr: ast::Expression) {
-    let simplified = crate::ast::simplify(expr);
+pub fn translate_ast(expr: parser::Expression) {
     let func = custom_functions();
     // Evaluate, ignore errors
     {
-        let _ = evaluate::evaluate(&simplified, &value_lookup(), &func);
+        let _ = evaluate::evaluate(&expr, &tree, &value_lookup(), &func);
     }
 
     let translator = Translator {
         field_lookup: field_lookup(),
         custom_function: func,
     };
-    _ = translator.translate(&simplified);
+    _ = translator.translate(&expr, &tree);
 }

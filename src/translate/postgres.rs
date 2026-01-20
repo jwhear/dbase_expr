@@ -3,8 +3,8 @@ use super::{
     escape_single_quotes, ok,
 };
 use crate::{
-    ast::{self, Expression as E},
     codebase_functions::CodebaseFunction as F,
+    parser::{self, Expression as E},
     translate::{COALESCE_DATE, ExprRef, Parenthesize, expr_ref},
 };
 
@@ -17,7 +17,7 @@ where
     F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
 {
     pub field_lookup: F,
-    pub custom_function: fn(&str) -> Option<ast::Expression>,
+    pub custom_function: fn(&str) -> Option<parser::Expression>,
 }
 
 impl<F> TranslationContext for Translator<F>
@@ -32,19 +32,19 @@ where
         (self.field_lookup)(alias, field)
     }
 
-    fn custom_function(&self, func: &str) -> Option<ast::Expression> {
+    fn custom_function(&self, func: &str) -> Option<parser::Expression> {
         (self.custom_function)(func)
     }
 
-    fn translate(&self, source: &ast::Expression) -> Result {
+    fn translate(&self, source: &parser::Expression) -> Result {
         translate(source, self)
     }
 
     fn translate_binary_op(
         &self,
-        l: &ast::Expression,
-        op: &ast::BinaryOp,
-        r: &ast::Expression,
+        l: &parser::Expression,
+        op: &parser::BinaryOp,
+        r: &parser::Expression,
     ) -> Result {
         translate_binary_op(self, l, op, r)
     }
@@ -52,7 +52,7 @@ where
     fn translate_fn_call(
         &self,
         name: &crate::codebase_functions::CodebaseFunction,
-        args: &[Box<ast::Expression>],
+        args: &[parser::Expression],
     ) -> std::result::Result<(ExprRef, FieldType), Error> {
         translate_fn_call(name, args, self)
     }

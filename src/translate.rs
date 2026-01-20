@@ -1,6 +1,9 @@
 use std::{cell::RefCell, fmt::Formatter, rc::Rc};
 
-use crate::{ast, codebase_functions::CodebaseFunction};
+use crate::{
+    codebase_functions::CodebaseFunction,
+    parser::{self, ParseTree},
+};
 
 pub mod mssql;
 pub mod postgres;
@@ -108,12 +111,12 @@ pub enum Expression {
     BareFunctionCall(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Error {
     UnsupportedFunction(String),
     IncorrectArgCount(String, usize),
     ArgWrongType {
-        func: ast::Expression,
+        func: parser::Expression,
         wrong_arg_index: usize,
     },
     Other(String),
@@ -266,10 +269,10 @@ pub trait TranslationContext {
         field: &str,
     ) -> std::result::Result<(String, FieldType), String>;
 
-    fn custom_function(&self, func: &str) -> Option<ast::Expression>;
+    fn custom_function(&self, func: &str) -> Option<parser::Expression>;
 
     /// Called to translate an expression generally.
-    fn translate(&self, source: &ast::Expression) -> Result;
+    fn translate(&self, source: &parser::Expression, tree: &ParseTree) -> Result;
 
     /// Called to translate a function call.
     ///   `name`: the name of the function in the original expression
@@ -279,15 +282,17 @@ pub trait TranslationContext {
     fn translate_fn_call(
         &self,
         name: &CodebaseFunction,
-        args: &[Box<ast::Expression>],
+        args: &[parser::Expression],
+        tree: &ParseTree,
     ) -> std::result::Result<(ExprRef, FieldType), Error>;
 
     /// Called to translate a binary operator expression.
     fn translate_binary_op(
         &self,
-        l: &ast::Expression,
-        op: &ast::BinaryOp,
-        r: &ast::Expression,
+        l: &parser::Expression,
+        op: &parser::BinaryOp,
+        r: &parser::Expression,
+        tree: &ParseTree,
     ) -> Result;
 
     /// Truncate the right side of a string comparison to a fixed length.
