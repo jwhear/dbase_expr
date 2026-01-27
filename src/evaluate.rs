@@ -92,22 +92,23 @@ impl Debug for Value {
 }
 
 pub type FieldValueGetter<'a> = &'a dyn Fn(Option<&str>, &str) -> Option<Value>;
-pub type CustomFunctions<'a> = &'a dyn Fn(&str) -> Option<Expression>;
+pub type CustomFunctions<'a> = &'a dyn Fn(&str) -> Option<Result<Value, String>>;
 
 pub fn evaluate(
     expr: &Expression,
+    tree: &crate::parser::ParseTree,
     get: FieldValueGetter,
     custom_functions: CustomFunctions,
 ) -> Result<Value, Error> {
     #[derive(Debug)]
     enum EvalState<'a> {
-        Expr(&'a Expression),
+        Expr(&'a Expression<'a>),
         Unary {
             op: UnaryOp,
         },
         BinaryLeft {
             op: BinaryOp,
-            rhs: &'a Expression,
+            rhs: &'a Expression<'a>,
         },
         BinaryRight {
             op: BinaryOp,
@@ -115,7 +116,7 @@ pub fn evaluate(
         },
         Function {
             name: &'a F,
-            args: std::slice::Iter<'a, Box<Expression>>,
+            args: std::slice::Iter<'a, crate::parser::ExpressionId>,
             collected: Vec<Value>,
             total: usize,
         },
@@ -129,58 +130,80 @@ pub fn evaluate(
             EvalState::Expr(e) => match e {
                 Expression::BoolLiteral(b) => results.push(Value::Bool(*b)),
 
-                Expression::NumberLiteral(s) if s == "." => results.push(Value::Number(0.0, false)),
+                Expression::NumberLiteral(s) if s == b"." => {
+                    results.push(Value::Number(0.0, false))
+                }
                 Expression::NumberLiteral(s) => results.push(
-                    s.parse::<f64>()
+                    std::str::from_utf8(s)
+                        .map_err(|e| Error::FloatParseError(e.to_string()))?
+                        .parse::<f64>()
                         .map(|v| Value::Number(v, false))
                         .map_err(|e| Error::FloatParseError(e.to_string()))?,
                 ),
 
                 Expression::StringLiteral(s) => {
                     // string literals are treated as fixed length strings unless modified by functions like LEFT, TRIM, etc.
-                    results.push(Value::FixedLenStr(s.clone(), s.len()))
+                    let s_str = std::str::from_utf8(s).map_err(|e| Error::Other(e.to_string()))?;
+                    results.push(Value::FixedLenStr(s_str.to_string(), s_str.len()))
                 }
 
-                Expression::Field { alias, name, .. } => match get(alias.as_deref(), name) {
-                    Some(Value::FixedLenStr(s, len)) => {
-                        let padded = if s.len() < len {
-                            let mut padded = s.to_string();
-                            padded.extend(std::iter::repeat_n(' ', len - s.len()));
-                            padded
-                        } else {
-                            s.chars().take(len).collect()
-                        };
-                        results.push(Value::FixedLenStr(padded, len))
+                Expression::Field { alias, name, .. } => {
+                    let name_str =
+                        std::str::from_utf8(name).map_err(|e| Error::Other(e.to_string()))?;
+                    let alias_str = alias.map(|a| std::str::from_utf8(a).ok()).flatten();
+                    match get(alias_str.as_deref(), name_str) {
+                        Some(Value::FixedLenStr(s, len)) => {
+                            let padded = if s.len() < len {
+                                let mut padded = s.to_string();
+                                padded.extend(std::iter::repeat_n(' ', len - s.len()));
+                                padded
+                            } else {
+                                s.chars().take(len).collect()
+                            };
+                            results.push(Value::FixedLenStr(padded, len))
+                        }
+                        Some(v) => results.push(v),
+                        None => return Err(Error::FieldNotFound(name_str.to_string())),
                     }
-                    Some(v) => results.push(v),
-                    None => return Err(Error::FieldNotFound(name.to_string())),
-                },
+                }
 
                 Expression::UnaryOperator(op, expr) => {
                     stack.push(EvalState::Unary { op: *op });
-                    stack.push(EvalState::Expr(expr));
+                    stack.push(EvalState::Expr(tree.get_expr_unchecked(*expr)));
                 }
 
                 Expression::BinaryOperator(lhs, op, rhs) => {
-                    stack.push(EvalState::BinaryLeft { op: *op, rhs });
-                    stack.push(EvalState::Expr(lhs));
+                    stack.push(EvalState::BinaryLeft {
+                        op: *op,
+                        rhs: tree.get_expr_unchecked(*rhs),
+                    });
+                    stack.push(EvalState::Expr(tree.get_expr_unchecked(*lhs)));
                 }
-                Expression::Sequence(exprs, op) => {
+                Expression::Sequence(args, op) => {
+                    // Get the actual argument expressions from the tree
+                    let arg_exprs = tree.get_args(args);
+                    if arg_exprs.is_empty() {
+                        return Err(Error::Other("Empty sequence".to_string()));
+                    }
+
                     // Evaluate the whole expression and push it to the stack
-                    let mut accum = evaluate(&exprs[0], get, custom_functions)?;
-                    for e in &exprs[1..] {
-                        let e = evaluate(e, get, custom_functions)?;
-                        accum = eval_binary_op(op.get_op(), accum, e)?;
+                    let first_expr = tree.get_expr_unchecked(arg_exprs[0]);
+                    let mut accum = evaluate(first_expr, tree, get, custom_functions)?;
+                    for &expr_id in &arg_exprs[1..] {
+                        let expr = tree.get_expr_unchecked(expr_id);
+                        let e = evaluate(expr, tree, get, custom_functions)?;
+                        accum = eval_binary_op(op, accum, e)?;
                     }
                     results.push(accum);
                 }
 
                 Expression::FunctionCall { name, args } => {
+                    let arg_exprs = tree.get_args(args);
                     stack.push(EvalState::Function {
                         name,
-                        args: args.iter(),
+                        args: arg_exprs.iter(),
                         collected: vec![],
-                        total: args.len(),
+                        total: arg_exprs.len(),
                     });
                 }
             },
@@ -220,7 +243,7 @@ pub fn evaluate(
                         collected,
                         total,
                     });
-                    stack.push(EvalState::Expr(next));
+                    stack.push(EvalState::Expr(tree.get_expr_unchecked(*next)));
                 } else {
                     // All args evaluated, now apply function
                     for _ in 0..total {
@@ -228,7 +251,7 @@ pub fn evaluate(
                     }
                     collected.reverse(); // restore original order
 
-                    let result = eval_function(name, &collected, get, custom_functions)?;
+                    let result = eval_function(name, &collected, get, custom_functions, tree)?;
                     results.push(result);
                 }
             }
@@ -248,6 +271,7 @@ fn eval_function(
     args: &[Value],
     get: FieldValueGetter,
     custom_functions: CustomFunctions,
+    tree: &crate::parser::ParseTree,
 ) -> Result<Value, Error> {
     match name {
         F::LTRIM => match args {
@@ -529,7 +553,8 @@ fn eval_function(
         F::RECNO => Ok(get(None, "RECNO5").unwrap_or(Value::Number(0.0, true))),
 
         F::Unknown(unknown) => match custom_functions(unknown) {
-            Some(v) => evaluate(&v, get, custom_functions),
+            Some(Ok(v)) => Ok(v),
+            Some(Err(msg)) => Err(Error::Other(msg)),
             None => Err(Error::UnknownFunction(unknown.clone())),
         },
     }
@@ -787,15 +812,10 @@ mod tests {
     const TRUE: Result<Value, Error> = Result::Ok(Value::Bool(true));
 
     fn eval(expr: &str) -> Result<Value, Error> {
-        use crate::{ast, grammar::ExprParser};
-        let parser = ExprParser::new();
         let value_lookup = |_: Option<&str>, _: &str| -> Option<Value> { None };
-        let custom_functions = |_: &str| -> Option<Expression> { None };
-        match parser.parse(expr) {
-            Ok(t) => {
-                let t = ast::simplify(*t);
-                evaluate(&t, &value_lookup, &custom_functions)
-            }
+        let custom_functions = |_: &str| -> Option<crate::parser::Expression> { None };
+        match crate::parser::parse(expr) {
+            Ok((tree, expr)) => evaluate(&expr, &tree, &value_lookup, &custom_functions),
             Err(e) => Err(Error::Other(format!("{e}"))),
         }
     }

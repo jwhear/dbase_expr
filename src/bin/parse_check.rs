@@ -1,7 +1,7 @@
 use dbase_expr::parser::{Expression, TreePrinter, parse};
 
 fn main() {
-    println!("sizeof(Expression) = ", std::mem::size_of::<Expression>());
+    println!("sizeof(Expression) = {}", std::mem::size_of::<Expression>());
 
     for line in std::io::stdin().lines() {
         let line = line.expect("a line");

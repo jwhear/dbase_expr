@@ -2,6 +2,7 @@ use chrono::NaiveDate;
 use dbase_expr::{
     codebase_functions::CodebaseFunction,
     lex::Lexer,
+    parser::parse,
     to_sql::PrinterConfig,
     translate::{
         Error, ExprRef, Expression, FieldType, TranslationContext, expr_ref,
@@ -47,7 +48,7 @@ fn main() {
         F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
     {
         field_lookup: F,
-        custom_functions: fn(&str) -> Option<ast::Expression>,
+        custom_functions: fn(&str) -> Option<translate::Result>,
     }
     impl<F> TranslationContext for CustomTranslator<F>
     where
@@ -61,22 +62,28 @@ fn main() {
             (self.field_lookup)(alias, field)
         }
 
-        fn custom_function(&self, func: &str) -> Option<ast::Expression> {
+        fn custom_function(&self, func: &str) -> Option<translate::Result> {
             (self.custom_functions)(func)
         }
 
-        fn translate(&self, source: &ast::Expression) -> translate::Result {
-            default_translate(source, self)
+        fn translate(
+            &self,
+            source: &parser::Expression,
+            tree: &parser::ParseTree,
+        ) -> translate::Result {
+            default_translate(source, tree, self)
         }
 
         fn translate_fn_call(
             &self,
             name: &CodebaseFunction,
-            args: &[Box<ast::Expression>],
+            args: &[parser::ExpressionId],
+            tree: &parser::ParseTree,
         ) -> std::result::Result<(ExprRef, FieldType), Error> {
             let arg = |index: usize| {
                 args.get(index)
-                    .map(|a| default_translate(a, self))
+                    .map(|a| tree.get_expr_unchecked(*a))
+                    .map(|a| default_translate(a, tree, self))
                     .ok_or(Error::IncorrectArgCount(format!("{:?}", name), index))
             };
 
@@ -89,17 +96,18 @@ fn main() {
                     FieldType::Character(8),
                 ))
             } else {
-                translate_fn_call(name, args, self)
+                translate_fn_call(name, args, tree, self)
             }
         }
 
         fn translate_binary_op(
             &self,
-            l: &ast::Expression,
-            op: &ast::BinaryOp,
-            r: &ast::Expression,
+            l: &parser::Expression,
+            op: &parser::BinaryOp,
+            r: &parser::Expression,
+            tree: &parser::ParseTree,
         ) -> translate::Result {
-            translate_binary_op(self, l, op, r)
+            translate_binary_op(self, l, op, r, tree)
         }
     }
     let cx = CustomTranslator {
@@ -123,7 +131,6 @@ fn main() {
 }
 
 fn expr_tests() {
-    let parser = grammar::ExprParser::new();
     let tests = [
         "-",    //0
         "--3",  //3 because it translates to -(-3)
@@ -210,32 +217,20 @@ fn expr_tests() {
     };
 
     for test in tests.iter() {
-        match parser.parse(test) {
-            Ok(t) => {
+        match parse(test) {
+            Ok((tree, root)) => {
                 //println!("{t:?}");
-                let t = ast::simplify(*t);
-                //println!("{t:?}");
-                match evaluate::evaluate(&t, &value_lookup, &custom_functions()) {
+                match evaluate::evaluate(&root, &tree, &value_lookup, &custom_functions()) {
                     Ok(tree) => println!("{test} => {tree:?}\n"),
                     Err(e) => eprintln!("{test} => Error translating tree: {e:?}\n:{test}\n"),
                 }
             }
-            // The parse failed with an unexpected token: show the approximate
-            //  position in the source
-            Err(lalrpop_util::ParseError::InvalidToken { location }) => {
-                let end = test.len().min(location + 10);
-                println!("Failed: {}\nError near here: {}", test, unsafe {
-                    test.get_unchecked(location..end)
-                })
-            }
-            // Any other kind of error, just print it
             Err(e) => println!("{:?}", e),
         };
     }
 }
 
 fn to_sql_tests<T: TranslationContext>(cx: &T) {
-    let parser = grammar::ExprParser::new();
     let tests = [
         "deleted() = .f. .and. substr(id, 1, 3 ) <> \"($)\"",
         ".NOT.deleted()",
@@ -270,39 +265,27 @@ fn to_sql_tests<T: TranslationContext>(cx: &T) {
     ];
 
     for test in tests.iter() {
-        match parser.parse(test) {
-            Ok(t) => {
-                let t = ast::simplify(*t);
-                match cx.translate(&t) {
-                    Ok(tree) => println!(
-                        "{test}\n=>\n{}\n",
-                        Printer::new(tree.0, PrinterConfig::default())
-                    ),
-                    Err(e) => eprintln!("Error translating tree: {e:?}\n:{test}\n"),
-                }
-            }
+        match parse(test) {
+            Ok((tree, root)) => match cx.translate(&root, &tree) {
+                Ok(tree) => println!(
+                    "{test}\n=>\n{}\n",
+                    Printer::new(tree.0, PrinterConfig::default())
+                ),
+                Err(e) => eprintln!("Error translating tree: {e:?}\n:{test}\n"),
+            },
 
-            // The parse failed with an unexpected token: show the approximate
-            //  position in the source
-            Err(lalrpop_util::ParseError::InvalidToken { location }) => {
-                let end = test.len().min(location + 10);
-                println!("Failed: {}\nError near here: {}", test, unsafe {
-                    test.get_unchecked(location..end)
-                })
-            }
-            // Any other kind of error, just print it
             Err(e) => println!("{:?}", e),
         };
     }
 }
 
-fn custom_functions() -> fn(&str) -> Option<ast::Expression> {
+fn custom_functions() -> fn(&str) -> Option<Result<evaluate::Value, String>> {
     custom_functions_impl
 }
 
-fn custom_functions_impl(func: &str) -> Option<ast::Expression> {
+fn custom_functions_impl(func: &str) -> Option<Result<evaluate::Value, String>> {
     match func.to_uppercase().as_str() {
-        "USER" => Some(ast::Expression::StringLiteral("my user".to_string())),
+        "USER" => Some(Ok(evaluate::Value::Str("my user".to_string()))),
         _ => None,
     }
 }

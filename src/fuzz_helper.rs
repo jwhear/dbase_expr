@@ -1,8 +1,9 @@
 use crate::{
     evaluate::{self, Value},
     parser,
-    translate::{FieldType, TranslationContext, postgres::Translator},
+    translate::{self, Expression, FieldType, TranslationContext, postgres::Translator},
 };
+use std::{cell::RefCell, rc::Rc};
 
 // Simple value lookup for evaluation
 fn value_lookup() -> impl Fn(Option<&str>, &str) -> Option<Value> {
@@ -25,13 +26,18 @@ fn value_lookup() -> impl Fn(Option<&str>, &str) -> Option<Value> {
     }
 }
 
-fn custom_functions() -> fn(&str) -> Option<parser::Expression> {
+fn custom_functions() -> fn(&str) -> Option<translate::Result> {
     custom_functions_impl
 }
 
-fn custom_functions_impl(func: &str) -> Option<parser::Expression> {
+fn custom_functions_impl(func: &str) -> Option<translate::Result> {
     match func.to_uppercase().as_str() {
-        "USER" => Some(parser::Expression::StringLiteral("my user".to_string())),
+        "USER" => Some(Ok((
+            Rc::new(RefCell::new(Expression::SingleQuoteStringLiteral(
+                "my user".to_owned(),
+            ))),
+            FieldType::Memo,
+        ))),
         _ => None,
     }
 }
@@ -54,7 +60,7 @@ fn field_lookup() -> impl Fn(Option<&str>, &str) -> Result<(String, FieldType), 
 pub fn translate_expr(expr: &str) {
     // Try parsing
     if let Ok((tree, root)) = parser::parse(expr) {
-        // Evaluate, ignore errors
+        // Evaluate, ignore errors - using new 4-parameter signature
         let _ = evaluate::evaluate(&root, &tree, &value_lookup(), &custom_functions());
 
         let translator = Translator {
@@ -65,16 +71,16 @@ pub fn translate_expr(expr: &str) {
     }
 }
 
-pub fn translate_ast(expr: parser::Expression) {
+pub fn translate_ast(expr: parser::Expression, tree: &parser::ParseTree) {
     let func = custom_functions();
-    // Evaluate, ignore errors
+    // Evaluate, ignore errors - using new 4-parameter signature
     {
-        let _ = evaluate::evaluate(&expr, &tree, &value_lookup(), &func);
+        let _ = evaluate::evaluate(&expr, tree, &value_lookup(), &func);
     }
 
     let translator = Translator {
         field_lookup: field_lookup(),
         custom_function: func,
     };
-    _ = translator.translate(&expr, &tree);
+    _ = translator.translate(&expr, tree);
 }

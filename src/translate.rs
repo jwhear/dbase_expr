@@ -2,10 +2,11 @@ use std::{cell::RefCell, fmt::Formatter, rc::Rc};
 
 use crate::{
     codebase_functions::CodebaseFunction,
+    evaluate::Value, // returned by custom functions
     parser::{self, ParseTree},
 };
 
-pub mod mssql;
+//pub mod mssql; // Not fully ported to ParseTree revision
 pub mod postgres;
 pub mod sqlite;
 
@@ -111,12 +112,23 @@ pub enum Expression {
     BareFunctionCall(String),
 }
 
+impl From<Value> for Expression {
+    fn from(value: Value) -> Self {
+        match value {
+            Value::FixedLenStr(s, _) => Self::SingleQuoteStringLiteral(escape_single_quotes(&s)),
+            Value::Bool(b) => Self::BoolLiteral(b),
+            Value::Number(v, _) => Self::NumberLiteral(v.to_string()),
+            _ => 
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Error {
     UnsupportedFunction(String),
     IncorrectArgCount(String, usize),
     ArgWrongType {
-        func: parser::Expression,
+        func_name: String,
         wrong_arg_index: usize,
     },
     Other(String),
@@ -131,11 +143,11 @@ impl std::fmt::Display for Error {
                 "Function {name} called with an incorrect number of arguments (got {count})"
             ),
             Self::ArgWrongType {
-                func,
+                func_name,
                 wrong_arg_index,
             } => write!(
                 f,
-                "Function {func:?}: argument {wrong_arg_index} is the wrong type",
+                "Function {func_name}: argument {wrong_arg_index} is the wrong type",
             ),
             Self::Other(msg) => write!(f, "Error: {msg}"),
         }
@@ -198,6 +210,8 @@ impl FieldType {
     }
 }
 
+pub type CustomFunctionResult = Option<std::result::Result<Value, String>>;
+
 /// This trait allows the caller to control translation. When implementing a new
 ///  translation target, a reasonable strategy is to delegate to the Postgres
 ///  translator but intercept anything that needs to be handled differently:
@@ -222,11 +236,11 @@ impl FieldType {
 ///             .ok_or(format!("No field named {field}"))
 ///     }
 ///
-///     fn custom_function(&self, func: &str) -> Option<ast::Expression> {
+///     fn custom_function(&self, func: &str) -> CustomFunctionResult {
 ///         None
 ///     }
 ///     
-///     fn translate(&self, source: &ast::Expression) -> std::result::Result<(ExprRef, FieldType), Error> {
+///     fn translate(&self, source: &parser::Expression, tree: &parser::ParseTree) -> std::result::Result<(ExprRef, FieldType), Error> {
 ///         // This is the place to handle specific cases which are different from Postgres,
 ///         //  including cases which should be errors
 ///
@@ -237,22 +251,24 @@ impl FieldType {
 ///     fn translate_fn_call(
 ///         &self,
 ///         name: &CodebaseFunction,
-///         args: &[Box<ast::Expression>],
+///         args: &[parser::ExpressionId],
+///         tree: &ParseTree,
 ///     ) -> std::result::Result<(ExprRef, FieldType), Error> {
 ///         // Use a similar pattern here: most function calls probably resolve to the
 ///         //  same thing that Postgres uses but handle the differences here
 ///
 ///         // and delegate the rest...
-///         translate::postgres::translate_fn_call(name, args, self)
+///         translate::postgres::translate_fn_call(name, args, self, tree)
 ///     }
 ///
 ///     fn translate_binary_op(
 ///        &self,
-///        l: &ast::Expression,
-///        op: &ast::BinaryOp,
-///        r: &ast::Expression,
+///        l: &parser::Expression,
+///        op: &parser::BinaryOp,
+///        r: &parser::Expression,
+///        tree: &parser::ParseTree,
 ///     ) -> std::result::Result<(ExprRef, FieldType), Error> {
-///         translate::postgres::translate_binary_op(self, l, op, r)
+///         translate::postgres::translate_binary_op(self, l, op, r, tree)
 ///     }
 /// }
 ///
@@ -269,7 +285,7 @@ pub trait TranslationContext {
         field: &str,
     ) -> std::result::Result<(String, FieldType), String>;
 
-    fn custom_function(&self, func: &str) -> Option<parser::Expression>;
+    fn custom_function(&self, func: &str) -> CustomFunctionResult;
 
     /// Called to translate an expression generally.
     fn translate(&self, source: &parser::Expression, tree: &ParseTree) -> Result;
@@ -282,7 +298,7 @@ pub trait TranslationContext {
     fn translate_fn_call(
         &self,
         name: &CodebaseFunction,
-        args: &[parser::Expression],
+        args: &[parser::ExpressionId],
         tree: &ParseTree,
     ) -> std::result::Result<(ExprRef, FieldType), Error>;
 

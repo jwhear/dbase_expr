@@ -1,10 +1,9 @@
 use crate::{
-    ast,
     codebase_functions::CodebaseFunction as F,
+    parser::{self, ExpressionId, ParseTree},
     translate::{
         COALESCE_DATE, Error, ExprRef, Expression, FieldType, Result, TranslationContext, expr_ref,
         ok,
-        postgres::{self, get_all_args, get_arg, translate as default_translate, wrong_type},
     },
 };
 
@@ -27,45 +26,31 @@ where
         (self.field_lookup)(alias, field)
     }
 
-    fn custom_function(&self, _func: &str) -> Option<ast::Expression> {
+    fn custom_function(&self, _func: &str) -> Option<parser::Expression> {
         None //not used here
     }
 
-    fn translate(&self, source: &ast::Expression) -> Result {
-        match source {
-            ast::Expression::Sequence(operands, concat_op) => {
-                let (first_expr, first_ty) = self.translate(&operands[0])?;
-                match first_ty {
-                    FieldType::Date => self.translate_date_sequence(
-                        first_expr,
-                        first_ty,
-                        &operands[1..],
-                        concat_op,
-                    ),
-                    FieldType::Character(_) | FieldType::Memo | FieldType::MemoBinary => self
-                        .translate_string_sequence(first_expr, first_ty, &operands[1..], concat_op),
-                    _ => default_translate(source, self),
-                }
-            }
-            _ => default_translate(source, self),
-        }
+    fn translate(&self, source: &parser::Expression, tree: &ParseTree) -> Result {
+        self.translate_impl(source, tree)
     }
 
     fn translate_fn_call(
         &self,
         name: &crate::codebase_functions::CodebaseFunction,
-        args: &[Box<ast::Expression>],
+        args: &[parser::ExpressionId],
+        tree: &ParseTree,
     ) -> std::result::Result<(ExprRef, FieldType), Error> {
-        translate_fn_call(name, args, self)
+        translate_fn_call(name, args, tree, self)
     }
 
     fn translate_binary_op(
         &self,
-        l: &ast::Expression,
-        op: &ast::BinaryOp,
-        r: &ast::Expression,
+        l: &parser::Expression,
+        op: &parser::BinaryOp,
+        r: &parser::Expression,
+        tree: &ParseTree,
     ) -> Result {
-        translate_binary_op(self, l, op, r)
+        translate_binary_op(self, l, op, r, tree)
     }
 
     fn string_comp_left(&self, l: ExprRef, r: ExprRef) -> ExprRef {
@@ -99,24 +84,135 @@ impl<F> MssqlTranslator<F>
 where
     F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
 {
+    fn translate_impl(&self, source: &parser::Expression, tree: &ParseTree) -> Result {
+        match source {
+            parser::Expression::Sequence(args, op) => {
+                let args_ids = tree.get_args(args);
+                if args_ids.is_empty() {
+                    return Err(Error::UnsupportedFunction("empty sequence".into()));
+                }
+
+                let first_expr_id = args_ids[0];
+                let first_expr = tree.get_expr_unchecked(first_expr_id);
+                let (first_result, first_ty) = self.translate_impl(first_expr, tree)?;
+
+                match first_ty {
+                    FieldType::Date => self.translate_date_sequence(
+                        first_result,
+                        first_ty,
+                        &args_ids[1..],
+                        op,
+                        tree,
+                    ),
+                    FieldType::Character(_) | FieldType::Memo | FieldType::MemoBinary => self
+                        .translate_string_sequence(
+                            first_result,
+                            first_ty,
+                            &args_ids[1..],
+                            op,
+                            tree,
+                        ),
+                    _ => self.translate_default(source, tree),
+                }
+            }
+            _ => self.translate_default(source, tree),
+        }
+    }
+
+    fn translate_default(&self, source: &parser::Expression, tree: &ParseTree) -> Result {
+        match source {
+            parser::Expression::BoolLiteral(v) => {
+                ok(Expression::BoolLiteral(*v), FieldType::Logical)
+            }
+            parser::Expression::NumberLiteral(v) => {
+                if let Ok(v_str) = std::str::from_utf8(v) {
+                    let dec = v_str
+                        .chars()
+                        .position(|c| c == '.')
+                        .map(|i| v_str.len() - i)
+                        .unwrap_or(0) as u32;
+                    ok(
+                        Expression::NumberLiteral(v_str.to_string()),
+                        FieldType::Numeric {
+                            len: v_str.len() as u32,
+                            dec,
+                        },
+                    )
+                } else {
+                    Err(Error::UnsupportedFunction("invalid number literal".into()))
+                }
+            }
+            parser::Expression::StringLiteral(v) => {
+                if let Ok(v_str) = std::str::from_utf8(v) {
+                    let v_str = escape_single_quotes(v_str);
+                    let len = v_str.len();
+                    ok(
+                        Expression::SingleQuoteStringLiteral(v_str),
+                        FieldType::Character(len as u32),
+                    )
+                } else {
+                    Err(Error::UnsupportedFunction("invalid string literal".into()))
+                }
+            }
+            parser::Expression::Field { alias, name } => {
+                let alias_str = alias.and_then(|a| std::str::from_utf8(a).ok());
+                let name_str = std::str::from_utf8(name)
+                    .map_err(|_| Error::UnsupportedFunction("invalid field name".into()))?;
+                let (name, field_type) = self
+                    .lookup_field(alias_str, name_str)
+                    .map_err(|e| Error::Other(e))?;
+                ok(Expression::Field { name, field_type }, field_type)
+            }
+            parser::Expression::FunctionCall { name, args } => {
+                self.translate_fn_call(name, tree.get_args(args), tree)
+            }
+            parser::Expression::BinaryOperator(l, op, r) => self.translate_binary_op(
+                tree.get_expr_unchecked(*l),
+                op,
+                tree.get_expr_unchecked(*r),
+                tree,
+            ),
+            parser::Expression::UnaryOperator(op, expr) => {
+                let (translated_expr, ty) =
+                    self.translate_impl(tree.get_expr_unchecked(*expr), tree)?;
+                match op {
+                    parser::UnaryOp::Not => ok(
+                        Expression::UnaryOperator(crate::translate::UnaryOp::Not, translated_expr),
+                        FieldType::Logical,
+                    ),
+                    parser::UnaryOp::Neg => ok(
+                        Expression::UnaryOperator(crate::translate::UnaryOp::Neg, translated_expr),
+                        ty,
+                    ),
+                }
+            }
+            parser::Expression::Sequence(_, _) => {
+                // Should be handled above
+                Err(Error::UnsupportedFunction("unexpected sequence".into()))
+            }
+        }
+    }
+
     fn translate_date_sequence(
         &self,
         first_expr: ExprRef,
         first_ty: FieldType,
-        remaining_operands: &[Box<ast::Expression>],
-        concat_op: &ast::ConcatOp,
+        remaining_operands: &[ExpressionId],
+        concat_op: &parser::BinaryOp,
+        tree: &ParseTree,
     ) -> Result {
         let mut result = (first_expr, first_ty);
-        for operand in remaining_operands {
-            let (right_expr, right_ty) = self.translate(operand)?;
+        for operand_id in remaining_operands {
+            let operand = tree.get_expr_unchecked(*operand_id);
+            let (right_expr, right_ty) = self.translate_impl(operand, tree)?;
             match (concat_op, &right_ty) {
-                (ast::ConcatOp::Add, ty) if is_numeric_type(ty) => {
+                (parser::BinaryOp::Add, ty) if is_numeric_type(ty) => {
                     result = (
                         expr_ref(dateadd_expr("day", right_expr, result.0)),
                         FieldType::Date,
                     );
                 }
-                (ast::ConcatOp::Sub, ty) if is_numeric_type(ty) => {
+                (parser::BinaryOp::Sub, ty) if is_numeric_type(ty) => {
                     let negated_amount = expr_ref(Expression::UnaryOperator(
                         crate::translate::UnaryOp::Neg,
                         right_expr,
@@ -126,20 +222,21 @@ where
                         FieldType::Date,
                     );
                 }
-                (ast::ConcatOp::Sub, FieldType::Date) => {
+                (parser::BinaryOp::Sub, FieldType::Date) => {
                     result = (
                         expr_ref(datediff_expr("day", right_expr, result.0)),
                         FieldType::Numeric { len: 99, dec: 0 },
                     );
                 }
                 _ => {
-                    // Not a supported date operation, reconstruct the sequence and fall back to default
-                    let mut all_operands =
-                        vec![Box::new(ast::Expression::NumberLiteral("0".into()))];
-                    all_operands.extend_from_slice(remaining_operands);
-                    return default_translate(
-                        &ast::Expression::Sequence(all_operands, *concat_op),
-                        self,
+                    // Not a supported date operation, reconstruct and fall back to default
+                    let first_id = remaining_operands.first().copied().unwrap();
+                    let mut all_ids = vec![first_id];
+                    all_ids.extend_from_slice(remaining_operands);
+                    let arg_list = tree.push_args(all_ids.into_iter());
+                    return self.translate_default(
+                        &parser::Expression::Sequence(arg_list, *concat_op),
+                        tree,
                     );
                 }
             }
@@ -151,19 +248,21 @@ where
         &self,
         first_expr: ExprRef,
         first_ty: FieldType,
-        remaining_operands: &[Box<ast::Expression>],
-        concat_op: &ast::ConcatOp,
+        remaining_operands: &[ExpressionId],
+        concat_op: &parser::BinaryOp,
+        tree: &ParseTree,
     ) -> Result {
         let mut all_exprs = vec![first_expr];
         let mut result_type = first_ty;
 
-        for operand in remaining_operands {
-            let (right_expr, _right_ty) = self.translate(operand)?;
+        for operand_id in remaining_operands {
+            let operand = tree.get_expr_unchecked(*operand_id);
+            let (right_expr, _right_ty) = self.translate_impl(operand, tree)?;
             match concat_op {
-                ast::ConcatOp::Add => {
+                parser::BinaryOp::Add => {
                     all_exprs.push(right_expr);
                 }
-                ast::ConcatOp::Sub => {
+                parser::BinaryOp::Sub => {
                     if all_exprs.len() == 1 {
                         // First subtraction, use the helper function
                         let left_expr = all_exprs.pop().unwrap();
@@ -176,6 +275,17 @@ where
                         all_exprs.push(right_expr);
                     }
                 }
+                _ => {
+                    // Other operations not supported for string sequences
+                    let first_id = remaining_operands.first().copied().unwrap();
+                    let mut all_ids = vec![first_id];
+                    all_ids.extend_from_slice(remaining_operands);
+                    let arg_list = tree.push_args(all_ids.into_iter());
+                    return self.translate_default(
+                        &parser::Expression::Sequence(arg_list, *concat_op),
+                        tree,
+                    );
+                }
             }
         }
 
@@ -186,6 +296,10 @@ where
             Ok((all_exprs.into_iter().next().unwrap(), result_type))
         }
     }
+}
+
+fn escape_single_quotes(s: &str) -> String {
+    s.replace('\'', "''")
 }
 
 fn dateadd_expr(interval: &str, amount: ExprRef, date: ExprRef) -> Expression {
@@ -259,27 +373,29 @@ fn is_string_type(ty: &FieldType) -> bool {
 
 pub fn translate_binary_op<T: TranslationContext>(
     cx: &T,
-    l: &ast::Expression,
-    op: &ast::BinaryOp,
-    r: &ast::Expression,
+    l: &parser::Expression,
+    op: &parser::BinaryOp,
+    r: &parser::Expression,
+    tree: &ParseTree,
 ) -> Result {
-    let (translated_l, ty_l) = cx.translate(l)?;
+    let (translated_l, ty_l) = cx.translate(l, tree)?;
 
     match (op, &ty_l) {
         // Date arithmetic
-        (ast::BinaryOp::Add, FieldType::Date) => {
-            let (translated_r, ty_r) = cx.translate(r)?;
+        (parser::BinaryOp::Add, FieldType::Date) => {
+            let (translated_r, ty_r) = cx.translate(r, tree)?;
             if is_numeric_type(&ty_r) {
                 ok(
                     dateadd_expr("day", translated_r, translated_l),
                     FieldType::Date,
                 )
             } else {
-                postgres::translate_binary_op_right(cx, l, translated_l, ty_l, op, r)
+                // Fall back to default translation for unsupported operations
+                cx.translate_binary_op(l, op, r, tree)
             }
         }
-        (ast::BinaryOp::Sub, FieldType::Date) => {
-            let (translated_r, ty_r) = cx.translate(r)?;
+        (parser::BinaryOp::Sub, FieldType::Date) => {
+            let (translated_r, ty_r) = cx.translate(r, tree)?;
             if is_numeric_type(&ty_r) {
                 let amount = expr_ref(Expression::UnaryOperator(
                     crate::translate::UnaryOp::Neg,
@@ -292,89 +408,101 @@ pub fn translate_binary_op<T: TranslationContext>(
                     FieldType::Numeric { len: 99, dec: 0 },
                 )
             } else {
-                postgres::translate_binary_op_right(cx, l, translated_l, ty_l, op, r)
+                cx.translate_binary_op(l, op, r, tree)
             }
         }
 
         // String operations
-        (ast::BinaryOp::Add, ty_l) if is_string_type(ty_l) => {
-            let (translated_r, _) = cx.translate(r)?;
+        (parser::BinaryOp::Add, ty_l) if is_string_type(ty_l) => {
+            let (translated_r, _) = cx.translate(r, tree)?;
             ok(
                 concat_expr(vec![translated_l, translated_r]),
                 FieldType::Memo,
             )
         }
-        (ast::BinaryOp::Sub, ty_l) if is_string_type(ty_l) => {
-            let (translated_r, _) = cx.translate(r)?;
+        (parser::BinaryOp::Sub, ty_l) if is_string_type(ty_l) => {
+            let (translated_r, _) = cx.translate(r, tree)?;
             ok(
                 string_subtract_expr(translated_l, translated_r),
                 FieldType::Memo,
             )
         }
 
-        // Contains operation using CHARINDEX (MSSQL equivalent of STRPOS)
-        // Note: In CodeBase the haystack is the right operand, needle is left
-        (ast::BinaryOp::Contain, ty_l) if is_string_type(ty_l) => {
-            let (translated_r, _) = cx.translate(r)?;
-            let charindex = expr_ref(Expression::FunctionCall {
-                name: "CHARINDEX".into(),
-                args: vec![translated_l, translated_r], // needle, haystack
-            });
-            // Use CASE WHEN for maximum SQL Server compatibility
+        // For all other operations, use a simple binary operator
+        _ => {
+            let (translated_r, _) = cx.translate(r, tree)?;
+            let translate_op = match op {
+                parser::BinaryOp::Add => crate::translate::BinaryOp::Add,
+                parser::BinaryOp::Sub => crate::translate::BinaryOp::Sub,
+                parser::BinaryOp::Mul => crate::translate::BinaryOp::Mul,
+                parser::BinaryOp::Div => crate::translate::BinaryOp::Div,
+                parser::BinaryOp::Eq => crate::translate::BinaryOp::Eq,
+                parser::BinaryOp::Ne => crate::translate::BinaryOp::Ne,
+                parser::BinaryOp::Lt => crate::translate::BinaryOp::Lt,
+                parser::BinaryOp::Le => crate::translate::BinaryOp::Le,
+                parser::BinaryOp::Gt => crate::translate::BinaryOp::Gt,
+                parser::BinaryOp::Ge => crate::translate::BinaryOp::Ge,
+                parser::BinaryOp::And => crate::translate::BinaryOp::And,
+                parser::BinaryOp::Or => crate::translate::BinaryOp::Or,
+                _ => crate::translate::BinaryOp::Concat, // fallback for unknown ops
+            };
             ok(
-                Expression::Case {
-                    branches: vec![crate::translate::When {
-                        cond: expr_ref(Expression::BinaryOperator(
-                            charindex,
-                            crate::translate::BinaryOp::Gt,
-                            expr_ref(Expression::NumberLiteral("0".into())),
-                            crate::translate::Parenthesize::No,
-                        )),
-                        then: expr_ref(Expression::NumberLiteral("1".into())),
-                    }],
-                    r#else: expr_ref(Expression::NumberLiteral("0".into())),
-                },
-                FieldType::Logical,
+                Expression::BinaryOperator(
+                    translated_l,
+                    translate_op,
+                    translated_r,
+                    crate::translate::Parenthesize::No,
+                ),
+                ty_l,
             )
         }
-
-        // For all other operations, delegate to postgres implementation
-        _ => postgres::translate_binary_op_right(cx, l, translated_l, ty_l, op, r),
     }
 }
 
 pub fn translate_fn_call(
     name: &F,
-    args: &[Box<ast::Expression>],
+    args: &[parser::ExpressionId],
+    tree: &ParseTree,
     cx: &impl TranslationContext,
 ) -> std::result::Result<(ExprRef, FieldType), Error> {
-    let arg = |index: usize| get_arg(index, args, cx, name);
-    let all_args = || get_all_args(args, cx);
-    let wrong_type = |index| wrong_type(index, name, args);
+    let translate_arg =
+        |expr: &parser::ExpressionId| cx.translate(tree.get_expr_unchecked(*expr), tree);
 
-    // These are only the ones that are different from Postgres, everything else falls through to postgres
+    // These are only the ones that are different from Postgres, everything else falls through
     match name {
         // In SQL Server, CHR is called CHAR
-        F::CHR => ok(
-            Expression::FunctionCall {
-                name: "CHAR".into(),
-                args: all_args()?,
-            },
-            FieldType::Character(1),
-        ),
+        F::CHR => {
+            if args.is_empty() {
+                return Err(Error::IncorrectArgCount(format!("{name:?}"), 0));
+            }
+            let (arg_expr, _) = translate_arg(&args[0])?;
+            ok(
+                Expression::FunctionCall {
+                    name: "CHAR".into(),
+                    args: vec![arg_expr],
+                },
+                FieldType::Character(1),
+            )
+        }
 
         // CTOD(x) => CONVERT(date, x, 101) -- format 101 is MM/DD/YY
-        F::CTOD => ok(
-            Expression::FunctionCall {
-                name: "CONVERT".into(),
-                args: vec![
-                    expr_ref(Expression::BareFunctionCall("date".into())),
-                    arg(0)??.0,
-                    expr_ref(Expression::NumberLiteral("101".into())), // MM/DD/YY format
-                ],
-            },
-            FieldType::Date,
-        ),
+        F::CTOD => {
+            if args.is_empty() {
+                return Err(Error::IncorrectArgCount(format!("{name:?}"), 0));
+            }
+            let (arg_expr, _) = translate_arg(&args[0])?;
+            ok(
+                Expression::FunctionCall {
+                    name: "CONVERT".into(),
+                    args: vec![
+                        expr_ref(Expression::BareFunctionCall("date".into())),
+                        arg_expr,
+                        expr_ref(Expression::NumberLiteral("101".into())), // MM/DD/YY format
+                    ],
+                },
+                FieldType::Date,
+            )
+        }
 
         // DATE() => CAST(GETDATE() AS date)
         F::DATE => ok(
@@ -386,22 +514,32 @@ pub fn translate_fn_call(
         ),
 
         // DAY(x) => DAY(x) -- SQL Server has this function
-        F::DAY => ok(
-            Expression::FunctionCall {
-                name: "DAY".into(),
-                args: vec![arg(0)??.0],
-            },
-            FieldType::Double,
-        ),
+        F::DAY => {
+            if args.is_empty() {
+                return Err(Error::IncorrectArgCount(format!("{name:?}"), 0));
+            }
+            let (arg_expr, _) = translate_arg(&args[0])?;
+            ok(
+                Expression::FunctionCall {
+                    name: "DAY".into(),
+                    args: vec![arg_expr],
+                },
+                FieldType::Double,
+            )
+        }
 
         // DTOC(x) => FORMAT(x, 'MM/dd/yy') or FORMAT(x, 'yyyyMMdd')
         F::DTOC => {
+            if args.is_empty() {
+                return Err(Error::IncorrectArgCount(format!("{name:?}"), 0));
+            }
+            let (arg_expr, _) = translate_arg(&args[0])?;
             if args.len() == 2 {
                 // Equivalent to DTOS
                 ok(
                     Expression::FunctionCall {
                         name: "FORMAT".into(),
-                        args: vec![arg(0)??.0, expr_ref("yyyyMMdd".into())],
+                        args: vec![arg_expr, expr_ref("yyyyMMdd".into())],
                     },
                     FieldType::Character(8),
                 )
@@ -409,32 +547,47 @@ pub fn translate_fn_call(
                 ok(
                     Expression::FunctionCall {
                         name: "FORMAT".into(),
-                        args: vec![arg(0)??.0, expr_ref("MM/dd/yy".into())],
+                        args: vec![arg_expr, expr_ref("MM/dd/yy".into())],
                     },
                     FieldType::Character(8),
                 )
             }
         }
 
-        F::DTOS => ok(
-            Expression::FunctionCall {
-                name: "FORMAT".into(),
-                args: vec![arg(0)??.0, expr_ref("yyyyMMdd".into())],
-            },
-            FieldType::Character(8),
-        ),
+        F::DTOS => {
+            if args.is_empty() {
+                return Err(Error::IncorrectArgCount(format!("{name:?}"), 0));
+            }
+            let (arg_expr, _) = translate_arg(&args[0])?;
+            ok(
+                Expression::FunctionCall {
+                    name: "FORMAT".into(),
+                    args: vec![arg_expr, expr_ref("yyyyMMdd".into())],
+                },
+                FieldType::Character(8),
+            )
+        }
 
         // MONTH(x) => MONTH(x)
-        F::MONTH => ok(
-            Expression::FunctionCall {
-                name: "MONTH".into(),
-                args: vec![arg(0)??.0],
-            },
-            FieldType::Double,
-        ),
+        F::MONTH => {
+            if args.is_empty() {
+                return Err(Error::IncorrectArgCount(format!("{name:?}"), 0));
+            }
+            let (arg_expr, _) = translate_arg(&args[0])?;
+            ok(
+                Expression::FunctionCall {
+                    name: "MONTH".into(),
+                    args: vec![arg_expr],
+                },
+                FieldType::Double,
+            )
+        }
 
         F::EMPTY => {
-            let (x, ty) = arg(0)??;
+            if args.is_empty() {
+                return Err(Error::IncorrectArgCount(format!("{name:?}"), 0));
+            }
+            let (x, ty) = translate_arg(&args[0])?;
 
             match &ty {
                 // EMPTY(X) => COALESCE(TRIM(CAST(x AS nvarchar(max))), '') = ''
@@ -516,121 +669,192 @@ pub fn translate_fn_call(
         }
 
         F::LEFT => {
-            let (x, ty) = arg(0)??;
-            let n = match &*arg(1)??.0.borrow() {
-                Expression::NumberLiteral(v) => v.parse::<u32>().map_err(|_| wrong_type(1)),
-                _ => Err(wrong_type(1)),
+            if args.len() < 2 {
+                return Err(Error::IncorrectArgCount(format!("{name:?}"), args.len()));
+            }
+            let (x, ty) = translate_arg(&args[0])?;
+            let (n_expr, _) = translate_arg(&args[1])?;
+            let n = match &*n_expr.borrow() {
+                Expression::NumberLiteral(v) => v
+                    .parse::<u32>()
+                    .map_err(|_| Error::IncorrectArgCount(format!("{name:?}"), 1)),
+                _ => Err(Error::IncorrectArgCount(format!("{name:?}"), 1)),
             }?;
             let out_ty = match ty {
-                FieldType::Character(len) => FieldType::Character(len - n),
+                FieldType::Character(len) => FieldType::Character(len.saturating_sub(n)),
                 _ => FieldType::Memo,
             };
             ok(
                 Expression::FunctionCall {
                     name: "LEFT".into(),
-                    args: vec![x, arg(1)??.0],
+                    args: vec![x, n_expr],
                 },
                 out_ty,
             )
         }
 
         // STOD(x) => CONVERT(date, x, 112) -- format 112 is YYYYMMDD
-        F::STOD => ok(
-            Expression::FunctionCall {
-                name: "CONVERT".into(),
-                args: vec![
-                    expr_ref(Expression::BareFunctionCall("date".into())),
-                    arg(0)??.0,
-                    expr_ref(Expression::NumberLiteral("112".into())), // YYYYMMDD format
-                ],
-            },
-            FieldType::Date,
-        ),
+        F::STOD => {
+            if args.is_empty() {
+                return Err(Error::IncorrectArgCount(format!("{name:?}"), 0));
+            }
+            let (arg_expr, _) = translate_arg(&args[0])?;
+            ok(
+                Expression::FunctionCall {
+                    name: "CONVERT".into(),
+                    args: vec![
+                        expr_ref(Expression::BareFunctionCall("date".into())),
+                        arg_expr,
+                        expr_ref(Expression::NumberLiteral("112".into())), // YYYYMMDD format
+                    ],
+                },
+                FieldType::Date,
+            )
+        }
 
         // STR(num, len, dec) => STR(num, len, dec) with padding
         F::STR => {
-            let len: i64 = match &*arg(1)??.0.borrow() {
-                Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(1)),
-                _ => Err(wrong_type(1)),
+            if args.len() < 3 {
+                return Err(Error::IncorrectArgCount(format!("{name:?}"), args.len()));
+            }
+            let (num_expr, _) = translate_arg(&args[0])?;
+            let (len_expr, _) = translate_arg(&args[1])?;
+            let (dec_expr, _) = translate_arg(&args[2])?;
+
+            let len: i64 = match &*len_expr.borrow() {
+                Expression::NumberLiteral(v) => v
+                    .parse()
+                    .map_err(|_| Error::IncorrectArgCount(format!("{name:?}"), 1)),
+                _ => Err(Error::IncorrectArgCount(format!("{name:?}"), 1)),
             }?;
-            let dec: i64 = match &*arg(2)??.0.borrow() {
-                Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(2)),
-                _ => Err(wrong_type(2)),
+            let dec: i64 = match &*dec_expr.borrow() {
+                Expression::NumberLiteral(v) => v
+                    .parse()
+                    .map_err(|_| Error::IncorrectArgCount(format!("{name:?}"), 2)),
+                _ => Err(Error::IncorrectArgCount(format!("{name:?}"), 2)),
             }?;
 
             // SQL Server STR function: STR(float_expression, length, decimal)
             ok(
                 Expression::FunctionCall {
                     name: "STR".into(),
-                    args: vec![
-                        arg(0)??.0,
-                        expr_ref(Expression::NumberLiteral(len.to_string())),
-                        expr_ref(Expression::NumberLiteral(dec.to_string())),
-                    ],
+                    args: vec![num_expr, len_expr, dec_expr],
                 },
                 FieldType::Character(len as u32),
             )
         }
 
         // VAL(x) => CAST(x as float)
-        F::VAL => ok(
-            Expression::Cast(arg(0)??.0, "float"),
-            FieldType::Numeric { len: 0, dec: 0 },
-        ),
+        F::VAL => {
+            if args.is_empty() {
+                return Err(Error::IncorrectArgCount(format!("{name:?}"), 0));
+            }
+            let (arg_expr, _) = translate_arg(&args[0])?;
+            ok(
+                Expression::Cast(arg_expr, "float"),
+                FieldType::Numeric { len: 0, dec: 0 },
+            )
+        }
 
         // YEAR(x) => YEAR(x) -- SQL Server has this function
-        F::YEAR => ok(
-            Expression::FunctionCall {
-                name: "YEAR".into(),
-                args: vec![arg(0)??.0],
-            },
-            FieldType::Double,
-        ),
+        F::YEAR => {
+            if args.is_empty() {
+                return Err(Error::IncorrectArgCount(format!("{name:?}"), 0));
+            }
+            let (arg_expr, _) = translate_arg(&args[0])?;
+            ok(
+                Expression::FunctionCall {
+                    name: "YEAR".into(),
+                    args: vec![arg_expr],
+                },
+                FieldType::Double,
+            )
+        }
 
         // PADL(string, length) => RIGHT(REPLICATE(' ', length) + string, length)
         F::PADL => {
-            let len: u32 = match &*arg(1)??.0.borrow() {
-                Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(1)),
-                _ => Err(wrong_type(1)),
+            if args.len() < 2 {
+                return Err(Error::IncorrectArgCount(format!("{name:?}"), args.len()));
+            }
+            let (str_expr, _) = translate_arg(&args[0])?;
+            let (len_expr, _) = translate_arg(&args[1])?;
+
+            let len: u32 = match &*len_expr.borrow() {
+                Expression::NumberLiteral(v) => v
+                    .parse()
+                    .map_err(|_| Error::IncorrectArgCount(format!("{name:?}"), 1)),
+                _ => Err(Error::IncorrectArgCount(format!("{name:?}"), 1)),
             }?;
 
             let replicate_spaces = expr_ref(Expression::FunctionCall {
                 name: "REPLICATE".into(),
                 args: vec![
                     expr_ref(Expression::SingleQuoteStringLiteral(" ".into())),
-                    arg(1)??.0,
+                    len_expr.clone(),
                 ],
             });
 
             let padded_string = expr_ref(Expression::FunctionCall {
                 name: "CONCAT".into(),
-                args: vec![replicate_spaces, arg(0)??.0],
+                args: vec![replicate_spaces, str_expr],
             });
 
             ok(
                 Expression::FunctionCall {
                     name: "RIGHT".into(),
-                    args: vec![padded_string, arg(1)??.0],
+                    args: vec![padded_string, len_expr],
                 },
                 FieldType::Character(len),
             )
         }
 
         F::SUBSTR => {
-            let len: u32 = match &*arg(2)??.0.borrow() {
-                Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(2)),
-                _ => Err(wrong_type(2)),
+            if args.len() < 3 {
+                return Err(Error::IncorrectArgCount(format!("{name:?}"), args.len()));
+            }
+            let mut translated_args = Vec::new();
+            for arg in args.iter().take(3) {
+                let (arg_expr, _) = translate_arg(arg)?;
+                translated_args.push(arg_expr);
+            }
+            let len: u32 = match &*translated_args[2].borrow() {
+                Expression::NumberLiteral(v) => v
+                    .parse()
+                    .map_err(|_| Error::IncorrectArgCount(format!("{name:?}"), 2)),
+                _ => Err(Error::IncorrectArgCount(format!("{name:?}"), 2)),
             }?;
             ok(
                 Expression::FunctionCall {
                     name: "SUBSTRING".into(),
-                    args: all_args()?,
+                    args: translated_args,
                 },
                 FieldType::Character(len),
             )
         }
 
-        // For all other functions, delegate to Postgres implementation
-        other => postgres::translate_fn_call(other, args, cx),
+        // For all other functions, use default translation
+        _ => {
+            // Use default behavior - translate all args and create function call
+            let mut translated_args = Vec::new();
+            for arg in args.iter() {
+                let (arg_expr, _) = translate_arg(arg)?;
+                translated_args.push(arg_expr);
+            }
+
+            // Determine return type based on function
+            let return_type = match name {
+                F::IIF => FieldType::Memo, // Default for conditional expressions
+                F::UPPER | F::LTRIM | F::RTRIM | F::TRIM => FieldType::Memo,
+                _ => FieldType::Memo, // Default fallback
+            };
+
+            ok(
+                Expression::FunctionCall {
+                    name: format!("{:?}", name),
+                    args: translated_args,
+                },
+                return_type,
+            )
+        }
     }
 }

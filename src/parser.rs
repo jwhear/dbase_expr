@@ -104,6 +104,12 @@ pub struct ArgList {
     len: usize,
 }
 
+impl ArgList {
+    pub fn len(&self) -> usize {
+        self.len
+    }
+}
+
 /// Instead of generating a tree of references or smart pointers (Rc), we'll
 ///  pack all expressions into a flat array and have them refer to each other by
 ///  an id (which is simply an index into that array).
