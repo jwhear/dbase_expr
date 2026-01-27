@@ -251,7 +251,7 @@ pub fn evaluate(
                     }
                     collected.reverse(); // restore original order
 
-                    let result = eval_function(name, &collected, get, custom_functions, tree)?;
+                    let result = eval_function(name, &collected, get, custom_functions)?;
                     results.push(result);
                 }
             }
@@ -271,7 +271,6 @@ fn eval_function(
     args: &[Value],
     get: FieldValueGetter,
     custom_functions: CustomFunctions,
-    tree: &crate::parser::ParseTree,
 ) -> Result<Value, Error> {
     match name {
         F::LTRIM => match args {

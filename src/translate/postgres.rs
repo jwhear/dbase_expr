@@ -5,7 +5,7 @@ use super::{
 use crate::{
     codebase_functions::CodebaseFunction as F,
     parser::{self, Expression as E},
-    translate::{COALESCE_DATE, CustomFunctionResult, ExprRef, Parenthesize, expr_ref},
+    translate::{COALESCE_DATE, ExprRef, Parenthesize, expr_ref},
 };
 
 /// This type provides default function translation for Postgres. You can
@@ -17,7 +17,6 @@ where
     F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
 {
     pub field_lookup: F,
-    pub custom_function: fn(&str) -> CustomFunctionResult,
 }
 
 impl<F> TranslationContext for Translator<F>
@@ -30,10 +29,6 @@ where
         field: &str,
     ) -> std::result::Result<(String, FieldType), String> {
         (self.field_lookup)(alias, field)
-    }
-
-    fn custom_function(&self, func: &str) -> CustomFunctionResult {
-        (self.custom_function)(func)
     }
 
     fn translate(&self, source: &parser::Expression, tree: &crate::parser::ParseTree) -> Result {
@@ -530,11 +525,7 @@ pub fn translate_fn_call<'a>(
             FieldType::Double,
         ),
 
-        F::Unknown(unknown) => cx
-            .custom_function(unknown)
-            .map(|v| v.into())
-            .ok_or(Error::UnsupportedFunction(unknown.clone()))
-            .flatten(),
+        F::Unknown(unknown) => Err(Error::UnsupportedFunction(unknown.clone())),
     }
 }
 

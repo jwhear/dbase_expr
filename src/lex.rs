@@ -153,12 +153,14 @@ impl<'input> Lexer<'input> {
         self.source[self.current]
     }
 
+    #[allow(dead_code)]
     #[inline]
     fn peek_at(&self, at: usize) -> Option<u8> {
         let at = self.current + at;
         self.source.get(at).copied()
     }
 
+    #[allow(dead_code)]
     #[inline]
     fn pop(&mut self) -> Option<u8> {
         let res = self.peek();
@@ -202,6 +204,7 @@ impl<'input> Lexer<'input> {
         }
     }
 
+    #[allow(dead_code)]
     /// If current starts with [prefix] (compared ASCII case-insensitive),
     ///  consume and return true. Otherwise, return false and leave current
     ///  unchanged.
@@ -236,7 +239,7 @@ impl<'input> Lexer<'input> {
 
     #[inline]
     fn consume_whitespace(&mut self) {
-        self.consume_while(|b| b == b' ' || b == b'\t');
+        self.consume_while(|b| b == b' ' || b == b'\t' || b == b'\r' || b == b'\n');
     }
 
     fn consume_number(&mut self) {
@@ -404,6 +407,8 @@ impl<'input> Lexer<'input> {
                     consume_literal!(self, b"or.") => Or,
                     consume_literal!(self, b"t.") => True,
                     consume_literal!(self, b"f.") => False,
+                    consume_literal!(self, b"true.") => True,
+                    consume_literal!(self, b"false.") => False,
 
                     // Default case: assume it's a number.
                     // Even a bare '.' is a valid number (0.0)

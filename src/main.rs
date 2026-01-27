@@ -1,7 +1,6 @@
 use chrono::NaiveDate;
 use dbase_expr::{
     codebase_functions::CodebaseFunction,
-    lex::Lexer,
     parser::parse,
     to_sql::PrinterConfig,
     translate::{
@@ -37,7 +36,6 @@ fn main() {
             let field_type = get_type(alias, &field);
             Ok((field, field_type))
         },
-        custom_function: custom_functions(),
     };
     to_sql_tests(&translation_cx);
 
@@ -48,7 +46,6 @@ fn main() {
         F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
     {
         field_lookup: F,
-        custom_functions: fn(&str) -> Option<translate::Result>,
     }
     impl<F> TranslationContext for CustomTranslator<F>
     where
@@ -60,10 +57,6 @@ fn main() {
             field: &str,
         ) -> std::result::Result<(String, FieldType), String> {
             (self.field_lookup)(alias, field)
-        }
-
-        fn custom_function(&self, func: &str) -> Option<translate::Result> {
-            (self.custom_functions)(func)
         }
 
         fn translate(
@@ -87,7 +80,14 @@ fn main() {
                     .ok_or(Error::IncorrectArgCount(format!("{:?}", name), index))
             };
 
-            if name == &CodebaseFunction::DTOS {
+            if let CodebaseFunction::Unknown(unknown) = name
+                && unknown.eq_ignore_ascii_case("USER")
+            {
+                Ok((
+                    expr_ref(Expression::SingleQuoteStringLiteral("my user".to_owned())),
+                    FieldType::Memo,
+                ))
+            } else if name == &CodebaseFunction::DTOS {
                 Ok((
                     expr_ref(Expression::FunctionCall {
                         name: "CB_DATE_TO_TEXT".into(),
@@ -116,18 +116,8 @@ fn main() {
             let field_type = get_type(alias, &field);
             Ok((field, field_type))
         },
-        custom_functions: custom_functions(),
     };
     to_sql_tests(&cx);
-
-    println!("Benchmarking custom lexer");
-    let src = "deleted() = .f. .and. substr(id, 1, 3 ) <> \"($)\"";
-    let mut lexer = Lexer::new(src.as_bytes());
-    while let Ok(Some(tok)) = lexer.next_token() {
-        println!("{tok:?} | '{}'", unsafe {
-            std::str::from_utf8_unchecked(lexer.source_of(&tok))
-        });
-    }
 }
 
 fn expr_tests() {
@@ -141,7 +131,6 @@ fn expr_tests() {
         "5.",   //5.0
         "   3    - 44  ",
         "deleted() = .f. .and. substr(id, 1, 3 ) <> \"($)\"",
-        "USER() + \"Hello world\"",
         ".NOT.deleted()",
         "12",
         "(12)",
@@ -196,6 +185,7 @@ fn expr_tests() {
         ".+.=.", // 0.0 + 0.0 = 0.0
         "1. + 2 = 3.00",
         ".1 + 0.2 = 000.3",
+        "USER() + \"Hello world\"",
     ];
 
     let value_lookup = |_alias: Option<&str>, field_name: &str| -> Option<evaluate::Value> {
@@ -216,16 +206,25 @@ fn expr_tests() {
         }
     };
 
+    let custom_functions = |name: &str| {
+        name.eq_ignore_ascii_case("USER")
+            .then_some(Ok(evaluate::Value::Str("my user".to_owned())))
+    };
+
     for test in tests.iter() {
+        //println!("{test}");
         match parse(test) {
             Ok((tree, root)) => {
                 //println!("{t:?}");
-                match evaluate::evaluate(&root, &tree, &value_lookup, &custom_functions()) {
-                    Ok(tree) => println!("{test} => {tree:?}\n"),
-                    Err(e) => eprintln!("{test} => Error translating tree: {e:?}\n:{test}\n"),
+                match evaluate::evaluate(&root, &tree, &value_lookup, &custom_functions) {
+                    Ok(tree) => {}
+                    //println!("{test} => {tree:?}\n"),
+                    Err(e) => {
+                        eprintln!("{test}\n{e:?}\n")
+                    }
                 }
             }
-            Err(e) => println!("{:?}", e),
+            Err(e) => println!("{test}\n{e}\n"),
         };
     }
 }
@@ -262,6 +261,8 @@ fn to_sql_tests<T: TranslationContext>(cx: &T) {
           VAL(STR((DATE() - STOD('20000102'))/7 - 0.5,6,0))*7)",
         // Simplification test
         "a + b + c + a + b",
+        // Custom function translation
+        "USER() + \"Hello world\"",
     ];
 
     for test in tests.iter() {
@@ -276,16 +277,5 @@ fn to_sql_tests<T: TranslationContext>(cx: &T) {
 
             Err(e) => println!("{:?}", e),
         };
-    }
-}
-
-fn custom_functions() -> fn(&str) -> Option<Result<evaluate::Value, String>> {
-    custom_functions_impl
-}
-
-fn custom_functions_impl(func: &str) -> Option<Result<evaluate::Value, String>> {
-    match func.to_uppercase().as_str() {
-        "USER" => Some(Ok(evaluate::Value::Str("my user".to_string()))),
-        _ => None,
     }
 }

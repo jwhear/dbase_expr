@@ -2,7 +2,6 @@ use std::{cell::RefCell, fmt::Formatter, rc::Rc};
 
 use crate::{
     codebase_functions::CodebaseFunction,
-    evaluate::Value, // returned by custom functions
     parser::{self, ParseTree},
 };
 
@@ -112,17 +111,6 @@ pub enum Expression {
     BareFunctionCall(String),
 }
 
-impl From<Value> for Expression {
-    fn from(value: Value) -> Self {
-        match value {
-            Value::FixedLenStr(s, _) => Self::SingleQuoteStringLiteral(escape_single_quotes(&s)),
-            Value::Bool(b) => Self::BoolLiteral(b),
-            Value::Number(v, _) => Self::NumberLiteral(v.to_string()),
-            _ => 
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum Error {
     UnsupportedFunction(String),
@@ -210,8 +198,6 @@ impl FieldType {
     }
 }
 
-pub type CustomFunctionResult = Option<std::result::Result<Value, String>>;
-
 /// This trait allows the caller to control translation. When implementing a new
 ///  translation target, a reasonable strategy is to delegate to the Postgres
 ///  translator but intercept anything that needs to be handled differently:
@@ -236,10 +222,6 @@ pub type CustomFunctionResult = Option<std::result::Result<Value, String>>;
 ///             .ok_or(format!("No field named {field}"))
 ///     }
 ///
-///     fn custom_function(&self, func: &str) -> CustomFunctionResult {
-///         None
-///     }
-///     
 ///     fn translate(&self, source: &parser::Expression, tree: &parser::ParseTree) -> std::result::Result<(ExprRef, FieldType), Error> {
 ///         // This is the place to handle specific cases which are different from Postgres,
 ///         //  including cases which should be errors
@@ -284,8 +266,6 @@ pub trait TranslationContext {
         alias: Option<&str>,
         field: &str,
     ) -> std::result::Result<(String, FieldType), String>;
-
-    fn custom_function(&self, func: &str) -> CustomFunctionResult;
 
     /// Called to translate an expression generally.
     fn translate(&self, source: &parser::Expression, tree: &ParseTree) -> Result;

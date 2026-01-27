@@ -569,9 +569,13 @@ fn parse_fn_call<'input>(
 
     // Get the name and map it into a CodebaseFunction
     let name = lexer.contents(name_token);
-    let name = name
-        .try_into()
-        .map_err(|()| Error::UnknownFunction(name.to_vec()))?;
+    let name = name.try_into().unwrap_or_else(|_| {
+        CodebaseFunction::Unknown(
+            std::str::from_utf8(name)
+                .unwrap_or("<function name is not valid UTF-8>")
+                .to_owned(),
+        )
+    });
     let args = tree.push_args(scratch.drain(scratch_start..scratch.len()));
 
     Ok(Expression::FunctionCall { name, args })

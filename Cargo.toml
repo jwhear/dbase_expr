@@ -2,6 +2,7 @@
 name = "dbase_expr"
 version = "0.2.0"
 edition = "2024"
+default-run = "dbase_expr"
 
 [dependencies]
 arbitrary = "1.4.1"
