@@ -631,15 +631,18 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
                 let duration = d1.signed_duration_since(d2);
                 Ok(Value::Number(duration.num_days() as f64, false))
             }
-            (Value::Date(Some(d1)), Value::DateParseError(_)) => {
+            (Value::Date(Some(d1)), Value::DateParseError(_) | Value::Date(None)) => {
                 // Difference in days as float
                 Ok(Value::Number(days_since_jd0(d1) as f64, false))
             }
-            (Value::DateParseError(_), Value::Date(Some(d1))) => {
+            (Value::DateParseError(_) | Value::Date(None), Value::Date(Some(d1))) => {
                 // Difference in days as float
                 Ok(Value::Number(-days_since_jd0(d1) as f64, false))
             }
-            (Value::DateParseError(_), Value::DateParseError(_)) => Ok(Value::Number(0.0, false)),
+            (
+                Value::DateParseError(_) | Value::Date(None),
+                Value::DateParseError(_) | Value::Date(None),
+            ) => Ok(Value::Number(0.0, false)),
             _ => Err(Error::IncompatibleBinaryOp(
                 BinaryOp::Sub,
                 "Incompatible types".to_string(),
