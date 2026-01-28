@@ -35,10 +35,23 @@ fn new_parser() {
         _ = std::hint::black_box(parse(test));
     }
 }
+fn new_parser_no_alloc() {
+    use dbase_expr::parser::{ParseTree, parse_into_tree};
+    let exprs = Vec::with_capacity(1000);
+    let args = Vec::with_capacity(2000);
+    let mut tree = ParseTree::new_from_vecs(exprs, args);
+    for test in TESTS.iter() {
+        _ = std::hint::black_box({
+            tree.clear();
+            parse_into_tree(test, &mut tree)
+        });
+    }
+}
 
 fn criterion_benchmark(c: &mut Criterion) {
     //c.bench_function("old parser", |b| b.iter(|| old_parser()));
     c.bench_function("new parser", |b| b.iter(new_parser));
+    c.bench_function("new parser, no alloc", |b| b.iter(new_parser_no_alloc));
 }
 
 criterion_group!(benches, criterion_benchmark);

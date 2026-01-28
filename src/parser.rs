@@ -1,9 +1,6 @@
 use crate::codebase_functions::CodebaseFunction;
 use crate::lex::{Error as LexerError, Lexer, Token, TokenType};
 
-//TODO check size of Expression
-// Make the enums all much smaller. See if it impacts performance.
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOp {
     Add,
@@ -134,7 +131,7 @@ impl ArgList {
 /// The two ArgLists reference spans of arg_lists:
 ///  [ExpressionId(0), ExpressionId(1), Expression(2)]
 ///
-/// The So fn_a's ArgList (1,2) is the span at arg_lists[1..1+2], that is, ExpressionId's 1 and 2.
+/// So fn_a's ArgList (1,2) is the span at arg_lists[1..1+2], that is, ExpressionIds 1 and 2.
 /// These in turn map to FunctionCall(fn_b) and Number(2), which are indeed its two arguments.
 pub struct ParseTree<'input> {
     /// All expressions are stored in a flat list. References are via ExpressionId.
@@ -144,6 +141,33 @@ pub struct ParseTree<'input> {
 }
 
 impl<'input> ParseTree<'input> {
+    pub fn new() -> Self {
+        Self {
+            expressions: Vec::with_capacity(32),
+            arg_lists: Vec::with_capacity(64),
+        }
+    }
+
+    /// Create a ParseTree using previously allocated Vecs.
+    pub fn new_from_vecs(
+        expressions: Vec<Expression<'input>>,
+        arg_lists: Vec<ExpressionId>,
+    ) -> Self {
+        Self {
+            expressions,
+            arg_lists,
+        }
+    }
+
+    /// Clears the internal vectors, resetting this tree to a clean state. The
+    ///  internal allocations and capacities are unaffected, making this an
+    ///  efficient way to reuse the memory.
+    pub fn clear(&mut self) {
+        self.expressions.clear();
+        self.arg_lists.clear();
+    }
+
+    /// Add [expr] to this tree, returning the ExpressionId
     pub fn push_expr(&mut self, expr: Expression<'input>) -> ExpressionId {
         let id = ExpressionId(self.expressions.len());
         self.expressions.push(expr);
@@ -157,6 +181,8 @@ impl<'input> ParseTree<'input> {
         ArgList { start, len }
     }
 
+    /// Get the expression with [id]. This panics if [id] doesn't reference an
+    ///  expression pushed to this tree.
     #[inline]
     pub fn get_expr_unchecked(&self, id: ExpressionId) -> &Expression<'input> {
         &self.expressions[id.0]
@@ -274,6 +300,12 @@ impl<'input> ParseTree<'input> {
     }
 }
 
+impl<'input> Default for ParseTree<'input> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct TreePrinter<'input>(pub ParseTree<'input>, pub Expression<'input>);
 
 impl<'input> std::fmt::Display for TreePrinter<'input> {
@@ -328,10 +360,7 @@ impl std::fmt::Display for Error {
 pub fn parse<'input>(input: &'input str) -> Result<(ParseTree<'input>, Expression<'input>), Error> {
     let mut lexer = Lexer::new(input.as_bytes());
     let mut arg_scratch = Vec::with_capacity(100);
-    let mut pt = ParseTree::<'input> {
-        expressions: Vec::with_capacity(32),
-        arg_lists: Vec::with_capacity(32),
-    };
+    let mut pt = ParseTree::new();
 
     let root = parse_binary_op(&mut lexer, &mut pt, &mut arg_scratch, 0)?;
 
@@ -340,6 +369,23 @@ pub fn parse<'input>(input: &'input str) -> Result<(ParseTree<'input>, Expressio
         Err(Error::UnexpectedToken(tok))
     } else {
         Ok((pt, root))
+    }
+}
+
+pub fn parse_into_tree<'input>(
+    input: &'input str,
+    tree: &mut ParseTree<'input>,
+) -> Result<ExpressionId, Error> {
+    let mut lexer = Lexer::new(input.as_bytes());
+    let mut arg_scratch = Vec::with_capacity(100);
+    let root = parse_binary_op(&mut lexer, tree, &mut arg_scratch, 0)?;
+    let root_id = tree.push_expr(root);
+
+    // Make sure we've completely parsed the input
+    if let Ok(Some(tok)) = lexer.next_token() {
+        Err(Error::UnexpectedToken(tok))
+    } else {
+        Ok(root_id)
     }
 }
 
