@@ -21,9 +21,8 @@
 //! ```
 //! # use dbase_expr::translate::FieldType;
 //! # fn main() -> Result<(), String> {
-//! use dbase_expr::{grammar, translate::{TranslationContext, postgres}, to_sql::{Printer, PrinterConfig}};
-//! let parser = grammar::ExprParser::new();
-//! let parse_tree = parser.parse(r#"(DATE() + 1) - STOD("20240731")"#)
+//! use dbase_expr::{parser::parse, translate::{TranslationContext, postgres}, to_sql::{Printer, PrinterConfig}};
+//! let (tree, root) = parse(r#"(DATE() + 1) - STOD("20240731")"#)
 //!     .map_err(|e| format!("{e}"))?;
 //! let translator = postgres::Translator {
 //!    field_lookup: |opt_table_alias, field_name| {
@@ -39,7 +38,7 @@
 //!       Ok((String::from("FOO"), FieldType::Logical))
 //!    }
 //! };
-//! let (sql_tree, result_type) = translator.translate(&parse_tree)
+//! let (sql_tree, result_type) = translator.translate(&root, &tree)
 //!    .map_err(|e| format!("{e}"))?;
 //! let printer = Printer::new(sql_tree, PrinterConfig::default());
 //! let sql = format!("{printer}");

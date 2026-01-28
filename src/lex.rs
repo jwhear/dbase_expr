@@ -246,10 +246,14 @@ impl<'input> Lexer<'input> {
         // Start with zero or more digits
         self.consume_while(|b| b.is_ascii_digit());
 
-        // Optional dot
-        if let Some(b'.') = self.peek() {
+        // Optional dot, but only consume if the dot is followed by digits
+        // This is because we want `1.and.2` to parse as `(AND 1 2)`
+        if let Some(b'.') = self.peek()
+            && let Some(d) = self.peek_at(1)
+            && d.is_ascii_digit()
+        {
             self.current += 1; // consume '.'
-            // Followed by zero or more digits
+            // Followed by some digits
             self.consume_while(|b| b.is_ascii_digit());
         }
     }
@@ -531,7 +535,7 @@ mod tests {
         //  checking that the token boundaries are correct as well.
         //             0         1
         //             01234567890123456
-        let source = b"12.3 4+5. - .6009";
+        let source = b"12.3 4+5.0 - .6009";
         let mut lexer = Lexer::new(source);
         assert_eq!(
             lexer.next_token(),
@@ -562,23 +566,23 @@ mod tests {
             Ok(Some(Token {
                 ty: TokenType::Number,
                 start: 7,
-                end: 9,
+                end: 10,
             }))
         );
         assert_eq!(
             lexer.next_token(),
             Ok(Some(Token {
                 ty: TokenType::Minus,
-                start: 10,
-                end: 11,
+                start: 11,
+                end: 12,
             }))
         );
         assert_eq!(
             lexer.next_token(),
             Ok(Some(Token {
                 ty: TokenType::Number,
-                start: 12,
-                end: 17,
+                start: 13,
+                end: 18,
             }))
         );
     }

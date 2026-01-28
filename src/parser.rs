@@ -286,6 +286,7 @@ pub enum Error {
     UnexpectedToken(Token),
     UnexpectedEof,
     UnknownFunction(Vec<u8>),
+    StackedNegation,
     Other(String),
 }
 
@@ -310,6 +311,10 @@ impl std::fmt::Display for Error {
                     write!(f, "Unknown function: {name:?}")
                 }
             }
+            Self::StackedNegation => write!(
+                f,
+                "Numbers with multiple negations (e.g. `--1`) are not allowed"
+            ),
             Self::Other(msg) => write!(f, "{msg}"),
         }
     }
@@ -358,6 +363,15 @@ fn parse_binary_op<'input>(
         prefix if prefix.ty == TokenType::Minus || prefix.ty == TokenType::Not => {
             let ((), pow) = prefix_binding(prefix.ty).unwrap();
             let rhs = parse_binary_op(lexer, tree, scratch, pow)?;
+
+            // Don't allow stacking of minus signs: Codebase does something very
+            //  unexpected so it's best to just error instead
+            if let Expression::UnaryOperator(UnaryOp::Neg, _) = rhs
+                && prefix.ty == TokenType::Minus
+            {
+                return Err(Error::StackedNegation);
+            }
+
             let rhs = tree.push_expr(rhs);
             Ok(Expression::UnaryOperator(prefix.try_into()?, rhs))
         }
@@ -621,7 +635,7 @@ mod tests {
 
     #[test]
     fn basic1() {
-        let (tree, root) = parse(r#"(1 + -2.0) <> 3."#).expect("a valid parse");
+        let (tree, root) = parse(r#"(1 + -2.0) <> 3"#).expect("a valid parse");
         let Expression::BinaryOperator(lhs, BinaryOp::Ne, rhs) = root else {
             panic!("Expected a Ne, got a {root:?}")
         };
@@ -629,7 +643,7 @@ mod tests {
         let lhs = tree.get_expr(lhs).expect("lhs");
         let rhs = tree.get_expr(rhs).expect("rhs");
 
-        assert_eq!(*rhs, Expression::NumberLiteral(b"3."));
+        assert_eq!(*rhs, Expression::NumberLiteral(b"3"));
 
         let Expression::BinaryOperator(lhs, BinaryOp::Add, rhs) = lhs else {
             panic!("Expected an Add, got a {lhs:?}")

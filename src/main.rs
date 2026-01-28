@@ -217,7 +217,7 @@ fn expr_tests() {
             Ok((tree, root)) => {
                 //println!("{t:?}");
                 match evaluate::evaluate(&root, &tree, &value_lookup, &custom_functions) {
-                    Ok(tree) => {}
+                    Ok(_tree) => {}
                     //println!("{test} => {tree:?}\n"),
                     Err(e) => {
                         eprintln!("{test}\n{e:?}\n")

@@ -820,16 +820,18 @@ mod tests {
     }
 
     // Asserts if the expression does not produce an error
-    fn assert_any_err(expr: &str) {
-        if let Ok(v) = eval(expr) {
-            panic!("Expected an error, got {v:?}");
-        }
+    macro_rules! assert_any_err {
+        ($expr:expr) => {
+            if let Ok(v) = eval($expr) {
+                panic!("Expected an error, got {v:?}");
+            }
+        };
     }
 
     #[test]
     fn optional_digits() {
         // Trailing digits NOT optional
-        assert_any_err("1. + 2 = 3.00");
+        assert_any_err!("1. + 2 = 3.00");
 
         // Leading digits optional
         assert_eq!(eval(".1 + 0.1 = 000.2"), TRUE);
@@ -854,16 +856,16 @@ mod tests {
         assert_eq!(eval("-2"), Ok(Value::Number(-2.0, false)));
         // Not allowed to stack signs; Codebase actually allows this but only
         //  because it's doing something very unexpected
-        assert_any_err("--2"); // CB evals this to -2
-        assert_any_err("---2"); // CB evals this to 2
-        assert_any_err("-+-2"); // CB evals this to -2
+        assert_any_err!("--2"); // CB evals this to -2
+        assert_any_err!("---2"); // CB evals this to 2
+        assert_any_err!("-+-2"); // CB evals this to -2
     }
 
     #[test]
     fn implicit_number() {
         // Codebase evaluates these to 0, now an error
-        assert_any_err("-");
-        assert_any_err("+");
+        assert_any_err!("-");
+        assert_any_err!("+");
     }
 
     #[test]
