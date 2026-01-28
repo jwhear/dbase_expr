@@ -48,10 +48,18 @@ fn new_parser_no_alloc() {
     }
 }
 
+fn simple_text_parse() {
+    use dbase_expr::simple_text_expr::parse_simple_text_expr;
+    for test in TESTS.iter() {
+        _ = std::hint::black_box(parse_simple_text_expr(test));
+    }
+}
+
 fn criterion_benchmark(c: &mut Criterion) {
     //c.bench_function("old parser", |b| b.iter(|| old_parser()));
     c.bench_function("new parser", |b| b.iter(new_parser));
     c.bench_function("new parser, no alloc", |b| b.iter(new_parser_no_alloc));
+    c.bench_function("simple text parser", |b| b.iter(simple_text_parse));
 }
 
 criterion_group!(benches, criterion_benchmark);

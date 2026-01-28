@@ -62,6 +62,7 @@ pub mod evaluate;
 //pub mod fuzz_helper; // Not fully adapted: custom functions now return translate::Expression, evalute expects parser::Expression
 pub mod lex;
 pub mod parser;
+pub mod simple_text_expr;
 pub mod to_sql;
 pub mod translate;
 pub use parser::Error;
