@@ -65,7 +65,7 @@ pub mod parser;
 pub mod simple_text_expr;
 pub mod to_sql;
 pub mod translate;
-pub use parser::Error;
+pub use parser::Error as ParseError;
 pub use parser::parse;
 
 // These imports are just to make the documentation nicer
