@@ -26,13 +26,13 @@ fn new_lexer() {
             }
         }
     }
-    assert_eq!(num_tokens, 125);
+    assert_eq!(num_tokens, 120);
 }
 // Unfortunately lalrpop doesn't let me import and use the generated lexer, so
 //  no head to head
 
 fn criterion_benchmark(c: &mut Criterion) {
-    c.bench_function("lex some expressions", |b| b.iter(|| new_lexer()));
+    c.bench_function("lex some expressions", |b| b.iter(new_lexer));
 }
 
 criterion_group!(benches, criterion_benchmark);

@@ -102,9 +102,9 @@ pub fn translate_fn_call<'a>(
     tree: &'a ParseTree<'a>,
     cx: &'a impl TranslationContext,
 ) -> std::result::Result<(ExprRef, FieldType), Error> {
-    let arg = |index: usize| get_arg(index, &args, tree, cx, name);
-    let all_args = || get_all_args(&args, tree, cx);
-    let wrong_type = |index| wrong_type(index, name, &args);
+    let arg = |index: usize| get_arg(index, args, tree, cx, name);
+    let all_args = || get_all_args(args, tree, cx);
+    let wrong_type = |index| wrong_type(index, name, args);
 
     //these are only the ones that are different from Postgres, everything else falls through to postgres
     match name {

@@ -108,6 +108,11 @@ impl ArgList {
     pub fn len(&self) -> usize {
         self.len
     }
+
+    #[allow(dead_code)]
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
 }
 
 /// Instead of generating a tree of references or smart pointers (Rc), we'll
@@ -518,7 +523,7 @@ fn parse_field_ref<'input>(
         // If there's no Arrow then it's just a plain Field reference
         return Ok(Expression::Field {
             alias: None,
-            name: lexer.contents(&token),
+            name: lexer.contents(token),
         });
     };
 

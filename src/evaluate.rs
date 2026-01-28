@@ -43,14 +43,14 @@ impl PartialEq for Value {
                 if r.is_empty() =>
             {
                 //codebase quirk: a starts-with with a blank string would always be true, but it's not. it doesn't use starts-with in this scenario
-                cmp(l.as_str(), &r, &BinaryOp::Eq)
+                cmp(l.as_str(), r, &BinaryOp::Eq)
             }
             (Self::FixedLenStr(l, l_len), Self::FixedLenStr(r, _) | Self::Str(r)) => {
-                let l_adjusted = with_len(&l, r.len()); //trims l to the length of r,effectively turning it into a starts-with
+                let l_adjusted = with_len(l, r.len()); //trims l to the length of r,effectively turning it into a starts-with
                 //pad them both out now to the len of l (or trim if for some reason it's longer)
                 //now they are both the same length but it's still in the pattern of l starts-with r
                 let l_adjusted = with_len(&l_adjusted, *l_len);
-                let r_adjusted = with_len(&r, *l_len);
+                let r_adjusted = with_len(r, *l_len);
                 cmp(&l_adjusted, &r_adjusted, &BinaryOp::Eq)
             }
             (Self::Str(l), Self::Str(r) | Self::FixedLenStr(r, _)) => l.starts_with(r),
@@ -151,7 +151,7 @@ pub fn evaluate(
                     let name_str =
                         std::str::from_utf8(name).map_err(|e| Error::Other(e.to_string()))?;
                     let alias_str = alias.map(|a| std::str::from_utf8(a).ok()).flatten();
-                    match get(alias_str.as_deref(), name_str) {
+                    match get(alias_str, name_str) {
                         Some(Value::FixedLenStr(s, len)) => {
                             let padded = if s.len() < len {
                                 let mut padded = s.to_string();

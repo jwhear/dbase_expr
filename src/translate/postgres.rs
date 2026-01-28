@@ -91,9 +91,7 @@ pub fn translate<'a, C: TranslationContext>(
         E::Field { alias, name } => {
             let alias = alias.map(|v| unsafe { std::str::from_utf8_unchecked(v) });
             let name = unsafe { std::str::from_utf8_unchecked(name) };
-            let (name, field_type) = cx
-                .lookup_field(alias.as_deref(), name)
-                .map_err(Error::Other)?;
+            let (name, field_type) = cx.lookup_field(alias, name).map_err(Error::Other)?;
             ok(Expression::Field { name, field_type }, field_type)
         }
         E::UnaryOperator(op, r) => {

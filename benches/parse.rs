@@ -14,6 +14,7 @@ const TESTS: [&str; 9] = [
     "a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c+a+b+c",
 ];
 
+/*
 fn old_parser() {
     use dbase_expr::{ast::simplify, grammar::ExprParser};
     let parser = ExprParser::new();
@@ -26,6 +27,7 @@ fn old_parser() {
         });
     }
 }
+*/
 
 fn new_parser() {
     use dbase_expr::parser::parse;
@@ -35,8 +37,8 @@ fn new_parser() {
 }
 
 fn criterion_benchmark(c: &mut Criterion) {
-    c.bench_function("old parser", |b| b.iter(|| old_parser()));
-    c.bench_function("new parser", |b| b.iter(|| new_parser()));
+    //c.bench_function("old parser", |b| b.iter(|| old_parser()));
+    c.bench_function("new parser", |b| b.iter(new_parser));
 }
 
 criterion_group!(benches, criterion_benchmark);
