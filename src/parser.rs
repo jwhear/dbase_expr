@@ -322,7 +322,6 @@ pub enum Error {
     MissingCloseParen,
     UnexpectedToken(Token),
     UnexpectedEof,
-    UnknownFunction(Vec<u8>),
     StackedNegation,
     Other(String),
 }
@@ -341,13 +340,6 @@ impl std::fmt::Display for Error {
             Self::MissingCloseParen => write!(f, "Missing closing parenthesis"),
             Self::UnexpectedToken(t) => write!(f, "Unexpected token, got {t:?}"),
             Self::UnexpectedEof => write!(f, "Unexpected end of input"),
-            Self::UnknownFunction(name) => {
-                if let Ok(name) = std::str::from_utf8(name) {
-                    write!(f, "Unknown function '{name}'")
-                } else {
-                    write!(f, "Unknown function: {name:?}")
-                }
-            }
             Self::StackedNegation => write!(
                 f,
                 "Numbers with multiple negations (e.g. `--1`) are not allowed"
