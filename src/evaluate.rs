@@ -812,7 +812,7 @@ mod tests {
 
     fn eval(expr: &str) -> Result<Value, Error> {
         let value_lookup = |_: Option<&str>, _: &str| -> Option<Value> { None };
-        let custom_functions = |_: &str| -> Option<crate::parser::Expression> { None };
+        let custom_functions = |_: &str| None;
         match crate::parser::parse(expr) {
             Ok((tree, expr)) => evaluate(&expr, &tree, &value_lookup, &custom_functions),
             Err(e) => Err(Error::Other(format!("{e}"))),
