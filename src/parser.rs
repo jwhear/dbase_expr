@@ -323,6 +323,7 @@ pub enum Error {
     UnexpectedToken(Token),
     UnexpectedEof,
     StackedNegation,
+    RecursionLimitReached(usize),
     Other(String),
 }
 
@@ -344,17 +345,26 @@ impl std::fmt::Display for Error {
                 f,
                 "Numbers with multiple negations (e.g. `--1`) are not allowed"
             ),
+            Self::RecursionLimitReached(limit) => {
+                write!(f, "Parsing recursion limit was reached ({limit})")
+            }
             Self::Other(msg) => write!(f, "{msg}"),
         }
     }
 }
 
 pub fn parse<'input>(input: &'input str) -> Result<(ParseTree<'input>, Expression<'input>), Error> {
+    parse_with_depth(input, Depth::default())
+}
+pub fn parse_with_depth<'input>(
+    input: &'input str,
+    depth: Depth,
+) -> Result<(ParseTree<'input>, Expression<'input>), Error> {
     let mut lexer = Lexer::new(input.as_bytes());
     let mut arg_scratch = Vec::with_capacity(100);
     let mut pt = ParseTree::new();
 
-    let root = parse_binary_op(&mut lexer, &mut pt, &mut arg_scratch, 0)?;
+    let root = parse_binary_op(&mut lexer, &mut pt, &mut arg_scratch, 0, depth)?;
 
     // Make sure we've completely parsed the input
     if let Ok(Some(tok)) = lexer.next_token() {
@@ -367,10 +377,11 @@ pub fn parse<'input>(input: &'input str) -> Result<(ParseTree<'input>, Expressio
 pub fn parse_into_tree<'input>(
     input: &'input str,
     tree: &mut ParseTree<'input>,
+    depth: Depth,
 ) -> Result<ExpressionId, Error> {
     let mut lexer = Lexer::new(input.as_bytes());
     let mut arg_scratch = Vec::with_capacity(100);
-    let root = parse_binary_op(&mut lexer, tree, &mut arg_scratch, 0)?;
+    let root = parse_binary_op(&mut lexer, tree, &mut arg_scratch, 0, depth)?;
     let root_id = tree.push_expr(root);
 
     // Make sure we've completely parsed the input
@@ -381,11 +392,47 @@ pub fn parse_into_tree<'input>(
     }
 }
 
+pub struct Depth {
+    limit: usize,
+    current: usize,
+}
+
+impl Default for Depth {
+    fn default() -> Self {
+        Self {
+            limit: 1000,
+            current: 0,
+        }
+    }
+}
+
+impl Depth {
+    fn inc(&self) -> Result<Self, Error> {
+        let Self { limit, current } = *self;
+        let current = current + 1;
+        if current == limit {
+            return Err(Error::RecursionLimitReached(current));
+        }
+        Ok(Self { limit, current })
+    }
+
+    #[allow(dead_code)]
+    pub fn new(limit: usize) -> Self {
+        Self { limit, current: 0 }
+    }
+
+    #[allow(dead_code)]
+    pub fn max() -> Self {
+        Self::new(usize::MAX)
+    }
+}
+
 fn parse_binary_op<'input>(
     lexer: &mut Lexer<'input>,
     tree: &mut ParseTree<'input>,
     scratch: &mut Vec<ExpressionId>,
     min_binding_power: u8,
+    depth: Depth,
 ) -> Result<Expression<'input>, Error> {
     let lhs = lexer.next_token()?.ok_or(Error::NoExpression)?;
     let mut lhs = match lhs {
@@ -394,7 +441,7 @@ fn parse_binary_op<'input>(
             ty: TokenType::ParenLeft,
             ..
         } => {
-            let lhs = parse_binary_op(lexer, tree, scratch, 0)?;
+            let lhs = parse_binary_op(lexer, tree, scratch, 0, depth.inc()?)?;
             if let Ok(Some(tok)) = lexer.next_token()
                 && tok.ty != TokenType::ParenRight
             {
@@ -405,7 +452,7 @@ fn parse_binary_op<'input>(
         // Prefix '-' or '.NOT.'
         prefix if prefix.ty == TokenType::Minus || prefix.ty == TokenType::Not => {
             let ((), pow) = prefix_binding(prefix.ty).unwrap();
-            let rhs = parse_binary_op(lexer, tree, scratch, pow)?;
+            let rhs = parse_binary_op(lexer, tree, scratch, pow, depth.inc()?)?;
 
             // Don't allow stacking of minus signs: Codebase does something very
             //  unexpected so it's best to just error instead
@@ -430,7 +477,7 @@ fn parse_binary_op<'input>(
                 ..
             })) = lexer.peek_token()
             {
-                parse_fn_call(lexer, tree, scratch, &tok)
+                parse_fn_call(lexer, tree, scratch, &tok, depth.inc()?)
             } else {
                 // otherwise a field reference
                 parse_field_ref(lexer, &tok)
@@ -467,7 +514,7 @@ fn parse_binary_op<'input>(
             scratch.push(tree.push_expr(lhs));
 
             // Parse the initial RHS for this operator
-            let mut rhs = parse_binary_op(lexer, tree, scratch, r_pow)?;
+            let mut rhs = parse_binary_op(lexer, tree, scratch, r_pow, depth.inc()?)?;
             scratch.push(tree.push_expr(rhs));
 
             // Collect additional RHS if the next operator matches exactly
@@ -494,7 +541,7 @@ fn parse_binary_op<'input>(
                 _ = lexer.next_token()?;
 
                 // Parse the next RHS
-                rhs = parse_binary_op(lexer, tree, scratch, next_r_pow)?;
+                rhs = parse_binary_op(lexer, tree, scratch, next_r_pow, depth.inc()?)?;
                 scratch.push(tree.push_expr(rhs));
             }
 
@@ -509,7 +556,7 @@ fn parse_binary_op<'input>(
         } else {
             // Standard binary operator handling for non-Add/Sub ops
             let lhs_id = tree.push_expr(lhs);
-            let rhs = parse_binary_op(lexer, tree, scratch, r_pow)?;
+            let rhs = parse_binary_op(lexer, tree, scratch, r_pow, depth.inc()?)?;
             let rhs_id = tree.push_expr(rhs);
             lhs = Expression::BinaryOperator(lhs_id, op, rhs_id);
         }
@@ -585,6 +632,7 @@ fn parse_fn_call<'input>(
     tree: &mut ParseTree<'input>,
     scratch: &mut Vec<ExpressionId>,
     name_token: &Token,
+    depth: Depth,
 ) -> Result<Expression<'input>, Error> {
     // We'll use the scratch buffer to accumulate the ExpressionIds of the args
     // At the end we'll drain them into the ParseTree. We do need to track where
@@ -620,7 +668,7 @@ fn parse_fn_call<'input>(
 
         // For the actual argument we'll leave the token(s) in the lexer and
         //  let parse_binary_op do the work. This is why we only peeked above.
-        let arg = parse_binary_op(lexer, tree, scratch, 0)?;
+        let arg = parse_binary_op(lexer, tree, scratch, 0, depth.inc()?)?;
         scratch.push(tree.push_expr(arg));
     }
 
@@ -875,5 +923,14 @@ mod tests {
                 name: b"e"
             }
         );
+    }
+
+    #[test]
+    fn limit_depth() {
+        // This expression nests three deep and we'll parse with a limit of 2
+        let res = parse_with_depth("(1+(2+(3)))", Depth::new(2));
+        let Err(Error::RecursionLimitReached(2)) = res else {
+            panic!("Expected an error")
+        };
     }
 }

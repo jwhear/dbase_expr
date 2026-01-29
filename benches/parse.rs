@@ -36,14 +36,14 @@ fn new_parser() {
     }
 }
 fn new_parser_no_alloc() {
-    use dbase_expr::parser::{ParseTree, parse_into_tree};
+    use dbase_expr::parser::{Depth, ParseTree, parse_into_tree};
     let exprs = Vec::with_capacity(1000);
     let args = Vec::with_capacity(2000);
     let mut tree = ParseTree::new_from_vecs(exprs, args);
     for test in TESTS.iter() {
         _ = std::hint::black_box({
             tree.clear();
-            parse_into_tree(test, &mut tree)
+            parse_into_tree(test, &mut tree, Depth::default())
         });
     }
 }
