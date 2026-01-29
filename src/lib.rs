@@ -21,9 +21,8 @@
 //! ```
 //! # use dbase_expr::translate::FieldType;
 //! # fn main() -> Result<(), String> {
-//! use dbase_expr::{grammar, translate::{TranslationContext, postgres}, to_sql::{Printer, PrinterConfig}};
-//! let parser = grammar::ExprParser::new();
-//! let parse_tree = parser.parse(r#"(DATE() + 1) - STOD("20240731")"#)
+//! use dbase_expr::{parser::parse, translate::{TranslationContext, postgres}, to_sql::{Printer, PrinterConfig}};
+//! let (tree, root) = parse(r#"(DATE() + 1) - STOD("20240731")"#)
 //!     .map_err(|e| format!("{e}"))?;
 //! let translator = postgres::Translator {
 //!    field_lookup: |opt_table_alias, field_name| {
@@ -39,7 +38,7 @@
 //!       Ok((String::from("FOO"), FieldType::Logical))
 //!    }
 //! };
-//! let (sql_tree, result_type) = translator.translate(&parse_tree)
+//! let (sql_tree, result_type) = translator.translate(&root, &tree)
 //!    .map_err(|e| format!("{e}"))?;
 //! let printer = Printer::new(sql_tree, PrinterConfig::default());
 //! let sql = format!("{printer}");
@@ -58,20 +57,17 @@
 //! New translation backends can be implemented using the [TranslationContext]
 //!  trait and, if needed, the [PrinterConfig] context.
 
-use lalrpop_util::lalrpop_mod;
-
-pub mod ast;
 pub mod codebase_functions;
 pub mod evaluate;
-pub mod fuzz_helper;
+//pub mod fuzz_helper; // Not fully adapted: custom functions now return translate::Expression, evalute expects parser::Expression
+pub mod lex;
+pub mod parser;
 pub mod simple_text_expr;
 pub mod tests;
 pub mod to_sql;
 pub mod translate;
-pub use ast::ParseError;
-pub use ast::parse;
-
-lalrpop_mod!(#[allow(clippy::all)] pub grammar);
+pub use parser::Error as ParseError;
+pub use parser::parse;
 
 // These imports are just to make the documentation nicer
 #[allow(unused_imports)]

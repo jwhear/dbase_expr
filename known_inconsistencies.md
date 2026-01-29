@@ -12,9 +12,6 @@ While it is possible to extend the grammar to ignore characters after an unmatch
 ## Number parsing
 Codebase will parse a number from nothing but a sign (`-` or `+`) or nothing but a decimal place (`.`). So `-` evaluates to negative zero. This causes lots of weirdness (see the [Bestiary](bestiary.md)) including doing the opposite of what you want (`-1` and `--1` both evaluate to negative one, but `---1` is positive one), so we turn this into an error.
 
-This crate has the following rules for number literals
-* May omit leading digits: `TOTAL * .5` is fine
-* May omit decimal point AND trailing digits: `TOTAL * 5` is fine
-* If the decimal is present, there must be trailing digits: `1.` is _not_ fine
+This crate now allows parsing a number from nothing but a `.` but evaluating with stacked negation should still be an error.
 
 Codebase expressions which are not compliant should always result in parse errors.

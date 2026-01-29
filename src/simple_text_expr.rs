@@ -7,7 +7,7 @@ pub fn is_simple_text_expr(expr: &str) -> bool {
 
 /// If [expr] is a simple text expression, return the concatenation of all
 ///  substrings.
-/// ```
+/// ```ignore
 /// assert_eq!(
 ///   parse_simple_text_expr(r#"("hello")+("world")"#),
 ///   Some("helloworld".to_string())

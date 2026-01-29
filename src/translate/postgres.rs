@@ -3,8 +3,8 @@ use super::{
     escape_single_quotes, ok,
 };
 use crate::{
-    ast::{self, Expression as E},
     codebase_functions::CodebaseFunction as F,
+    parser::{self, Expression as E},
     translate::{COALESCE_DATE, ExprRef, Parenthesize, expr_ref},
 };
 
@@ -17,7 +17,6 @@ where
     F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
 {
     pub field_lookup: F,
-    pub custom_function: fn(&str) -> Option<ast::Expression>,
 }
 
 impl<F> TranslationContext for Translator<F>
@@ -32,45 +31,48 @@ where
         (self.field_lookup)(alias, field)
     }
 
-    fn custom_function(&self, func: &str) -> Option<ast::Expression> {
-        (self.custom_function)(func)
-    }
-
-    fn translate(&self, source: &ast::Expression) -> Result {
-        translate(source, self)
+    fn translate(&self, source: &parser::Expression, tree: &crate::parser::ParseTree) -> Result {
+        translate(source, tree, self)
     }
 
     fn translate_binary_op(
         &self,
-        l: &ast::Expression,
-        op: &ast::BinaryOp,
-        r: &ast::Expression,
+        l: &parser::Expression,
+        op: &parser::BinaryOp,
+        r: &parser::Expression,
+        tree: &crate::parser::ParseTree,
     ) -> Result {
-        translate_binary_op(self, l, op, r)
+        translate_binary_op(self, l, op, r, tree)
     }
 
     fn translate_fn_call(
         &self,
         name: &crate::codebase_functions::CodebaseFunction,
-        args: &[Box<ast::Expression>],
+        args: &[parser::ExpressionId],
+        tree: &crate::parser::ParseTree,
     ) -> std::result::Result<(ExprRef, FieldType), Error> {
-        translate_fn_call(name, args, self)
+        translate_fn_call(name, args, tree, self)
     }
 }
 
 /// Translates dBase expression to a SQL expression.
-pub fn translate<C: TranslationContext>(source: &E, cx: &C) -> Result {
+pub fn translate<'a, C: TranslationContext>(
+    source: &'a E<'a>,
+    tree: &'a crate::parser::ParseTree<'a>,
+    cx: &'a C,
+) -> Result {
     // helper for creating binary operators
     match source {
         E::BoolLiteral(v) => ok(Expression::BoolLiteral(*v), FieldType::Logical),
         E::NumberLiteral(v) => {
             let dec = v
-                .chars()
-                .position(|c| c == '.')
+                .iter()
+                .position(|&c| c == b'.')
                 .map(|i| v.len() - i)
                 .unwrap_or(0) as u32;
+            let v = unsafe { std::str::from_utf8_unchecked(v) };
             ok(
-                Expression::NumberLiteral(v.clone()),
+                Expression::NumberLiteral(v.to_owned()),
                 FieldType::Numeric {
                     len: v.len() as u32,
                     dec,
@@ -78,6 +80,7 @@ pub fn translate<C: TranslationContext>(source: &E, cx: &C) -> Result {
             )
         }
         E::StringLiteral(v) => {
+            let v = unsafe { std::str::from_utf8_unchecked(v) };
             let v = escape_single_quotes(v);
             let len = v.len();
             ok(
@@ -86,46 +89,61 @@ pub fn translate<C: TranslationContext>(source: &E, cx: &C) -> Result {
             )
         }
         E::Field { alias, name } => {
-            let (name, field_type) = cx
-                .lookup_field(alias.as_deref(), name)
-                .map_err(Error::Other)?;
+            let alias = alias.map(|v| unsafe { std::str::from_utf8_unchecked(v) });
+            let name = unsafe { std::str::from_utf8_unchecked(name) };
+            let (name, field_type) = cx.lookup_field(alias, name).map_err(Error::Other)?;
             ok(Expression::Field { name, field_type }, field_type)
         }
-        E::UnaryOperator(op, r) => match op {
-            ast::UnaryOp::Not => ok(
-                Expression::UnaryOperator(UnaryOp::Not, translate(r, cx)?.0),
-                FieldType::Logical,
-            ),
-            ast::UnaryOp::Neg => {
-                let r = translate(r, cx)?;
-                ok(Expression::UnaryOperator(UnaryOp::Neg, r.0), r.1)
+        E::UnaryOperator(op, r) => {
+            let r = tree.get_expr_unchecked(*r);
+            match op {
+                parser::UnaryOp::Not => ok(
+                    Expression::UnaryOperator(UnaryOp::Not, translate(r, tree, cx)?.0),
+                    FieldType::Logical,
+                ),
+                parser::UnaryOp::Neg => {
+                    let r = translate(r, tree, cx)?;
+                    ok(Expression::UnaryOperator(UnaryOp::Neg, r.0), r.1)
+                }
             }
-        },
+        }
         E::BinaryOperator(l, op, r) => {
             // Add, Sub are ambiguous: could be numeric, concat, or days (for dates)
             // We translate the first operand and use its type to determine how
             //  to translate.
-            cx.translate_binary_op(l, op, r)
+            cx.translate_binary_op(
+                tree.get_expr_unchecked(*l),
+                op,
+                tree.get_expr_unchecked(*r),
+                tree,
+            )
         }
-        E::FunctionCall { name, args } => cx.translate_fn_call(name, args),
+        E::FunctionCall { name, args } => cx.translate_fn_call(name, tree.get_args(args), tree),
         E::Sequence(operands, op) => {
             // We'll inspect the type of the first operand and use that to
             //  either emit a '+' or a '||'
-            let (first_expr, ty) = cx.translate(&operands[0])?;
+            assert!(
+                operands.len() >= 2,
+                "Sequence operation should only be generated for at least two operands"
+            );
+            let operands = tree.get_args(operands);
+            let (first_expr, ty) = cx.translate(tree.get_expr_unchecked(operands[0]), tree)?;
             let mut exprs = Vec::with_capacity(operands.len());
             exprs.push(first_expr);
             for operand in &operands[1..] {
-                let expr = cx.translate(operand)?.0;
+                let expr = cx.translate(tree.get_expr_unchecked(*operand), tree)?.0;
                 exprs.push(expr);
             }
 
             let operator = match (op, ty) {
                 (
-                    &ast::ConcatOp::Add,
+                    &parser::BinaryOp::Add,
                     FieldType::Character(_) | FieldType::Memo | FieldType::MemoBinary,
                 ) => BinaryOp::Concat,
-                (&ast::ConcatOp::Add, _) => BinaryOp::Add,
-                (&ast::ConcatOp::Sub, _) => BinaryOp::Sub,
+                (&parser::BinaryOp::Add, _) => BinaryOp::Add,
+                (&parser::BinaryOp::Sub, _) => BinaryOp::Sub,
+                //TODO consider reintroducing Concat/SequenceOp to turn this into a compile-time error
+                _ => panic!("Unsupported binary operator for Sequence: {op:?}"),
             };
             ok(Expression::BinaryOperatorSequence(operator, exprs), ty)
         }
@@ -135,13 +153,14 @@ pub fn translate<C: TranslationContext>(source: &E, cx: &C) -> Result {
 // This function does the kind of gross work of converting dBase function calls
 //  to the SQL equivalent.  Some are super straightforward: `CHR(97)` -> `CHR(97)`
 //  but others have no exact equivalent and have to resolve to a nested bundle.
-pub fn translate_fn_call(
-    name: &F,
-    args: &[Box<ast::Expression>],
-    cx: &impl TranslationContext,
+pub fn translate_fn_call<'a>(
+    name: &'a F,
+    args: &'a [parser::ExpressionId],
+    tree: &'a crate::parser::ParseTree<'a>,
+    cx: &'a impl TranslationContext,
 ) -> std::result::Result<(ExprRef, FieldType), Error> {
-    let arg = |index: usize| get_arg(index, args, cx, name);
-    let all_args = || get_all_args(args, cx);
+    let arg = |index: usize| get_arg(index, args, tree, cx, name);
+    let all_args = || get_all_args(args, tree, cx);
     let wrong_type = |index| wrong_type(index, name, args);
     let date = |format: &str| {
         //this translates blank strings into the coalesce date so that it can be properly compared
@@ -325,32 +344,32 @@ pub fn translate_fn_call(
             let mut branches = Vec::new();
             // We have to take ownership of args for the loop to work
             //OPT: come back and try to rework this
-            let mut inner_args = Vec::from(args);
+            let mut inner_args = args;
 
             // Add this IIF as a When branch. If when_false is an IIF, traverse
             //  into it and repeat. We'll eventually encounter a when_false that
             //  is not an IIF: that will become our ELSE value.
             let r#else = loop {
-                match inner_args.as_slice() {
+                match inner_args {
                     [cond, when_true, when_false] => {
                         // Convert this IIF to a WHEN
                         branches.push(super::When {
-                            cond: cx.translate(cond)?.0,
-                            then: cx.translate(when_true)?.0,
+                            cond: cx.translate(tree.get_expr_unchecked(*cond), tree)?.0,
+                            then: cx.translate(tree.get_expr_unchecked(*when_true), tree)?.0,
                         });
 
-                        //OPT there's probably a way to work around this clone
-                        let expr: ast::Expression = (**when_false).clone();
-                        if let ast::Expression::FunctionCall { name: F::IIF, args } = expr {
-                            inner_args = args.clone();
-                        } else {
+                        let when_false = tree.get_expr_unchecked(*when_false);
+                        let parser::Expression::FunctionCall { name: F::IIF, args } = when_false
+                        else {
                             break when_false;
-                        }
+                        };
+                        // Go around with another branch
+                        inner_args = tree.get_args(args);
                     }
                     _ => panic!("IIF should always have three arguments"),
                 }
             };
-            let (r#else, _) = cx.translate(r#else)?;
+            let (r#else, _) = cx.translate(r#else, tree)?;
 
             ok(Expression::Case { branches, r#else }, ty)
         }
@@ -425,7 +444,7 @@ pub fn translate_fn_call(
         F::STOD => date("YYYYMMDD"),
         // STR(num, len, dec) => PRINTF("%{len}.{dec}f", num)
         F::STR => {
-            match get_str_fn_args(args, cx)? {
+            match get_str_fn_args(args, tree, cx)? {
                 StrArgs::WithArgs(val_arg, fmt, len) => {
                     let expression = expr_ref(Expression::FunctionCall {
                         name: "TO_CHAR".to_string(),
@@ -459,7 +478,7 @@ pub fn translate_fn_call(
                 }
             }
         }
-        F::SUBSTR => translate_substr("SUBSTR".to_string(), args, cx),
+        F::SUBSTR => translate_substr("SUBSTR".to_string(), args, tree, cx),
         F::TRIM => ok(
             Expression::FunctionCall {
                 name: "RTRIM".into(),
@@ -492,43 +511,42 @@ pub fn translate_fn_call(
             FieldType::Double,
         ),
 
-        F::Unknown(unknown) => match cx.custom_function(unknown) {
-            Some(v) => cx.translate(&v),
-            None => Err(Error::UnsupportedFunction(unknown.clone())),
-        },
+        F::Unknown(unknown) => Err(Error::UnsupportedFunction(unknown.clone())),
     }
 }
 
-pub fn translate_binary_op<T: TranslationContext>(
-    cx: &T,
-    ast_l: &ast::Expression,
-    op: &ast::BinaryOp,
-    r: &ast::Expression,
+pub fn translate_binary_op<'a, T: TranslationContext>(
+    cx: &'a T,
+    ast_l: &'a parser::Expression<'a>,
+    op: &'a parser::BinaryOp,
+    r: &'a parser::Expression<'a>,
+    tree: &'a crate::parser::ParseTree<'a>,
 ) -> Result {
-    let (l, ty) = translate(ast_l, cx)?;
-    translate_binary_op_right(cx, ast_l, l, ty, op, r)
+    let (l, ty) = translate(ast_l, tree, cx)?;
+    translate_binary_op_right(cx, ast_l, l, ty, op, r, tree)
 }
 
 /// The same as translate_binary_op but useful if you've already translated l and don't want to do it again
-pub fn translate_binary_op_right<T: TranslationContext>(
-    cx: &T,
-    ast_l: &ast::Expression,
+pub fn translate_binary_op_right<'a, T: TranslationContext>(
+    cx: &'a T,
+    ast_l: &'a parser::Expression<'a>,
     l: ExprRef,
     ty: FieldType,
-    op: &ast::BinaryOp,
-    r: &ast::Expression,
+    op: &'a parser::BinaryOp,
+    r: &'a parser::Expression<'a>,
+    tree: &'a crate::parser::ParseTree<'a>,
 ) -> Result {
     let tr_binop = |l, op, r, ty| ok(Expression::BinaryOperator(l, op, r, Parenthesize::Yes), ty);
     let binop = |l, op, r, ty| {
         //OPT: order of operations is preserved by parenthesizing everything.
         // It'd be nice to analyze precedence to only do so when necessary.
-        let r = translate(r, cx)?.0;
+        let r = translate(r, tree, cx)?.0;
         tr_binop(l, op, r, ty)
     };
     match (op, ty) {
         // For these types, simple addition is fine
         (
-            ast::BinaryOp::Add,
+            parser::BinaryOp::Add,
             FieldType::Double
             | FieldType::Float
             | FieldType::Integer
@@ -536,18 +554,18 @@ pub fn translate_binary_op_right<T: TranslationContext>(
             | FieldType::Date,
         ) => binop(l, BinaryOp::Add, r, ty),
         (
-            ast::BinaryOp::Sub,
+            parser::BinaryOp::Sub,
             FieldType::Double | FieldType::Float | FieldType::Integer | FieldType::Numeric { .. },
         ) => binop(l, BinaryOp::Sub, r, ty),
 
         // Subtracting from a date will "just work" but we need to change
         //  the returned type to numeric (number of days)
-        (ast::BinaryOp::Sub, FieldType::Date) => {
+        (parser::BinaryOp::Sub, FieldType::Date) => {
             binop(l, BinaryOp::Sub, r, FieldType::Numeric { len: 99, dec: 0 })
         }
 
         // Add on a character type maps to CONCAT
-        (ast::BinaryOp::Add, FieldType::Character(_) | FieldType::Memo) => {
+        (parser::BinaryOp::Add, FieldType::Character(_) | FieldType::Memo) => {
             binop(l, BinaryOp::Concat, r, FieldType::Memo)
         }
         // Sub on a character type also maps to CONCAT but with the
@@ -560,7 +578,7 @@ pub fn translate_binary_op_right<T: TranslationContext>(
         //   REPEAT(' ', LENGTH(l) - LENGTH( RTRIM(l) ))
         // )
         //
-        (ast::BinaryOp::Sub, FieldType::Character(_) | FieldType::Memo) => {
+        (parser::BinaryOp::Sub, FieldType::Character(_) | FieldType::Memo) => {
             let without_spaces = expr_ref(Expression::FunctionCall {
                 name: "RTRIM".into(),
                 args: vec![l.clone()],
@@ -586,7 +604,7 @@ pub fn translate_binary_op_right<T: TranslationContext>(
             ok(
                 Expression::FunctionCall {
                     name: "CONCAT".into(),
-                    args: vec![without_spaces, translate(r, cx)?.0, repeated_spaces],
+                    args: vec![without_spaces, translate(r, tree, cx)?.0, repeated_spaces],
                 },
                 FieldType::Memo,
             )
@@ -594,16 +612,16 @@ pub fn translate_binary_op_right<T: TranslationContext>(
 
         // Mul and Div are numeric only
         (
-            ast::BinaryOp::Mul,
+            parser::BinaryOp::Mul,
             FieldType::Double | FieldType::Float | FieldType::Integer | FieldType::Numeric { .. },
         ) => binop(l, BinaryOp::Mul, r, ty),
         (
-            ast::BinaryOp::Div,
+            parser::BinaryOp::Div,
             FieldType::Double | FieldType::Float | FieldType::Integer | FieldType::Numeric { .. },
         ) => binop(l, BinaryOp::Div, r, ty),
         // Numbers, bools, and single characters get actual equality
         (
-            ast::BinaryOp::Eq,
+            parser::BinaryOp::Eq,
             FieldType::Double
             | FieldType::Float
             | FieldType::Integer
@@ -612,7 +630,7 @@ pub fn translate_binary_op_right<T: TranslationContext>(
             | FieldType::Numeric { .. },
         ) => binop(l, BinaryOp::Eq, r, FieldType::Logical),
         (
-            ast::BinaryOp::Ne,
+            parser::BinaryOp::Ne,
             FieldType::Double
             | FieldType::Float
             | FieldType::Integer
@@ -621,7 +639,7 @@ pub fn translate_binary_op_right<T: TranslationContext>(
             | FieldType::Numeric { .. },
         ) => binop(l, BinaryOp::Ne, r, FieldType::Logical),
         (
-            ast::BinaryOp::Lt,
+            parser::BinaryOp::Lt,
             FieldType::Double
             | FieldType::Float
             | FieldType::Integer
@@ -630,7 +648,7 @@ pub fn translate_binary_op_right<T: TranslationContext>(
             | FieldType::Numeric { .. },
         ) => binop(l, BinaryOp::Lt, r, FieldType::Logical),
         (
-            ast::BinaryOp::Le,
+            parser::BinaryOp::Le,
             FieldType::Double
             | FieldType::Float
             | FieldType::Integer
@@ -639,7 +657,7 @@ pub fn translate_binary_op_right<T: TranslationContext>(
             | FieldType::Numeric { .. },
         ) => binop(l, BinaryOp::Le, r, FieldType::Logical),
         (
-            ast::BinaryOp::Gt,
+            parser::BinaryOp::Gt,
             FieldType::Double
             | FieldType::Float
             | FieldType::Integer
@@ -648,7 +666,7 @@ pub fn translate_binary_op_right<T: TranslationContext>(
             | FieldType::Numeric { .. },
         ) => binop(l, BinaryOp::Gt, r, FieldType::Logical),
         (
-            ast::BinaryOp::Ge,
+            parser::BinaryOp::Ge,
             FieldType::Double
             | FieldType::Float
             | FieldType::Integer
@@ -658,86 +676,88 @@ pub fn translate_binary_op_right<T: TranslationContext>(
         ) => binop(l, BinaryOp::Ge, r, FieldType::Logical),
 
         // AND and OR are only for Logical
-        (ast::BinaryOp::And, FieldType::Logical) => binop(l, BinaryOp::And, r, FieldType::Logical),
-        (ast::BinaryOp::Or, FieldType::Logical) => binop(l, BinaryOp::Or, r, FieldType::Logical),
-        (ast::BinaryOp::Lt, FieldType::Character(len)) => {
-            let r_tr = translate(r, cx)?.0;
+        (parser::BinaryOp::And, FieldType::Logical) => {
+            binop(l, BinaryOp::And, r, FieldType::Logical)
+        }
+        (parser::BinaryOp::Or, FieldType::Logical) => binop(l, BinaryOp::Or, r, FieldType::Logical),
+        (parser::BinaryOp::Lt, FieldType::Character(len)) => {
+            let r_tr = translate(r, tree, cx)?.0;
             let left = cx.string_comp_left(l, r_tr.clone());
             let right = cx.string_comp_right(r_tr, len);
             tr_binop(left, BinaryOp::Lt, right, FieldType::Logical)
         }
-        (ast::BinaryOp::Le, FieldType::Character(len)) => {
-            let r_tr = translate(r, cx)?.0;
+        (parser::BinaryOp::Le, FieldType::Character(len)) => {
+            let r_tr = translate(r, tree, cx)?.0;
             let left = cx.string_comp_left(l, r_tr.clone());
             let right = cx.string_comp_right(r_tr, len);
             tr_binop(left, BinaryOp::Le, right, FieldType::Logical)
         }
-        (ast::BinaryOp::Gt, FieldType::Character(len)) => {
-            let r_tr = translate(r, cx)?.0;
+        (parser::BinaryOp::Gt, FieldType::Character(len)) => {
+            let r_tr = translate(r, tree, cx)?.0;
             let left = cx.string_comp_left(l, r_tr.clone());
             let right = cx.string_comp_right(r_tr, len);
             tr_binop(left, BinaryOp::Gt, right, FieldType::Logical)
         }
-        (ast::BinaryOp::Ge, FieldType::Character(len)) => {
-            let r_tr = translate(r, cx)?.0;
+        (parser::BinaryOp::Ge, FieldType::Character(len)) => {
+            let r_tr = translate(r, tree, cx)?.0;
             let left = cx.string_comp_left(l, r_tr.clone());
             let right = cx.string_comp_right(r_tr, len);
             tr_binop(left, BinaryOp::Ge, right, FieldType::Logical)
         }
-        (ast::BinaryOp::Lt, FieldType::Memo) => {
-            let left = cx.string_comp_left(l, translate(r, cx)?.0);
+        (parser::BinaryOp::Lt, FieldType::Memo) => {
+            let left = cx.string_comp_left(l, translate(r, tree, cx)?.0);
             binop(left, BinaryOp::Lt, r, FieldType::Logical)
         }
-        (ast::BinaryOp::Le, FieldType::Memo) => {
-            let left = cx.string_comp_left(l, translate(r, cx)?.0);
+        (parser::BinaryOp::Le, FieldType::Memo) => {
+            let left = cx.string_comp_left(l, translate(r, tree, cx)?.0);
             binop(left, BinaryOp::Le, r, FieldType::Logical)
         }
-        (ast::BinaryOp::Gt, FieldType::Memo) => {
-            let left = cx.string_comp_left(l, translate(r, cx)?.0);
+        (parser::BinaryOp::Gt, FieldType::Memo) => {
+            let left = cx.string_comp_left(l, translate(r, tree, cx)?.0);
             binop(left, BinaryOp::Gt, r, FieldType::Logical)
         }
-        (ast::BinaryOp::Ge, FieldType::Memo) => {
-            let left = cx.string_comp_left(l, translate(r, cx)?.0);
+        (parser::BinaryOp::Ge, FieldType::Memo) => {
+            let left = cx.string_comp_left(l, translate(r, tree, cx)?.0);
             binop(left, BinaryOp::Ge, r, FieldType::Logical)
         }
-        (ast::BinaryOp::Eq, FieldType::Memo | FieldType::Character(_)) if is_trim(ast_l) => {
+        (parser::BinaryOp::Eq, FieldType::Memo | FieldType::Character(_)) if is_trim(ast_l) => {
             binop(l, BinaryOp::Eq, r, FieldType::Logical)
         }
-        (ast::BinaryOp::Ne, FieldType::Memo | FieldType::Character(_)) if is_trim(ast_l) => {
+        (parser::BinaryOp::Ne, FieldType::Memo | FieldType::Character(_)) if is_trim(ast_l) => {
             binop(l, BinaryOp::Ne, r, FieldType::Logical)
         }
-        (ast::BinaryOp::Eq, FieldType::Memo) => {
+        (parser::BinaryOp::Eq, FieldType::Memo) => {
             binop(l, BinaryOp::StartsWith, r, FieldType::Logical)
         }
-        (ast::BinaryOp::Eq, FieldType::Character(len)) => {
-            let trimmed_r = cx.string_comp_right(translate(r, cx)?.0, len);
+        (parser::BinaryOp::Eq, FieldType::Character(len)) => {
+            let trimmed_r = cx.string_comp_right(translate(r, tree, cx)?.0, len);
             tr_binop(l, BinaryOp::StartsWith, trimmed_r, FieldType::Logical)
         }
-        (ast::BinaryOp::Ne, FieldType::Memo) => {
+        (parser::BinaryOp::Ne, FieldType::Memo) => {
             let starts_with = binop(l, BinaryOp::StartsWith, r, FieldType::Logical);
             let expr = Expression::UnaryOperator(UnaryOp::Not, starts_with?.0);
             ok(expr, FieldType::Logical)
         }
-        (ast::BinaryOp::Ne, FieldType::Character(len)) => {
-            let trimmed_r = cx.string_comp_right(translate(r, cx)?.0, len);
+        (parser::BinaryOp::Ne, FieldType::Character(len)) => {
+            let trimmed_r = cx.string_comp_right(translate(r, tree, cx)?.0, len);
             let starts_with = tr_binop(l, BinaryOp::StartsWith, trimmed_r, FieldType::Logical);
             let expr = Expression::UnaryOperator(UnaryOp::Not, starts_with?.0);
             ok(expr, FieldType::Logical)
         }
         (
-            ast::BinaryOp::Eq,
+            parser::BinaryOp::Eq,
             FieldType::CharacterBinary(_) | FieldType::General | FieldType::MemoBinary,
         ) => binop(l, BinaryOp::Eq, r, FieldType::Logical),
         (
-            ast::BinaryOp::Ne,
+            parser::BinaryOp::Ne,
             FieldType::CharacterBinary(_) | FieldType::General | FieldType::MemoBinary,
         ) => binop(l, BinaryOp::Ne, r, FieldType::Logical),
 
         // SQL doesn't have an exponentation operator, use the POW function
-        (ast::BinaryOp::Exp, FieldType::Integer) => ok(
+        (parser::BinaryOp::Exp, FieldType::Integer) => ok(
             Expression::FunctionCall {
                 name: "POW".to_string(),
-                args: vec![l, translate(r, cx)?.0],
+                args: vec![l, translate(r, tree, cx)?.0],
             },
             ty,
         ),
@@ -745,11 +765,11 @@ pub fn translate_binary_op_right<T: TranslationContext>(
         // SQL doesn't have a contain operator, use the STRPOS function
         //NOTE(justin): not using LIKE here because the needle might contain
         // LIKE wildcards (% and _).
-        (ast::BinaryOp::Contain, FieldType::Character(_)) => {
+        (parser::BinaryOp::Contain, FieldType::Character(_)) => {
             let strpos = expr_ref(Expression::FunctionCall {
                 name: "STRPOS".to_string(),
                 // Note that in CodeBase the haystack is the right arg
-                args: vec![translate(r, cx)?.0, l],
+                args: vec![translate(r, tree, cx)?.0, l],
             });
             ok(Expression::Cast(strpos, "bool"), FieldType::Logical)
         }
@@ -765,16 +785,17 @@ pub enum StrArgs {
     WithoutArgs(ExprRef),
 }
 
-pub fn get_str_fn_args(
-    args: &[Box<ast::Expression>],
-    cx: &impl TranslationContext,
+pub fn get_str_fn_args<'a>(
+    args: &'a [parser::ExpressionId],
+    tree: &'a crate::parser::ParseTree<'a>,
+    cx: &'a impl TranslationContext,
 ) -> std::result::Result<StrArgs, Error> {
     if args.len() == 1 {
-        let (val_arg, _) = get_arg(0, args, cx, &F::STR)??;
+        let (val_arg, _) = get_arg(0, args, tree, cx, &F::STR)??;
         return Ok(StrArgs::WithoutArgs(val_arg));
     }
 
-    let arg = |index: usize| get_arg(index, args, cx, &F::STR);
+    let arg = |index: usize| get_arg(index, args, tree, cx, &F::STR);
     let wrong_type = |index| wrong_type(index, &F::STR, args);
 
     let val_arg = arg(0)??.0;
@@ -818,11 +839,12 @@ pub fn get_str_fn_args(
 
 pub fn translate_substr(
     func: String,
-    ast_args: &[Box<ast::Expression>],
+    in_args: &[parser::ExpressionId],
+    tree: &parser::ParseTree,
     cx: &impl TranslationContext,
 ) -> std::result::Result<(ExprRef, FieldType), Error> {
-    let mut args = get_all_args(ast_args, cx)?;
-    let wrong_type = |index| wrong_type(index, &F::SUBSTR, ast_args);
+    let mut args = get_all_args(in_args, tree, cx)?;
+    let wrong_type = |index| wrong_type(index, &F::SUBSTR, in_args);
 
     let parsed_index: u32 = {
         match &*args
@@ -851,38 +873,41 @@ pub fn translate_substr(
     ok(Expression::FunctionCall { name: func, args }, ty)
 }
 
-pub fn get_arg(
+pub fn get_arg<'a>(
     index: usize,
-    args: &[Box<ast::Expression>],
-    cx: &impl TranslationContext,
-    name: &F,
+    args: &'a [parser::ExpressionId],
+    tree: &'a crate::parser::ParseTree<'a>,
+    cx: &'a impl TranslationContext,
+    name: &'a F,
 ) -> std::result::Result<std::result::Result<(ExprRef, FieldType), Error>, Error> {
     args.get(index)
-        .map(|a| translate(a, cx))
+        .map(|&a| tree.get_expr_unchecked(a))
+        .map(|a| translate(a, tree, cx))
         .ok_or(Error::IncorrectArgCount(format!("{name:?}"), index))
 }
 
-pub fn get_all_args(
-    args: &[Box<ast::Expression>],
-    cx: &impl TranslationContext,
+pub fn get_all_args<'a>(
+    args: &'a [parser::ExpressionId],
+    tree: &'a crate::parser::ParseTree<'a>,
+    cx: &'a impl TranslationContext,
 ) -> std::result::Result<Vec<ExprRef>, Error> {
-    args.iter().map(|a| translate(a, cx).map(|r| r.0)).collect()
+    args.iter()
+        .map(|&a| tree.get_expr_unchecked(a))
+        .map(|a| translate(a, tree, cx).map(|r| r.0))
+        .collect()
 }
 
-pub fn wrong_type(index: usize, name: &F, args: &[Box<ast::Expression>]) -> Error {
+pub fn wrong_type<'a>(index: usize, name: &'a F, _args: &'a [parser::ExpressionId]) -> Error {
     Error::ArgWrongType {
-        func: ast::Expression::FunctionCall {
-            name: name.clone(),
-            args: args.into(),
-        },
+        func_name: format!("{:?}", name),
         wrong_arg_index: index,
     }
 }
 
-fn is_trim(ast_l: &ast::Expression) -> bool {
+fn is_trim(ast_l: &parser::Expression) -> bool {
     matches!(
         ast_l,
-        ast::Expression::FunctionCall { name, .. }
+        parser::Expression::FunctionCall { name, .. }
             if *name == crate::codebase_functions::CodebaseFunction::TRIM
     )
 }

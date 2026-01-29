@@ -1,6 +1,6 @@
 use crate::{
-    ast,
     codebase_functions::CodebaseFunction,
+    parser,
     translate::{
         self, Error, ExprRef, Expression, FieldType, TranslationContext, expr_ref,
         postgres::{translate as default_translate, translate_binary_op, translate_fn_call},
@@ -12,7 +12,6 @@ where
     F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
 {
     pub field_lookup: F,
-    pub custom_functions: fn(&str) -> Option<ast::Expression>,
 }
 impl<F> TranslationContext for TestTranslator<F>
 where
@@ -26,22 +25,23 @@ where
         (self.field_lookup)(alias, field)
     }
 
-    fn custom_function(&self, func: &str) -> Option<ast::Expression> {
-        (self.custom_functions)(func)
-    }
-
-    fn translate(&self, source: &ast::Expression) -> translate::Result {
-        default_translate(source, self)
+    fn translate(
+        &self,
+        source: &parser::Expression,
+        tree: &parser::ParseTree,
+    ) -> translate::Result {
+        default_translate(source, tree, self)
     }
 
     fn translate_fn_call(
         &self,
         name: &CodebaseFunction,
-        args: &[Box<ast::Expression>],
+        args: &[parser::ExpressionId],
+        tree: &parser::ParseTree,
     ) -> std::result::Result<(ExprRef, FieldType), Error> {
         let arg = |index: usize| {
             args.get(index)
-                .map(|a| default_translate(a, self))
+                .map(|&a| default_translate(tree.get_expr_unchecked(a), tree, self))
                 .ok_or(Error::IncorrectArgCount(format!("{:?}", name), index))
         };
 
@@ -53,35 +53,34 @@ where
                 }),
                 FieldType::Character(8),
             ))
+        } else if let CodebaseFunction::Unknown(name) = name
+            && name.eq_ignore_ascii_case("USER")
+        {
+            Ok((
+                expr_ref(translate::Expression::SingleQuoteStringLiteral(
+                    "my user".to_string(),
+                )),
+                FieldType::Memo,
+            ))
         } else {
-            translate_fn_call(name, args, self)
+            translate_fn_call(name, args, tree, self)
         }
     }
 
     fn translate_binary_op(
         &self,
-        l: &ast::Expression,
-        op: &ast::BinaryOp,
-        r: &ast::Expression,
+        l: &parser::Expression,
+        op: &parser::BinaryOp,
+        r: &parser::Expression,
+        tree: &parser::ParseTree,
     ) -> translate::Result {
-        translate_binary_op(self, l, op, r)
-    }
-}
-
-pub fn custom_functions() -> fn(&str) -> Option<ast::Expression> {
-    custom_functions_impl
-}
-
-pub fn custom_functions_impl(func: &str) -> Option<ast::Expression> {
-    match func.to_uppercase().as_str() {
-        "USER" => Some(ast::Expression::StringLiteral("my user".to_string())),
-        _ => None,
+        translate_binary_op(self, l, op, r, tree)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ast, *};
+    use super::{parser, *};
 
     #[test]
     fn substr_test() {
@@ -140,8 +139,7 @@ mod tests {
     }
 
     fn parse_expression(expr: &str) -> translate::Result {
-        let parser = crate::grammar::ExprParser::new();
-        let expression = ast::simplify(*parser.parse(expr).unwrap());
+        let (tree, root) = parser::parse(expr).unwrap();
         let cx = TestTranslator {
             field_lookup: |alias: Option<&str>,
                            field: &str|
@@ -159,8 +157,7 @@ mod tests {
                 };
                 Ok((field, field_type))
             },
-            custom_functions: custom_functions(),
         };
-        cx.translate(&expression)
+        cx.translate(&root, &tree)
     }
 }

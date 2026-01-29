@@ -1,8 +1,13 @@
 use chrono::NaiveDate;
 use dbase_expr::{
-    tests::{TestTranslator, custom_functions},
+    codebase_functions::CodebaseFunction,
+    parser::parse,
     to_sql::PrinterConfig,
-    translate::{FieldType, TranslationContext, postgres::Translator},
+    translate::{
+        Error, ExprRef, Expression, FieldType, TranslationContext, expr_ref,
+        postgres::Translator,
+        postgres::{translate as default_translate, translate_binary_op, translate_fn_call},
+    },
     *,
 };
 use to_sql::Printer;
@@ -14,12 +19,12 @@ fn main() {
     // Plain vanilla translation
     println!("Running to_sql tests...");
     let get_type = |alias: Option<&str>, field: &str| match (alias, field) {
+        (_, "__DELETED") => FieldType::Logical,
         (_, "A" | "B" | "C") => FieldType::Integer,
         (_, "BINDATAFIELD") => FieldType::MemoBinary,
         (_, "SHIP_DATE") => FieldType::Date,
         (_, "ID") => FieldType::Character(1),
         (_, "L_NAME") => FieldType::Character(20),
-        (_, "__DELETED") => FieldType::Logical,
         (Some(alias), _) => panic!("unknown field: {alias}.{field}"),
         (None, _) => panic!("unknown field: {field}"),
     };
@@ -30,25 +35,91 @@ fn main() {
             let field_type = get_type(alias, &field);
             Ok((field, field_type))
         },
-        custom_function: custom_functions(),
     };
     to_sql_tests(&translation_cx);
 
     // Overriding the DTOS function
     println!("Running to_sql tests with function overriding...");
-    let cx = TestTranslator {
+    pub struct CustomTranslator<F>
+    where
+        F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
+    {
+        field_lookup: F,
+    }
+    impl<F> TranslationContext for CustomTranslator<F>
+    where
+        F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
+    {
+        fn lookup_field(
+            &self,
+            alias: Option<&str>,
+            field: &str,
+        ) -> std::result::Result<(String, FieldType), String> {
+            (self.field_lookup)(alias, field)
+        }
+
+        fn translate(
+            &self,
+            source: &parser::Expression,
+            tree: &parser::ParseTree,
+        ) -> translate::Result {
+            default_translate(source, tree, self)
+        }
+
+        fn translate_fn_call(
+            &self,
+            name: &CodebaseFunction,
+            args: &[parser::ExpressionId],
+            tree: &parser::ParseTree,
+        ) -> std::result::Result<(ExprRef, FieldType), Error> {
+            let arg = |index: usize| {
+                args.get(index)
+                    .map(|a| tree.get_expr_unchecked(*a))
+                    .map(|a| default_translate(a, tree, self))
+                    .ok_or(Error::IncorrectArgCount(format!("{:?}", name), index))
+            };
+
+            if let CodebaseFunction::Unknown(unknown) = name
+                && unknown.eq_ignore_ascii_case("USER")
+            {
+                Ok((
+                    expr_ref(Expression::SingleQuoteStringLiteral("my user".to_owned())),
+                    FieldType::Memo,
+                ))
+            } else if name == &CodebaseFunction::DTOS {
+                Ok((
+                    expr_ref(Expression::FunctionCall {
+                        name: "CB_DATE_TO_TEXT".into(),
+                        args: vec![arg(0)??.0, expr_ref("YYYYMMDD".into())],
+                    }),
+                    FieldType::Character(8),
+                ))
+            } else {
+                translate_fn_call(name, args, tree, self)
+            }
+        }
+
+        fn translate_binary_op(
+            &self,
+            l: &parser::Expression,
+            op: &parser::BinaryOp,
+            r: &parser::Expression,
+            tree: &parser::ParseTree,
+        ) -> translate::Result {
+            translate_binary_op(self, l, op, r, tree)
+        }
+    }
+    let cx = CustomTranslator {
         field_lookup: |alias: Option<&str>, field: &str| -> Result<(String, FieldType), String> {
             let field = field.to_string().to_uppercase();
             let field_type = get_type(alias, &field);
             Ok((field, field_type))
         },
-        custom_functions: custom_functions(),
     };
     to_sql_tests(&cx);
 }
 
 fn expr_tests() {
-    let parser = grammar::ExprParser::new();
     let tests = [
         "-",    //0
         "--3",  //3 because it translates to -(-3)
@@ -59,7 +130,6 @@ fn expr_tests() {
         "5.",   //5.0
         "   3    - 44  ",
         "deleted() = .f. .and. substr(id, 1, 3 ) <> \"($)\"",
-        "USER() + \"Hello world\"",
         ".NOT.deleted()",
         "12",
         "(12)",
@@ -114,6 +184,7 @@ fn expr_tests() {
         ".+.=.", // 0.0 + 0.0 = 0.0
         "1. + 2 = 3.00",
         ".1 + 0.2 = 000.3",
+        "USER() + \"Hello world\"",
     ];
 
     let value_lookup = |_alias: Option<&str>, field_name: &str| -> Option<evaluate::Value> {
@@ -134,33 +205,30 @@ fn expr_tests() {
         }
     };
 
+    let custom_functions = |name: &str| {
+        name.eq_ignore_ascii_case("USER")
+            .then_some(Ok(evaluate::Value::Str("my user".to_owned())))
+    };
+
     for test in tests.iter() {
-        match parser.parse(test) {
-            Ok(t) => {
+        //println!("{test}");
+        match parse(test) {
+            Ok((tree, root)) => {
                 //println!("{t:?}");
-                let t = ast::simplify(*t);
-                //println!("{t:?}");
-                match evaluate::evaluate(&t, &value_lookup, &custom_functions()) {
-                    Ok(tree) => println!("{test} => {tree:?}\n"),
-                    Err(e) => eprintln!("{test} => Error translating tree: {e:?}\n:{test}\n"),
+                match evaluate::evaluate(&root, &tree, &value_lookup, &custom_functions) {
+                    Ok(_tree) => {}
+                    //println!("{test} => {tree:?}\n"),
+                    Err(e) => {
+                        eprintln!("{test}\n{e:?}\n")
+                    }
                 }
             }
-            // The parse failed with an unexpected token: show the approximate
-            //  position in the source
-            Err(lalrpop_util::ParseError::InvalidToken { location }) => {
-                let end = test.len().min(location + 10);
-                println!("Failed: {}\nError near here: {}", test, unsafe {
-                    test.get_unchecked(location..end)
-                })
-            }
-            // Any other kind of error, just print it
-            Err(e) => println!("{:?}", e),
+            Err(e) => println!("{test}\n{e}\n"),
         };
     }
 }
 
 fn to_sql_tests<T: TranslationContext>(cx: &T) {
-    let parser = grammar::ExprParser::new();
     let tests = [
         "deleted() = .f. .and. substr(id, 1, 3 ) <> \"($)\"",
         ".NOT.deleted()",
@@ -192,30 +260,20 @@ fn to_sql_tests<T: TranslationContext>(cx: &T) {
           VAL(STR((DATE() - STOD('20000102'))/7 - 0.5,6,0))*7)",
         // Simplification test
         "a + b + c + a + b",
+        // Custom function translation
+        "USER() + \"Hello world\"",
     ];
 
     for test in tests.iter() {
-        match parser.parse(test) {
-            Ok(t) => {
-                let t = ast::simplify(*t);
-                match cx.translate(&t) {
-                    Ok(tree) => println!(
-                        "{test}\n=>\n{}\n",
-                        Printer::new(tree.0, PrinterConfig::default())
-                    ),
-                    Err(e) => eprintln!("Error translating tree: {e:?}\n:{test}\n"),
-                }
-            }
+        match parse(test) {
+            Ok((tree, root)) => match cx.translate(&root, &tree) {
+                Ok(tree) => println!(
+                    "{test}\n=>\n{}\n",
+                    Printer::new(tree.0, PrinterConfig::default())
+                ),
+                Err(e) => eprintln!("Error translating tree: {e:?}\n:{test}\n"),
+            },
 
-            // The parse failed with an unexpected token: show the approximate
-            //  position in the source
-            Err(lalrpop_util::ParseError::InvalidToken { location }) => {
-                let end = test.len().min(location + 10);
-                println!("Failed: {}\nError near here: {}", test, unsafe {
-                    test.get_unchecked(location..end)
-                })
-            }
-            // Any other kind of error, just print it
             Err(e) => println!("{:?}", e),
         };
     }

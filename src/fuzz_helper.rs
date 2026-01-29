@@ -1,9 +1,9 @@
 use crate::{
-    ast,
     evaluate::{self, Value},
-    grammar::ExprParser,
-    translate::{FieldType, TranslationContext, postgres::Translator},
+    parser,
+    translate::{self, Expression, FieldType, TranslationContext, postgres::Translator},
 };
+use std::{cell::RefCell, rc::Rc};
 
 // Simple value lookup for evaluation
 fn value_lookup() -> impl Fn(Option<&str>, &str) -> Option<Value> {
@@ -26,13 +26,18 @@ fn value_lookup() -> impl Fn(Option<&str>, &str) -> Option<Value> {
     }
 }
 
-fn custom_functions() -> fn(&str) -> Option<ast::Expression> {
+fn custom_functions() -> fn(&str) -> Option<translate::Result> {
     custom_functions_impl
 }
 
-fn custom_functions_impl(func: &str) -> Option<ast::Expression> {
+fn custom_functions_impl(func: &str) -> Option<translate::Result> {
     match func.to_uppercase().as_str() {
-        "USER" => Some(ast::Expression::StringLiteral("my user".to_string())),
+        "USER" => Some(Ok((
+            Rc::new(RefCell::new(Expression::SingleQuoteStringLiteral(
+                "my user".to_owned(),
+            ))),
+            FieldType::Memo,
+        ))),
         _ => None,
     }
 }
@@ -54,31 +59,28 @@ fn field_lookup() -> impl Fn(Option<&str>, &str) -> Result<(String, FieldType), 
 
 pub fn translate_expr(expr: &str) {
     // Try parsing
-    let parser = ExprParser::new();
-    if let Ok(parsed) = parser.parse(expr) {
-        let simplified = crate::ast::simplify(*parsed);
-        // Evaluate, ignore errors
-        let _ = evaluate::evaluate(&simplified, &value_lookup(), &custom_functions());
+    if let Ok((tree, root)) = parser::parse(expr) {
+        // Evaluate, ignore errors - using new 4-parameter signature
+        let _ = evaluate::evaluate(&root, &tree, &value_lookup(), &custom_functions());
 
         let translator = Translator {
             field_lookup: field_lookup(),
             custom_function: custom_functions(),
         };
-        _ = translator.translate(&simplified);
+        _ = translator.translate(&root, &tree);
     }
 }
 
-pub fn translate_ast(expr: ast::Expression) {
-    let simplified = crate::ast::simplify(expr);
+pub fn translate_ast(expr: parser::Expression, tree: &parser::ParseTree) {
     let func = custom_functions();
-    // Evaluate, ignore errors
+    // Evaluate, ignore errors - using new 4-parameter signature
     {
-        let _ = evaluate::evaluate(&simplified, &value_lookup(), &func);
+        let _ = evaluate::evaluate(&expr, tree, &value_lookup(), &func);
     }
 
     let translator = Translator {
         field_lookup: field_lookup(),
         custom_function: func,
     };
-    _ = translator.translate(&simplified);
+    _ = translator.translate(&expr, tree);
 }
