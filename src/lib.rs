@@ -63,6 +63,7 @@ pub mod evaluate;
 pub mod lex;
 pub mod parser;
 pub mod simple_text_expr;
+pub mod tests;
 pub mod to_sql;
 pub mod translate;
 pub use parser::Error as ParseError;

@@ -441,8 +441,14 @@ fn eval_function(
             ] => {
                 let start = (*start as usize).saturating_sub(1);
                 let len = *len as usize;
-                let substr: String = s.chars().skip(start).take(len).collect();
-                Ok(Value::Str(substr))
+                Ok(Value::Str(s.chars().skip(start).take(len).collect()))
+            }
+            [
+                Value::FixedLenStr(s, _) | Value::Str(s),
+                Value::Number(start, _),
+            ] => {
+                let start = (*start as usize).saturating_sub(1);
+                Ok(Value::Str(s.chars().skip(start).collect()))
             }
             _ => Err(Error::InvalidArguments(
                 name.clone(),
@@ -649,15 +655,18 @@ fn eval_binary_op(op: &BinaryOp, left: Value, right: Value) -> Result<Value, Err
                 let duration = d1.signed_duration_since(d2);
                 Ok(Value::Number(duration.num_days() as f64, false))
             }
-            (Value::Date(Some(d1)), Value::DateParseError(_)) => {
+            (Value::Date(Some(d1)), Value::DateParseError(_) | Value::Date(None)) => {
                 // Difference in days as float
                 Ok(Value::Number(days_since_jd0(d1) as f64, false))
             }
-            (Value::DateParseError(_), Value::Date(Some(d1))) => {
+            (Value::DateParseError(_) | Value::Date(None), Value::Date(Some(d1))) => {
                 // Difference in days as float
                 Ok(Value::Number(-days_since_jd0(d1) as f64, false))
             }
-            (Value::DateParseError(_), Value::DateParseError(_)) => Ok(Value::Number(0.0, false)),
+            (
+                Value::DateParseError(_) | Value::Date(None),
+                Value::DateParseError(_) | Value::Date(None),
+            ) => Ok(Value::Number(0.0, false)),
             _ => Err(Error::IncompatibleBinaryOp(
                 BinaryOp::Sub,
                 "Incompatible types".to_string(),
@@ -877,5 +886,26 @@ mod tests {
     #[test]
     fn addition_or_sign() {
         assert_eq!(eval("7+1=8"), TRUE);
+    }
+
+    #[test]
+    fn substr_test_with_1() {
+        assert_eq!(
+            eval("SUBSTR('TEST', 1, 2)"),
+            Ok(Value::Str("TE".to_string()))
+        );
+    }
+
+    #[test]
+    fn substr_test_with_0() {
+        assert_eq!(
+            eval("SUBSTR('TEST', 0, 2)"),
+            Ok(Value::Str("TE".to_string()))
+        );
+    }
+
+    #[test]
+    fn substr_test_without_len() {
+        assert_eq!(eval("SUBSTR('TEST', 3)"), Ok(Value::Str("ST".to_string())));
     }
 }

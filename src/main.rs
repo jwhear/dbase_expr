@@ -5,9 +5,8 @@ use dbase_expr::{
     to_sql::PrinterConfig,
     translate::{
         Error, ExprRef, Expression, FieldType, TranslationContext, expr_ref,
-        postgres::{
-            Translator, translate as default_translate, translate_binary_op, translate_fn_call,
-        },
+        postgres::Translator,
+        postgres::{translate as default_translate, translate_binary_op, translate_fn_call},
     },
     *,
 };
