@@ -83,6 +83,15 @@ mod tests {
     use super::{parser, *};
 
     #[test]
+    fn field_concat_len_test() {
+        let (_, field_type) = parse_expression("ID + L_NAME").unwrap();
+        let FieldType::Character(len) = &field_type else {
+            panic!("Expected Character field type, got {:?}", field_type)
+        };
+        assert_eq!(*len, 30);
+    }
+
+    #[test]
     fn substr_test() {
         let (expression, field_type) = parse_expression("substr(ID, 0, 3)").unwrap();
         let Expression::FunctionCall { name, args } = &*expression.borrow() else {
