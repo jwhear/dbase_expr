@@ -136,11 +136,11 @@ pub fn translate<'a, C: TranslationContext>(
             }
 
             for operand in &operands[1..] {
-                let (expr, _) = cx.translate(tree.get_expr_unchecked(*operand), tree)?;
+                let expr = cx.translate(tree.get_expr_unchecked(*operand), tree)?.0;
                 exprs.push(expr);
             }
 
-            let operator = match (op, &ty) {
+            let operator = match (op, ty) {
                 (
                     &parser::BinaryOp::Add,
                     FieldType::Character(_) | FieldType::Memo | FieldType::MemoBinary,
