@@ -130,7 +130,6 @@ pub fn translate<'a, C: TranslationContext>(
             let (first_expr, ty) = cx.translate(tree.get_expr_unchecked(operands[0]), tree)?;
             let mut exprs = Vec::with_capacity(operands.len());
             exprs.push(first_expr);
-
             for operand in &operands[1..] {
                 let expr = cx.translate(tree.get_expr_unchecked(*operand), tree)?.0;
                 exprs.push(expr);
