@@ -127,29 +127,20 @@ pub fn translate<'a, C: TranslationContext>(
                 "Sequence operation should only be generated for at least two operands"
             );
             let operands = tree.get_args(operands);
-            let (first_expr, ty) = cx.translate(tree.get_expr_unchecked(operands[0]), tree)?;
+            let (first_expr, mut ty) = cx.translate(tree.get_expr_unchecked(operands[0]), tree)?;
             let mut exprs = Vec::with_capacity(operands.len());
             exprs.push(first_expr);
 
-            // Track the result type for potential Character len concatenation
-            let mut result_ty = ty;
-
-            for operand in &operands[1..] {
-                let (expr, operand_ty) = cx.translate(tree.get_expr_unchecked(*operand), tree)?;
-                exprs.push(expr);
-
-                // If we're concatenating Character types, add their lengths
-                if let (
-                    &parser::BinaryOp::Add,
-                    FieldType::Character(len1),
-                    FieldType::Character(len2),
-                ) = (op, &result_ty, &operand_ty)
-                {
-                    result_ty = FieldType::Character(len1 + len2);
-                }
+            if matches!(ty, FieldType::Character(_)) {
+                ty = FieldType::Memo; // switch to Memo if concatenating
             }
 
-            let operator = match (op, &result_ty) {
+            for operand in &operands[1..] {
+                let (expr, _) = cx.translate(tree.get_expr_unchecked(*operand), tree)?;
+                exprs.push(expr);
+            }
+
+            let operator = match (op, &ty) {
                 (
                     &parser::BinaryOp::Add,
                     FieldType::Character(_) | FieldType::Memo | FieldType::MemoBinary,
@@ -159,10 +150,7 @@ pub fn translate<'a, C: TranslationContext>(
                 //TODO consider reintroducing Concat/SequenceOp to turn this into a compile-time error
                 _ => panic!("Unsupported binary operator for Sequence: {op:?}"),
             };
-            ok(
-                Expression::BinaryOperatorSequence(operator, exprs),
-                result_ty,
-            )
+            ok(Expression::BinaryOperatorSequence(operator, exprs), ty)
         }
     }
 }
