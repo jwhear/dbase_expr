@@ -135,13 +135,18 @@ pub fn translate<'a, C: TranslationContext>(
                 exprs.push(expr);
             }
 
-            let operator = match (op, ty) {
-                (
-                    &parser::BinaryOp::Add,
-                    FieldType::Character(_) | FieldType::Memo | FieldType::MemoBinary,
-                ) => BinaryOp::Concat,
-                (&parser::BinaryOp::Add, _) => BinaryOp::Add,
-                (&parser::BinaryOp::Sub, _) => BinaryOp::Sub,
+            let (operator, ty) = match (op, ty) {
+                (&parser::BinaryOp::Add, FieldType::Character(_)) => {
+                    //somewwhat unexpectedly, codebase treates 'C' field concatenation as 'M'
+                    //i.e. if you query "ID + L_NAME = '[too long string]' it will fail
+                    //whereas if you query "ID = 'ESHBRE    [too long string]'" it will truncate to the length of ID and succeed
+                    (BinaryOp::Concat, FieldType::Memo)
+                }
+                (&parser::BinaryOp::Add, FieldType::Memo | FieldType::MemoBinary) => {
+                    (BinaryOp::Concat, ty)
+                }
+                (&parser::BinaryOp::Add, _) => (BinaryOp::Add, ty),
+                (&parser::BinaryOp::Sub, _) => (BinaryOp::Sub, ty),
                 //TODO consider reintroducing Concat/SequenceOp to turn this into a compile-time error
                 _ => panic!("Unsupported binary operator for Sequence: {op:?}"),
             };
