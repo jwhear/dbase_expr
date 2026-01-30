@@ -137,7 +137,9 @@ pub fn translate<'a, C: TranslationContext>(
 
             let (operator, ty) = match (op, ty) {
                 (&parser::BinaryOp::Add, FieldType::Character(_)) => {
-                    // switch to Memo if concatenating
+                    //somewwhat unexpectedly, codebase treates 'C' field concatenation as 'M'
+                    //i.e. if you query "ID + L_NAME = '[too long string]' it will fail
+                    //whereas if you query "ID = 'ESHBRE    [too long string]'" it will truncate to the length of ID and succeed
                     (BinaryOp::Concat, FieldType::Memo)
                 }
                 (&parser::BinaryOp::Add, FieldType::Memo | FieldType::MemoBinary) => {
