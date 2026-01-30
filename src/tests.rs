@@ -83,6 +83,17 @@ mod tests {
     use super::{parser, *};
 
     #[test]
+    fn field_concat_len_test() {
+        let (_, field_type) = parse_expression("ID + L_NAME").unwrap();
+        //somewwhat unexpectedly, codebase treates 'C' field concatenation as 'M'
+        //i.e. if you query "ID + L_NAME = '[too long string]' it will fail
+        //whereas if you query "ID = 'ESHBRE    [too long string]'" it will truncate to the length of ID and succeed
+        let FieldType::Memo = &field_type else {
+            panic!("Expected Memo field type, got {:?}", field_type)
+        };
+    }
+
+    #[test]
     fn substr_test() {
         let (expression, field_type) = parse_expression("substr(ID, 0, 3)").unwrap();
         let Expression::FunctionCall { name, args } = &*expression.borrow() else {
