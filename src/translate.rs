@@ -320,19 +320,13 @@ pub trait TranslationContext {
     }
 }
 
-//NOTE(justin): This function almost certainly has a bug hiding in it.
 fn escape_single_quotes(s: &str) -> String {
     let mut res = String::new();
     res.reserve(s.len());
-
-    let mut is_escaped = false;
     for c in s.chars() {
-        is_escaped = c == '\\' && !is_escaped;
-
-        if c == '\'' && !is_escaped {
-            res.push('\\');
+        if c == '\'' {
+            res.push('\''); // Add an extra quote to escape it
         }
-
         res.push(c);
     }
     res
@@ -345,7 +339,9 @@ mod tests {
     #[test]
     fn test_escape_single_quotes() {
         assert_eq!("foo", escape_single_quotes("foo"));
-        assert_eq!(r"\'", escape_single_quotes(r"'"));
-        assert_eq!(r"\\'", escape_single_quotes(r"\'"));
+        //'->''
+        assert_eq!(r"''", escape_single_quotes(r"'"));
+        //\'->\'''
+        assert_eq!(r"\''", escape_single_quotes(r"\'"));
     }
 }
