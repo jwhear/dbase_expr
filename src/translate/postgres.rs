@@ -127,26 +127,25 @@ pub fn translate<'a, C: TranslationContext>(
                 "Sequence operation should only be generated for at least two operands"
             );
             let operands = tree.get_args(operands);
-            let (first_expr, mut ty) = cx.translate(tree.get_expr_unchecked(operands[0]), tree)?;
+            let (first_expr, ty) = cx.translate(tree.get_expr_unchecked(operands[0]), tree)?;
             let mut exprs = Vec::with_capacity(operands.len());
             exprs.push(first_expr);
-
-            if matches!(ty, FieldType::Character(_)) {
-                ty = FieldType::Memo; // switch to Memo if concatenating
-            }
 
             for operand in &operands[1..] {
                 let expr = cx.translate(tree.get_expr_unchecked(*operand), tree)?.0;
                 exprs.push(expr);
             }
 
-            let operator = match (op, ty) {
-                (
-                    &parser::BinaryOp::Add,
-                    FieldType::Character(_) | FieldType::Memo | FieldType::MemoBinary,
-                ) => BinaryOp::Concat,
-                (&parser::BinaryOp::Add, _) => BinaryOp::Add,
-                (&parser::BinaryOp::Sub, _) => BinaryOp::Sub,
+            let (operator, ty) = match (op, ty) {
+                (&parser::BinaryOp::Add, FieldType::Character(_)) => {
+                    // switch to Memo if concatenating
+                    (BinaryOp::Concat, FieldType::Memo)
+                }
+                (&parser::BinaryOp::Add, FieldType::Memo | FieldType::MemoBinary) => {
+                    (BinaryOp::Concat, ty)
+                }
+                (&parser::BinaryOp::Add, _) => (BinaryOp::Add, ty),
+                (&parser::BinaryOp::Sub, _) => (BinaryOp::Sub, ty),
                 //TODO consider reintroducing Concat/SequenceOp to turn this into a compile-time error
                 _ => panic!("Unsupported binary operator for Sequence: {op:?}"),
             };
