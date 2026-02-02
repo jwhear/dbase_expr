@@ -104,19 +104,33 @@ macro_rules! consume_literal {
             (1u64 << (LEN * 8)) - 1
         };
 
-        if $self.remaining_len() < LEN {
-            false
-        } else {
-            // Reading unaligned can be dangerous: this intrinsic makes it safe
-            //  and it has a pretty negligible performance impact on modern chips
-            let word = unsafe { std::ptr::read_unaligned($self.current_ptr() as *const u64) };
-            let word = lowercase_u64(word);
-            if (word & MASK) == PREFIX_LOWER_U64 {
-                $self.current += LEN;
-                true
-            } else {
-                false
+        match $self.remaining_len() {
+            n if n >= 8 => {
+                // Fastest path, enough bytes to read u64
+                // Reading unaligned can be dangerous: this intrinsic makes it safe
+                //  and it has a pretty negligible performance impact on modern chips
+                let word = unsafe { std::ptr::read_unaligned($self.current_ptr() as *const u64) };
+                let word = lowercase_u64(word);
+                if (word & MASK) == PREFIX_LOWER_U64 {
+                    $self.current += LEN;
+                    true
+                } else {
+                    false
+                }
             }
+            n if n >= LEN => {
+                // Slower path, manual comparison to the end of str
+                let slice = unsafe { std::slice::from_raw_parts($self.current_ptr(), LEN) };
+                let matches = slice
+                    .iter()
+                    .zip($prefix.iter())
+                    .all(|(a, b)| a.to_ascii_lowercase() == b.to_ascii_lowercase());
+                if matches {
+                    $self.current += LEN;
+                }
+                matches
+            }
+            _ => false,
         }
     }};
 }
