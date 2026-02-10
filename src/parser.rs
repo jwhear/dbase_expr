@@ -299,9 +299,8 @@ impl<'input> ParseTree<'input> {
         }
     }
 
-    pub fn is_single_field(&self) -> bool {
-        self.expressions.len() == 1
-            && matches!(self.expressions.first(), Some(Expression::Field { .. }))
+    pub fn is_empty(&self) -> bool {
+        self.expressions.is_empty()
     }
 }
 
