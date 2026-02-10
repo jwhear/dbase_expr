@@ -298,6 +298,11 @@ impl<'input> ParseTree<'input> {
             }
         }
     }
+
+    pub fn is_single_field(&self) -> bool {
+        self.expressions.len() == 1
+            && matches!(self.expressions.first(), Some(Expression::Field { .. }))
+    }
 }
 
 impl<'input> Default for ParseTree<'input> {
