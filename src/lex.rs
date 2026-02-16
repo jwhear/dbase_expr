@@ -121,14 +121,12 @@ macro_rules! consume_literal {
             n if n >= LEN => {
                 // Slower path, manual comparison to the end of str
                 let slice = unsafe { std::slice::from_raw_parts($self.current_ptr(), LEN) };
-                let matches = slice
-                    .iter()
-                    .zip($prefix.iter())
-                    .all(|(a, b)| a.to_ascii_lowercase() == b.to_ascii_lowercase());
-                if matches {
+                if slice.eq_ignore_ascii_case($prefix) {
                     $self.current += LEN;
+                    true
+                } else {
+                    false
                 }
-                matches
             }
             _ => false,
         }
