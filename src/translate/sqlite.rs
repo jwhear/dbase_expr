@@ -76,7 +76,7 @@ where
             }
             (parser::BinaryOp::Contain, FieldType::Character(_)) => {
                 let translated_r = self.translate(r, tree)?.0;
-                let strpos = expr_ref(TranslateExpression::FunctionCall {
+                let instr = expr_ref(TranslateExpression::FunctionCall {
                     name: "INSTR".to_string(),
                     // Note that in CodeBase the haystack is the right arg
                     args: vec![translated_r, translated_l],
@@ -84,7 +84,7 @@ where
                 let literal_zero = expr_ref(TranslateExpression::NumberLiteral(String::from("0")));
                 ok(
                     TranslateExpression::BinaryOperator(
-                        strpos,
+                        instr,
                         super::BinaryOp::Gt,
                         literal_zero,
                         Parenthesize::Yes,
