@@ -92,6 +92,51 @@ where
                     FieldType::Logical,
                 )
             }
+            // Sub on a character type also maps to CONCAT but with the
+            //  trailing spaces of the first argument "moved" to the end
+            //  of the result. We can map this as:
+            //
+            // format('%s%s%.*c', RTRIM(l), r, LENGTH(l) - LENGTH( RTRIM(l)), ' ')
+            //
+            (parser::BinaryOp::Sub, FieldType::Character(_) | FieldType::Memo) => {
+                let without_spaces = expr_ref(TranslateExpression::FunctionCall {
+                    name: "RTRIM".into(),
+                    args: vec![translated_l.clone()],
+                });
+                let length_without_spaces = expr_ref(TranslateExpression::FunctionCall {
+                    name: "LENGTH".into(),
+                    args: vec![without_spaces.clone()],
+                });
+                let length_with_spaces = expr_ref(TranslateExpression::FunctionCall {
+                    name: "LENGTH".into(),
+                    args: vec![translated_l],
+                });
+                let num_spaces = expr_ref(TranslateExpression::BinaryOperator(
+                    length_with_spaces,
+                    super::BinaryOp::Sub,
+                    length_without_spaces,
+                    Parenthesize::No,
+                ));
+                let fmt = expr_ref(TranslateExpression::SingleQuoteStringLiteral(String::from(
+                    "%s%s%.*c",
+                )));
+                let space = expr_ref(TranslateExpression::SingleQuoteStringLiteral(String::from(
+                    " ",
+                )));
+                ok(
+                    TranslateExpression::FunctionCall {
+                        name: "format".into(),
+                        args: vec![
+                            fmt,
+                            without_spaces,
+                            self.translate(r, tree)?.0,
+                            num_spaces,
+                            space,
+                        ],
+                    },
+                    FieldType::Memo,
+                )
+            }
             _ => translate_binary_op_right(self, l, translated_l, ty, op, r, tree),
         }
     }
@@ -322,5 +367,30 @@ mod tests {
 
         let sql = format!("{p}");
         assert_eq!(r#"(INSTR("SCREEN",'Wizard ')>0)"#, sql);
+    }
+
+    #[test]
+    fn sqlite_sub_concat() {
+        let translator = SqliteTranslator {
+            field_lookup: |_alias, _name| Ok((String::from("SCREEN"), FieldType::Character(32))),
+        };
+        let input = "'ab  '-'cd'";
+        let (pt, root) = crate::parse(input).expect("parses");
+        let (res, _) = translator.translate(&root, &pt).expect("translates");
+
+        use crate::to_sql::{Printer, PrinterConfig, SqlitePrinterContext};
+        let p = Printer::new(
+            res,
+            PrinterConfig {
+                context: Box::new(SqlitePrinterContext { pad_strings: false }),
+            },
+        );
+
+        let sql = format!("{p}");
+        // format('%s%s%.*c', RTRIM(l), r, LENGTH(l) - LENGTH( RTRIM(l)), ' ')
+        assert_eq!(
+            r#"format('%s%s%.*c',RTRIM('ab  '),'cd',LENGTH('ab  ')-LENGTH(RTRIM('ab  ')),' ')"#,
+            sql
+        );
     }
 }
