@@ -395,10 +395,20 @@ impl<'input> Lexer<'input> {
                 tok!(Identifier)
             }
 
-            // Digits mean it's a number
+            // Digits mean it's a number unless there are a-z involved, in which case it's an identifier (e.g. 1ST_FIELD)
             b'0'..=b'9' => {
                 self.consume_number();
-                tok!(Number)
+                if matches!(
+                    self.source.get(self.current),
+                    Some(b'a'..=b'z' | b'A'..=b'Z' | b'_')
+                ) {
+                    self.consume_while(
+                        |b| matches!(b, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'),
+                    );
+                    tok!(Identifier)
+                } else {
+                    tok!(Number)
+                }
             }
 
             // A dot could be the start of a number, an operator, or a boolean literal
