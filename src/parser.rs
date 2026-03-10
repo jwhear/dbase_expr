@@ -755,6 +755,7 @@ mod tests {
         let rhs = tree.get_expr(*rhs).expect("rhs");
         assert_eq!(*rhs, Expression::NumberLiteral(b"2.0"));
     }
+
     #[test]
     fn basic2() {
         let (tree, root) = parse(r#"'Hello' + (" " + "World")"#).expect("a valid parse");
@@ -776,6 +777,7 @@ mod tests {
         assert_eq!(*lhs, Expression::StringLiteral(b" "));
         assert_eq!(*rhs, Expression::StringLiteral(b"World"));
     }
+
     #[test]
     fn basic3() {
         let (tree, root) = parse(r#"'Hello ' + (F_NAME + CUST->L_NAME)"#).expect("a valid parse");
@@ -808,6 +810,7 @@ mod tests {
             }
         );
     }
+
     #[test]
     fn logical() {
         let (tree, root) = parse(r#"(.t. = .NOT..f.) .OR. .t."#).expect("a valid parse");
@@ -832,6 +835,7 @@ mod tests {
         let rhs = tree.get_expr(*rhs).expect("rhs");
         assert_eq!(*rhs, Expression::BoolLiteral(false));
     }
+
     #[test]
     fn fn_calls() {
         let (tree, root) = parse(r#"CTOD(TRIM("a date?"), TEST)"#).expect("a valid parse");
@@ -868,6 +872,7 @@ mod tests {
 
         assert_eq!(*first, Expression::StringLiteral(b"a date?"));
     }
+
     #[test]
     fn sequence() {
         let (tree, root) = parse(r#"a+b+c+d*e+f"#).expect("a valid parse");
@@ -936,5 +941,26 @@ mod tests {
         let Err(Error::RecursionLimitReached(2)) = res else {
             panic!("Expected an error")
         };
+    }
+
+    #[test]
+    fn numeric() {
+        let (_, root) = parse(r#"123.45"#).expect("a valid parse");
+        let Expression::NumberLiteral(value) = root else {
+            panic!("Expected a NumberLiteral, got a {root:?}");
+        };
+        let value_str = std::str::from_utf8(value).unwrap();
+        let value: f32 = value_str.parse().unwrap();
+        assert_eq!(value, 123.45);
+    }
+
+    #[test]
+    fn identifier_beginning_with_number() {
+        let (_, root) = parse(r#"1ST_FIELD"#).expect("a valid parse");
+        let Expression::Field { name, .. } = root else {
+            panic!("Expected a Field, got a {root:?}");
+        };
+        let name_str = std::str::from_utf8(name).unwrap();
+        assert_eq!(name_str, "1ST_FIELD");
     }
 }
