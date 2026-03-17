@@ -48,7 +48,7 @@ where
         if name == &CodebaseFunction::DTOS {
             Ok((
                 expr_ref(Expression::FunctionCall {
-                    name: "CB_DATE_TO_TEXT".into(),
+                    name: "cb_date_to_text".into(),
                     args: vec![arg(0)??.0, expr_ref("YYYYMMDD".into())],
                 }),
                 FieldType::Character(8),
