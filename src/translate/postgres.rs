@@ -127,29 +127,45 @@ pub fn translate<'a, C: TranslationContext>(
                 "Sequence operation should only be generated for at least two operands"
             );
             let operands = tree.get_args(operands);
-            let (first_expr, ty) = cx.translate(tree.get_expr_unchecked(operands[0]), tree)?;
             let mut exprs = Vec::with_capacity(operands.len());
-            exprs.push(first_expr);
-            for operand in &operands[1..] {
-                let expr = cx.translate(tree.get_expr_unchecked(*operand), tree)?.0;
-                exprs.push(expr);
+            let mut first_ty = None;
+            for (i, operand) in operands.iter().enumerate() {
+                let (expr, ty) = cx.translate(tree.get_expr_unchecked(*operand), tree)?;
+                if i == 0 {
+                    first_ty = Some(ty);
+                }
+                exprs.push((expr, ty));
             }
-
-            let (operator, ty) = match (op, ty) {
+            let first_ty = first_ty.unwrap();
+            let (operator, ty) = match (op, first_ty) {
                 (&parser::BinaryOp::Add, FieldType::Character(_)) => {
-                    //somewwhat unexpectedly, codebase treates 'C' field concatenation as 'M'
-                    //i.e. if you query "ID + L_NAME = '[too long string]' it will fail
-                    //whereas if you query "ID = 'ESHBRE    [too long string]'" it will truncate to the length of ID and succeed
-                    (BinaryOp::Concat, FieldType::Memo)
+                    let total_len: u32 = exprs
+                        .iter()
+                        .try_fold(0u32, |acc, (_, ty)| {
+                            let len = match ty {
+                                FieldType::Character(len) => *len,
+                                _ => {
+                                    return Err(format!(
+                                        "Invalid type for fixed-length concat: {:?}. Fixed length types shouldn't be mixed with others in a sequence operation",
+                                        ty
+                                    ));
+                                }
+                            };
+                            acc.checked_add(len)
+                                .ok_or_else(|| "Total length exceeds u32::MAX".to_string())
+                        })
+                        .map_err(crate::translate::Error::Other)?;
+                    (BinaryOp::Concat, FieldType::Character(total_len))
                 }
                 (&parser::BinaryOp::Add, FieldType::Memo | FieldType::MemoBinary) => {
-                    (BinaryOp::Concat, ty)
+                    (BinaryOp::Concat, first_ty)
                 }
-                (&parser::BinaryOp::Add, _) => (BinaryOp::Add, ty),
-                (&parser::BinaryOp::Sub, _) => (BinaryOp::Sub, ty),
-                //TODO consider reintroducing Concat/SequenceOp to turn this into a compile-time error
+                (&parser::BinaryOp::Add, _) => (BinaryOp::Add, first_ty),
+                (&parser::BinaryOp::Sub, _) => (BinaryOp::Sub, first_ty),
                 _ => panic!("Unsupported binary operator for Sequence: {op:?}"),
             };
+
+            let exprs = exprs.into_iter().map(|(e, _)| e).collect();
             ok(Expression::BinaryOperatorSequence(operator, exprs), ty)
         }
     }
@@ -570,9 +586,21 @@ pub fn translate_binary_op_right<'a, T: TranslationContext>(
         }
 
         // Add on a character type maps to CONCAT
-        (parser::BinaryOp::Add, FieldType::Character(_) | FieldType::Memo) => {
-            binop(l, BinaryOp::Concat, r, FieldType::Memo)
+        (parser::BinaryOp::Add, FieldType::Character(len)) => {
+            let (tr_r, r_ty) = translate(r, tree, cx)?;
+            let combined_ty = match r_ty {
+                FieldType::Character(r_len) => {
+                    FieldType::Character(len + r_len) //combine the lengths
+                }
+                _ => {
+                    FieldType::Memo // everything else is a memo
+                }
+            };
+            tr_binop(l, BinaryOp::Concat, tr_r, combined_ty)
         }
+
+        (parser::BinaryOp::Add, FieldType::Memo) => binop(l, BinaryOp::Concat, r, FieldType::Memo),
+
         // Sub on a character type also maps to CONCAT but with the
         //  trailing spaces of the first argument "moved" to the end
         //  of the result. We can map this as:
