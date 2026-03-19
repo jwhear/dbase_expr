@@ -139,23 +139,14 @@ pub fn translate<'a, C: TranslationContext>(
             let first_ty = first_ty.unwrap();
             let (operator, ty) = match (op, first_ty) {
                 (&parser::BinaryOp::Add, FieldType::Character(_)) => {
-                    let total_len: u32 = exprs
+                    let ty = exprs
                         .iter()
-                        .try_fold(0u32, |acc, (_, ty)| {
-                            let len = match ty {
-                                FieldType::Character(len) => *len,
-                                _ => {
-                                    return Err(format!(
-                                        "Invalid type for fixed-length concat: {:?}. Fixed length types shouldn't be mixed with others in a sequence operation",
-                                        ty
-                                    ));
-                                }
-                            };
-                            acc.checked_add(len)
-                                .ok_or_else(|| "Total length exceeds u32::MAX".to_string())
+                        .try_fold(0u32, |acc, expr| match expr.1 {
+                            FieldType::Character(len) => Some(acc + len),
+                            _ => None,
                         })
-                        .map_err(crate::translate::Error::Other)?;
-                    (BinaryOp::Concat, FieldType::Character(total_len))
+                        .map_or(FieldType::Memo, FieldType::Character);
+                    (BinaryOp::Concat, ty)
                 }
                 (&parser::BinaryOp::Add, FieldType::Memo | FieldType::MemoBinary) => {
                     (BinaryOp::Concat, first_ty)
