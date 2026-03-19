@@ -587,16 +587,12 @@ pub fn translate_binary_op_right<'a, T: TranslationContext>(
 
         // Add on a character type maps to CONCAT
         (parser::BinaryOp::Add, FieldType::Character(len)) => {
-            let (tr_r, r_ty) = translate(r, tree, cx)?;
-            let combined_ty = match r_ty {
-                FieldType::Character(r_len) => {
-                    FieldType::Character(len + r_len) //combine the lengths
-                }
-                _ => {
-                    FieldType::Memo // everything else is a memo
-                }
+            let (r, r_ty) = translate(r, tree, cx)?;
+            let ty = match r_ty {
+                FieldType::Character(r_len) => FieldType::Character(len + r_len), //combine the lengths
+                _ => FieldType::Memo, // everything else is a memo
             };
-            tr_binop(l, BinaryOp::Concat, tr_r, combined_ty)
+            tr_binop(l, BinaryOp::Concat, r, ty)
         }
 
         (parser::BinaryOp::Add, FieldType::Memo) => binop(l, BinaryOp::Concat, r, FieldType::Memo),
