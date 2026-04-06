@@ -91,7 +91,9 @@ pub fn translate<'a, C: TranslationContext>(
         E::Field { alias, name } => {
             let alias = alias.map(|v| unsafe { std::str::from_utf8_unchecked(v) });
             let name = unsafe { std::str::from_utf8_unchecked(name) };
-            let (name, field_type) = cx.lookup_field(alias, name).map_err(Error::Other)?;
+            let (name, field_type) = cx
+                .lookup_field(alias, name)
+                .map_err(|m| Error::InvalidField(name.into(), m))?;
             ok(Expression::Field { name, field_type }, field_type)
         }
         E::UnaryOperator(op, r) => {
@@ -229,7 +231,9 @@ pub fn translate_fn_call<'a>(
         ),
         // DELETED() => __deleted
         F::DELETED => {
-            let (name, field_type) = cx.lookup_field(None, "__deleted").map_err(Error::Other)?;
+            let (name, field_type) = cx
+                .lookup_field(None, "__deleted")
+                .map_err(|m| Error::InvalidField("__deleted".into(), m))?;
             ok(Expression::Field { name, field_type }, field_type)
         }
 
@@ -420,7 +424,9 @@ pub fn translate_fn_call<'a>(
 
         // RECNO() => RECNO5
         F::RECNO => {
-            let (name, field_type) = cx.lookup_field(None, "RECNO5").map_err(Error::Other)?;
+            let (name, field_type) = cx
+                .lookup_field(None, "RECNO5")
+                .map_err(|m| Error::InvalidField("RECNO5".into(), m))?;
             ok(Expression::Field { name, field_type }, field_type)
         }
 
