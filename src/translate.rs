@@ -138,7 +138,7 @@ impl std::fmt::Display for Error {
                 f,
                 "Function {func_name}: argument {wrong_arg_index} is the wrong type",
             ),
-            Self::InvalidField(field, error) => write!(f, "Invalid field {field}: {error}"),
+            Self::InvalidField(field, error) => write!(f, "Invalid Field Name ({field}): {error}"),
             Self::Other(msg) => write!(f, "Error: {msg}"),
         }
     }
