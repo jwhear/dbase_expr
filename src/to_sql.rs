@@ -201,13 +201,24 @@ impl ToSQL for Expression {
             }
             Expression::NumberLiteral(v) => write!(out, "{v}"),
             Expression::SingleQuoteStringLiteral(v) => write!(out, "'{v}'"),
-
             Expression::Field { name, field_type } => {
                 let quoted = format!("\"{name}\"");
                 if let FieldType::Character(width) = field_type {
                     conf.context.write_padding(out, &quoted, *width)
                 } else if let FieldType::Date = field_type {
                     conf.context.coalesce_date(out, &quoted)
+                } else if matches!(
+                    field_type,
+                    FieldType::Double
+                        | FieldType::Float
+                        | FieldType::Integer
+                        | FieldType::Numeric { .. }
+                ) {
+                    write!(out, "COALESCE({}, 0)", quoted)
+                } else if let FieldType::Logical = field_type {
+                    write!(out, "COALESCE({}, FALSE)", quoted)
+                } else if let FieldType::Memo = field_type {
+                    write!(out, "COALESCE({}, '')", quoted)
                 } else {
                     out.write_str(&quoted)
                 }
