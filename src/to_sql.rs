@@ -203,24 +203,18 @@ impl ToSQL for Expression {
             Expression::SingleQuoteStringLiteral(v) => write!(out, "'{v}'"),
             Expression::Field { name, field_type } => {
                 let quoted = format!("\"{name}\"");
-                if let FieldType::Character(width) = field_type {
-                    conf.context.write_padding(out, &quoted, *width)
-                } else if let FieldType::Date = field_type {
-                    conf.context.coalesce_date(out, &quoted)
-                } else if matches!(
-                    field_type,
+                match field_type {
+                    FieldType::Character(width) => conf.context.write_padding(out, &quoted, *width),
+                    FieldType::Date => conf.context.coalesce_date(out, &quoted),
                     FieldType::Double
-                        | FieldType::Float
-                        | FieldType::Integer
-                        | FieldType::Numeric { .. }
-                ) {
-                    write!(out, "COALESCE({}, 0)", quoted)
-                } else if let FieldType::Logical = field_type {
-                    write!(out, "COALESCE({}, FALSE)", quoted)
-                } else if let FieldType::Memo = field_type {
-                    write!(out, "COALESCE({}, '')", quoted)
-                } else {
-                    out.write_str(&quoted)
+                    | FieldType::Float
+                    | FieldType::Integer
+                    | FieldType::Numeric { .. } => {
+                        write!(out, "COALESCE({}, 0)", quoted)
+                    }
+                    FieldType::Logical => write!(out, "COALESCE({}, FALSE)", quoted),
+                    FieldType::Memo => write!(out, "COALESCE({}, '')", quoted),
+                    _ => out.write_str(&quoted),
                 }
             }
             Expression::UnaryOperator(op, exp) => {
