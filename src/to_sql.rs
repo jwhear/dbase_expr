@@ -209,7 +209,10 @@ impl ToSQL for Expression {
                     FieldType::Double
                     | FieldType::Float
                     | FieldType::Integer
-                    | FieldType::Numeric { .. } => {
+                    | FieldType::Numeric { .. }
+                        if name != "RECNO5" =>
+                    //no reason to coalesce RECNO5
+                    {
                         write!(out, "COALESCE({}, 0)", quoted)
                     }
                     FieldType::Logical => write!(out, "COALESCE({}, FALSE)", quoted),
