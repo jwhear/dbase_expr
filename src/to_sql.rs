@@ -6,8 +6,12 @@ use std::{
 };
 
 pub trait PrinterContext: std::fmt::Debug {
-    fn write_padding(&self, out: &mut Formatter<'_>, inner: &str, width: u32) -> std::fmt::Result;
-    fn coalesce_date(&self, out: &mut Formatter<'_>, inner: &str) -> std::fmt::Result;
+    fn format(
+        &self,
+        out: &mut Formatter<'_>,
+        name: &str,
+        field_type: &FieldType,
+    ) -> std::fmt::Result;
     /// Write a full binary operator expression: `l <op> r`.
     /// Default behavior prints `l`, the dialect token, then `r`.
     /// Dialects can override to customize behavior (e.g., MSSQL STARTSWITH).
@@ -46,11 +50,31 @@ impl Clone for Box<dyn PrinterContext> {
 pub struct PostgresPrinterContext;
 
 impl PrinterContext for PostgresPrinterContext {
-    fn write_padding(&self, out: &mut Formatter<'_>, inner: &str, width: u32) -> std::fmt::Result {
-        write!(out, "RPAD(COALESCE({}, ''), {}, ' ')", inner, width)
-    }
-    fn coalesce_date(&self, out: &mut Formatter<'_>, inner: &str) -> std::fmt::Result {
-        write!(out, "COALESCE({}, DATE '{}')", inner, COALESCE_DATE)
+    fn format(
+        &self,
+        out: &mut Formatter<'_>,
+        name: &str,
+        field_type: &FieldType,
+    ) -> std::fmt::Result {
+        let quoted = format!("\"{name}\"");
+        match field_type {
+            FieldType::Character(width) => {
+                write!(out, "RPAD(COALESCE({}, ''), {}, ' ')", quoted, width)
+            }
+            FieldType::Date => write!(out, "COALESCE({}, DATE '{}')", quoted, COALESCE_DATE),
+            FieldType::Double
+            | FieldType::Float
+            | FieldType::Integer
+            | FieldType::Numeric { .. }
+                if name != "RECNO5" =>
+            {
+                //no reason to coalesce RECNO5
+                write!(out, "COALESCE({}, 0)", quoted)
+            }
+            FieldType::Logical => write!(out, "COALESCE({}, FALSE)", quoted),
+            FieldType::Memo => write!(out, "COALESCE({}, '')", quoted),
+            _ => out.write_str(&quoted),
+        }
     }
     fn box_clone(&self) -> Box<dyn PrinterContext> {
         Box::new(*self) // requires Copy on PostgresPrinterContext
@@ -63,20 +87,28 @@ pub struct SqlitePrinterContext {
 }
 
 impl PrinterContext for SqlitePrinterContext {
-    fn write_padding(&self, out: &mut Formatter<'_>, inner: &str, width: u32) -> std::fmt::Result {
-        if self.pad_strings {
-            let spaces = " ".repeat(width as usize);
-            write!(
-                out,
-                "COALESCE({}, '') || SUBSTR('{}', 1, CASE WHEN {} - LENGTH(COALESCE({}, '')) > 0 THEN {} - LENGTH(COALESCE({}, '')) ELSE 0 END)",
-                inner, spaces, width, inner, width, inner
-            )
-        } else {
-            write!(out, "{}", inner)
+    fn format(
+        &self,
+        out: &mut Formatter<'_>,
+        name: &str,
+        field_type: &FieldType,
+    ) -> std::fmt::Result {
+        let quoted = format!("\"{name}\"");
+        match field_type {
+            FieldType::Character(width) => {
+                if self.pad_strings {
+                    let spaces = " ".repeat(*width as usize);
+                    write!(
+                        out,
+                        "COALESCE({quoted}, '') || SUBSTR('{spaces}', 1, CASE WHEN {width} - LENGTH(COALESCE({quoted}, '')) > 0 THEN {width} - LENGTH(COALESCE({quoted}, '')) ELSE 0 END)",
+                    )
+                } else {
+                    write!(out, "{}", quoted)
+                }
+            }
+            FieldType::Date => write!(out, "COALESCE({}, DATE('{}'))", quoted, COALESCE_DATE),
+            _ => out.write_str(&quoted),
         }
-    }
-    fn coalesce_date(&self, out: &mut Formatter<'_>, inner: &str) -> std::fmt::Result {
-        write!(out, "COALESCE({}, DATE('{}'))", inner, COALESCE_DATE)
     }
     fn box_clone(&self) -> Box<dyn PrinterContext> {
         Box::new(*self) // requires Copy on PostgresPrinterContext
@@ -87,15 +119,35 @@ impl PrinterContext for SqlitePrinterContext {
 pub struct MssqlPrinterContext;
 
 impl PrinterContext for MssqlPrinterContext {
-    fn write_padding(&self, out: &mut Formatter<'_>, inner: &str, width: u32) -> std::fmt::Result {
-        write!(
-            out,
-            "LEFT(COALESCE({}, '') + REPLICATE(' ', {}), {})",
-            inner, width, width
-        )
-    }
-    fn coalesce_date(&self, out: &mut Formatter<'_>, inner: &str) -> std::fmt::Result {
-        write!(out, "COALESCE({}, '{}')", inner, COALESCE_DATE)
+    fn format(
+        &self,
+        out: &mut Formatter<'_>,
+        name: &str,
+        field_type: &FieldType,
+    ) -> std::fmt::Result {
+        let quoted = format!("\"{name}\"");
+        match field_type {
+            FieldType::Character(width) => {
+                write!(
+                    out,
+                    "LEFT(COALESCE({}, '') + REPLICATE(' ', {}), {})",
+                    quoted, width, width
+                )
+            }
+            FieldType::Date => write!(out, "COALESCE({}, '{}')", quoted, COALESCE_DATE),
+            FieldType::Double
+            | FieldType::Float
+            | FieldType::Integer
+            | FieldType::Numeric { .. }
+                if name != "RECNO5" =>
+            {
+                //no reason to coalesce RECNO5
+                write!(out, "COALESCE({}, 0)", quoted)
+            }
+            FieldType::Logical => write!(out, "COALESCE({}, FALSE)", quoted),
+            FieldType::Memo => write!(out, "COALESCE({}, '')", quoted),
+            _ => out.write_str(&quoted),
+        }
     }
     fn box_clone(&self) -> Box<dyn PrinterContext> {
         Box::new(*self)
@@ -201,25 +253,7 @@ impl ToSQL for Expression {
             }
             Expression::NumberLiteral(v) => write!(out, "{v}"),
             Expression::SingleQuoteStringLiteral(v) => write!(out, "'{v}'"),
-            Expression::Field { name, field_type } => {
-                let quoted = format!("\"{name}\"");
-                match field_type {
-                    FieldType::Character(width) => conf.context.write_padding(out, &quoted, *width),
-                    FieldType::Date => conf.context.coalesce_date(out, &quoted),
-                    FieldType::Double
-                    | FieldType::Float
-                    | FieldType::Integer
-                    | FieldType::Numeric { .. }
-                        if name != "RECNO5" =>
-                    //no reason to coalesce RECNO5
-                    {
-                        write!(out, "COALESCE({}, 0)", quoted)
-                    }
-                    FieldType::Logical => write!(out, "COALESCE({}, FALSE)", quoted),
-                    FieldType::Memo => write!(out, "COALESCE({}, '')", quoted),
-                    _ => out.write_str(&quoted),
-                }
-            }
+            Expression::Field { name, field_type } => conf.context.format(out, name, field_type),
             Expression::UnaryOperator(op, exp) => {
                 write!(out, "(")?;
                 match op {
