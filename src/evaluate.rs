@@ -276,7 +276,7 @@ fn eval_function(
         F::LTRIM => match args {
             [Value::Str(s)] => Ok(Value::Str(s.trim_start().to_string())),
             [Value::FixedLenStr(s, len)] => {
-                Ok(Value::FixedLenStr(s.trim_start().to_string(), *len)) // we keep the len even when trimming. EBMS expects trim("     ") + trim("     ") to have a length of tten
+                Ok(Value::FixedLenStr(s.trim_start().to_string(), *len)) // we keep the len even when trimming. EBMS expects trim("     ") + trim("     ") to have a length of ten
             }
             _ => Err(Error::InvalidArguments(
                 name.clone(),
@@ -286,7 +286,7 @@ fn eval_function(
 
         F::TRIM | F::RTRIM => match args {
             [Value::Str(s)] => Ok(Value::Str(s.trim_end().to_string())),
-            [Value::FixedLenStr(s, len)] => Ok(Value::FixedLenStr(s.trim_end().to_string(), *len)), // we keep the len even when trimming. EBMS expects trim("     ") + trim("     ") to have a length of tten
+            [Value::FixedLenStr(s, len)] => Ok(Value::FixedLenStr(s.trim_end().to_string(), *len)), // we keep the len even when trimming. EBMS expects trim("     ") + trim("     ") to have a length of ten
             _ => Err(Error::InvalidArguments(
                 name.clone(),
                 "TRIM/RTRIM expects a single string argument".to_string(),
@@ -295,7 +295,7 @@ fn eval_function(
 
         F::ALLTRIM => match args {
             [Value::Str(s)] => Ok(Value::Str(s.trim().to_string())),
-            [Value::FixedLenStr(s, len)] => Ok(Value::FixedLenStr(s.trim().to_string(), *len)), // we keep the len even when trimming. EBMS expects trim("     ") + trim("     ") to have a length of tten
+            [Value::FixedLenStr(s, len)] => Ok(Value::FixedLenStr(s.trim().to_string(), *len)), // we keep the len even when trimming. EBMS expects trim("     ") + trim("     ") to have a length of ten
             _ => Err(Error::InvalidArguments(
                 name.clone(),
                 "ALLTRIM expects a single string argument".to_string(),
