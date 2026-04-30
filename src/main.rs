@@ -197,9 +197,9 @@ fn expr_tests() {
             "D" => Some(evaluate::Value::Number(0.0, false)),
             "BINDATAFIELD" => Some(evaluate::Value::Blob(vec![0x01, 0x02, 0x03])),
             "SHIP_DATE" => Some(evaluate::Value::Date(NaiveDate::from_ymd_opt(2024, 8, 1))),
-            "ID" => Some(evaluate::Value::FixedLenStr("DOEJOH".into(), 10)),
-            "F_NAME" => Some(evaluate::Value::FixedLenStr("John".into(), 100)),
-            "L_NAME" => Some(evaluate::Value::FixedLenStr("Smith".into(), 100)),
+            "ID" => Some(evaluate::Value::FixedLenStr("DOEJOH".into(), 10, false)),
+            "F_NAME" => Some(evaluate::Value::FixedLenStr("John".into(), 100, false)),
+            "L_NAME" => Some(evaluate::Value::FixedLenStr("Smith".into(), 100, false)),
             "__DELETED" => Some(evaluate::Value::Bool(false)),
             _ => None,
         }
