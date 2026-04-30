@@ -274,9 +274,8 @@ fn eval_function(
 ) -> Result<Value, Error> {
     match name {
         F::LTRIM => match args {
-            [Value::Str(s)] => Ok(Value::Str(s.trim_start().to_string())),
-            [Value::FixedLenStr(s, len)] => {
-                Ok(Value::FixedLenStr(s.trim_start().to_string(), *len)) // we keep the len even when trimming. EBMS expects trim("     ") + trim("     ") to have a length of ten
+            [Value::Str(s) | Value::FixedLenStr(s, _)] => {
+                Ok(Value::Str(s.trim_start().to_string()))
             }
             _ => Err(Error::InvalidArguments(
                 name.clone(),
@@ -285,17 +284,15 @@ fn eval_function(
         },
 
         F::TRIM | F::RTRIM => match args {
-            [Value::Str(s)] => Ok(Value::Str(s.trim_end().to_string())),
-            [Value::FixedLenStr(s, len)] => Ok(Value::FixedLenStr(s.trim_end().to_string(), *len)), // we keep the len even when trimming. EBMS expects trim("     ") + trim("     ") to have a length of ten
+            [Value::Str(s) | Value::FixedLenStr(s, _)] => Ok(Value::Str(s.trim_end().to_string())),
             _ => Err(Error::InvalidArguments(
                 name.clone(),
-                "TRIM/RTRIM expects a single string argument".to_string(),
+                "RTRIM expects a single string argument".to_string(),
             )),
         },
 
         F::ALLTRIM => match args {
-            [Value::Str(s)] => Ok(Value::Str(s.trim().to_string())),
-            [Value::FixedLenStr(s, len)] => Ok(Value::FixedLenStr(s.trim().to_string(), *len)), // we keep the len even when trimming. EBMS expects trim("     ") + trim("     ") to have a length of ten
+            [Value::Str(s) | Value::FixedLenStr(s, _)] => Ok(Value::Str(s.trim().to_string())),
             _ => Err(Error::InvalidArguments(
                 name.clone(),
                 "ALLTRIM expects a single string argument".to_string(),
