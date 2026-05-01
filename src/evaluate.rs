@@ -322,13 +322,39 @@ fn eval_function(
             [Value::Str(s) | Value::FixedLenStr(s, _, _)] => {
                 if s.trim().is_empty() {
                     Ok(Value::Date(None))
+                } else if s.len() != 8 {
+                    Ok(Value::DateParseError(s.to_string()))
                 } else {
-                    let fmt = if name == &F::CTOD {
-                        "%m/%d/%y"
-                    } else {
-                        "%Y%m%d"
+                    let parse = match name {
+                        F::CTOD => {
+                            let b = s.as_bytes();
+                            let fmt = match (b[0], b[3]) {
+                                (b' ', b' ') => " %m/ %d/%y",
+                                (b' ', _) => " %m/%d/%y",
+                                (_, b' ') => "%m/ %d/%y",
+                                _ => "%m/%d/%y",
+                            };
+                            NaiveDate::parse_from_str(s, fmt)
+                        }
+                        F::STOD => {
+                            let cow = if s.len() == 8 {
+                                let mut b = s.as_bytes().to_vec();
+                                if b[4] == b' ' {
+                                    b[4] = b'0';
+                                }
+                                if b[7] == b' ' {
+                                    b[7] = b'0';
+                                }
+                                Cow::Owned(String::from_utf8(b).unwrap())
+                            } else {
+                                Cow::Borrowed(s)
+                            };
+                            NaiveDate::parse_from_str(&cow, "%Y%m%d")
+                        }
+                        _ => unreachable!(),
                     };
-                    match chrono::NaiveDate::parse_from_str(s, fmt) {
+
+                    match parse {
                         Ok(date) => Ok(Value::Date(Some(date))),
                         Err(_) => Ok(Value::DateParseError(s.to_string())),
                     }
@@ -922,5 +948,19 @@ mod tests {
     #[test]
     fn substr_test_without_len() {
         assert_eq!(eval("SUBSTR('TEST', 3)"), Ok(Value::Str("ST".to_string())));
+    }
+
+    #[test]
+    fn spaces_in_dates_test() {
+        //to deal with this type of expression: left(dtos(stod("20260501")),4)+str(val(substr(dtos(stod("20260501")),5,2))+1,2,0)+"01"))
+        let expected = Ok(Value::Date(Some(
+            chrono::NaiveDate::from_ymd_opt(2026, 6, 1).unwrap(),
+        )));
+        assert_eq!(eval(r#"stod("20260601")"#), expected);
+        assert_eq!(eval(r#"stod("2026 601")"#), expected);
+        assert_eq!(eval(r#"stod("2026 6 1")"#), expected);
+        assert_eq!(eval(r#"stod("202606 1")"#), expected);
+        assert_eq!(eval(r#"ctod("06/01/26")"#), expected);
+        assert_eq!(eval(r#"ctod(" 6/ 1/26")"#), expected);
     }
 }
