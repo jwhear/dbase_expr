@@ -960,5 +960,7 @@ mod tests {
         assert_eq!(eval(r#"stod("2026 601")"#), expected);
         assert_eq!(eval(r#"stod("2026 6 1")"#), expected);
         assert_eq!(eval(r#"stod("202606 1")"#), expected);
+        assert_eq!(eval(r#"ctod("06/01/26")"#), expected);
+        assert_eq!(eval(r#"ctod(" 6/ 1/26")"#), expected);
     }
 }
