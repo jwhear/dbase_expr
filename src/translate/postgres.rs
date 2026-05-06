@@ -360,7 +360,7 @@ pub fn translate_fn_call<'a>(
                 (FieldType::Character(true_len), FieldType::Character(false_len)) => {
                     FieldType::Character(true_len.max(false_len)) //get the max of the two because the length shouldn't depend on the values
                 }
-                _ => true_ty, // otherwies the result type will be the type of the when_true expression
+                _ => true_ty, // otherwise the result type will be the type of the when_true expression
             };
 
             let mut branches = Vec::new();
