@@ -963,4 +963,12 @@ mod tests {
         assert_eq!(eval(r#"ctod("06/01/26")"#), expected);
         assert_eq!(eval(r#"ctod(" 6/ 1/26")"#), expected);
     }
+
+    #[test]
+    fn if_else_with_trim() {
+        assert_eq!(
+            eval(r#"iif(.t.,'', '.' + ALLTRIM('  '))"#),
+            Ok(Value::FixedLenStr("   ".to_string(), 3, false)) // should be the longest possible length
+        );
+    }
 }

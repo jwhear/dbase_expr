@@ -354,8 +354,14 @@ pub fn translate_fn_call<'a>(
         // is always structurally equivalent to:
         //   CASE WHEN cond_a THEN v1 WHEN cond_b THEN v2 ELSE v3 END
         F::IIF => {
-            // The result type will be the type of the when_true expression
-            let (_, ty) = arg(1)??;
+            let true_ty = arg(1)??.1;
+            let false_ty = arg(2)??.1;
+            let ty = match (true_ty, false_ty) {
+                (FieldType::Character(true_len), FieldType::Character(false_len)) => {
+                    FieldType::Character(true_len.max(false_len)) //get the max of the two because the length shouldn't depend on the values
+                }
+                _ => true_ty, // otherwies the result type will be the type of the when_true expression
+            };
 
             let mut branches = Vec::new();
             // We have to take ownership of args for the loop to work
