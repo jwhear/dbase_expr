@@ -666,6 +666,14 @@ fn parse_fn_call<'input>(
             if !lexer.consume(TokenType::Comma)? {
                 return Err(Error::UnexpectedToken(t));
             };
+
+            // Codebase allows a single trailing comma before the closing parenthese
+            if let t = lexer.peek_token()?.ok_or(Error::UnexpectedEof)?
+                && t.ty == TokenType::ParenRight
+            {
+                _ = lexer.next_token();
+                break;
+            }
         } else {
             first = false;
         }
@@ -962,5 +970,22 @@ mod tests {
         };
         let name_str = std::str::from_utf8(name).unwrap();
         assert_eq!(name_str, "1ST_FIELD");
+    }
+
+    #[test]
+    fn trailing_comma() {
+        // regression test: trailing commas are allowed in codebase
+        let (_, _) = parse(r#"SUBSTR(SUBSTR("blahblabh", 3,)+"                        ",1,25)"#)
+            .expect("a valid parse");
+        // multiple commas should be an UnexpectedToken error
+        let res = parse(r#"SUBSTR("blahblabh", 3,,)"#);
+        let Err(Error::UnexpectedToken(_)) = res else {
+            panic!("Expected an UnexpectedToken")
+        };
+        // unexpected end after a comma should be an UnexpectedEof error
+        let res = parse(r#"SUBSTR("blahblabh", 3,"#);
+        let Err(Error::UnexpectedEof) = res else {
+            panic!("Expected an UnexpectedEof")
+        };
     }
 }
