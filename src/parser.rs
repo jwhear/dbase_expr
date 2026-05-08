@@ -666,6 +666,14 @@ fn parse_fn_call<'input>(
             if !lexer.consume(TokenType::Comma)? {
                 return Err(Error::UnexpectedToken(t));
             };
+
+            // Codebase allows a single trailing comma before the closing parenthese
+            if let Some(t) = lexer.peek_token()?
+                && t.ty == TokenType::ParenRight
+            {
+                _ = lexer.next_token();
+                break;
+            }
         } else {
             first = false;
         }
@@ -962,5 +970,15 @@ mod tests {
         };
         let name_str = std::str::from_utf8(name).unwrap();
         assert_eq!(name_str, "1ST_FIELD");
+    }
+
+    #[test]
+    fn trailing_comma() {
+        let (_, _) = parse(r#"SUBSTR(SUBSTR("blahblabh", 3,)+"                        ",1,25)"#)
+            .expect("a valid parse");
+        // multiple commas should fail
+        let _ = parse(r#"SUBSTR(SUBSTR("blahblabh", 3,,)+"                        ",1,25)"#)
+            .map(|_| ())
+            .expect_err("only a single trailing comma is allowed");
     }
 }
