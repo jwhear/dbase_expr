@@ -668,7 +668,7 @@ fn parse_fn_call<'input>(
             };
 
             // Codebase allows a single trailing comma before the closing parenthese
-            if let Some(t) = lexer.peek_token()?
+            if let t = lexer.peek_token()?.ok_or(Error::UnexpectedEof)?
                 && t.ty == TokenType::ParenRight
             {
                 _ = lexer.next_token();
@@ -974,11 +974,18 @@ mod tests {
 
     #[test]
     fn trailing_comma() {
+        // regression test: trailing commas are allowed in codebase
         let (_, _) = parse(r#"SUBSTR(SUBSTR("blahblabh", 3,)+"                        ",1,25)"#)
             .expect("a valid parse");
-        // multiple commas should fail
-        let _ = parse(r#"SUBSTR(SUBSTR("blahblabh", 3,,)+"                        ",1,25)"#)
-            .map(|_| ())
-            .expect_err("only a single trailing comma is allowed");
+        // multiple commas should be an UnexpectedToken error
+        let res = parse(r#"SUBSTR("blahblabh", 3,,)"#);
+        let Err(Error::UnexpectedToken(_)) = res else {
+            panic!("Expected an UnexpectedToken")
+        };
+        // unexpected end after a comma should be an UnexpectedEof error
+        let res = parse(r#"SUBSTR("blahblabh", 3,"#);
+        let Err(Error::UnexpectedEof) = res else {
+            panic!("Expected an UnexpectedEof")
+        };
     }
 }
