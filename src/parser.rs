@@ -668,9 +668,8 @@ fn parse_fn_call<'input>(
             };
 
             // Codebase allows a single trailing comma before the closing parenthese
-            if let t = lexer.peek_token()?.ok_or(Error::UnexpectedEof)?
-                && t.ty == TokenType::ParenRight
-            {
+            let t = lexer.peek_token()?.ok_or(Error::UnexpectedEof)?;
+            if t.ty == TokenType::ParenRight {
                 _ = lexer.next_token();
                 break;
             }
