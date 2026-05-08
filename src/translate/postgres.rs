@@ -199,13 +199,23 @@ pub fn translate_fn_call<'a>(
 
     match name {
         // ALLTRIM(x) => TRIM(x)
-        F::ALLTRIM => ok(
-            Expression::FunctionCall {
-                name: "TRIM".to_string(),
+        F::ALLTRIM | F::LTRIM | F::RTRIM | F::TRIM => {
+            let ty = match arg(0)??.1 {
+                FieldType::Character(l) => FieldType::Character(l),
+                _ => FieldType::Memo,
+            };
+            let f = match name {
+                F::ALLTRIM | F::TRIM => "TRIM",
+                F::LTRIM => "LTRIM",
+                F::RTRIM => "RTRIM",
+                _ => unreachable!(),
+            };
+            let expr = Expression::FunctionCall {
+                name: f.into(),
                 args: vec![arg(0)??.0],
-            },
-            FieldType::Memo,
-        ),
+            };
+            ok(expr, ty)
+        }
         // CHR(x) => CHR(x)
         F::CHR => ok(
             Expression::FunctionCall {
@@ -403,13 +413,6 @@ pub fn translate_fn_call<'a>(
             },
             FieldType::Memo,
         ),
-        F::LTRIM => ok(
-            Expression::FunctionCall {
-                name: "LTRIM".into(),
-                args: vec![arg(0)??.0],
-            },
-            FieldType::Memo,
-        ),
 
         // MONTH(x) => DATE_PART('MONTH', x)
         F::MONTH => ok(
@@ -456,14 +459,6 @@ pub fn translate_fn_call<'a>(
             )
         }
 
-        F::RTRIM => ok(
-            Expression::FunctionCall {
-                name: "RTRIM".into(),
-                args: vec![arg(0)??.0],
-            },
-            FieldType::Memo,
-        ),
-
         // STOD(x) => COALESCE(TO_DATE(NULLIF(TRIM(x),''),'YYYYMMDD'),'0001-01-01')
         F::STOD => date("YYYYMMDD"),
         // STR(num, len, dec) => PRINTF("%{len}.{dec}f", num)
@@ -503,13 +498,6 @@ pub fn translate_fn_call<'a>(
             }
         }
         F::SUBSTR => translate_substr("SUBSTR".to_string(), args, tree, cx),
-        F::TRIM => ok(
-            Expression::FunctionCall {
-                name: "RTRIM".into(),
-                args: vec![arg(0)??.0],
-            },
-            FieldType::Memo,
-        ),
         F::UPPER => {
             let (first, ty) = arg(0)??;
             ok(

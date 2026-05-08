@@ -113,6 +113,17 @@ mod tests {
     }
 
     #[test]
+    fn field_concat_if_else_alltrim_len_test() {
+        let (_, field_type) = parse_expression("ID + iif(__DELETED,'', ALLTRIM('.  '))").unwrap();
+        let FieldType::Character(13) = &field_type else {
+            panic!(
+                "Expected FieldType::Character(13) field type (length of ID plus max length of if/else), got {:?}",
+                field_type
+            )
+        };
+    }
+
+    #[test]
     fn substr_test() {
         let (expression, field_type) = parse_expression("substr(ID, 0, 3)").unwrap();
         let Expression::FunctionCall { name, args } = &*expression.borrow() else {
