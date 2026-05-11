@@ -290,11 +290,7 @@ impl<'input> Lexer<'input> {
     /// Consumes the first token and returns whether its type is equal to `[ty]`
     pub fn consume(&mut self, ty: TokenType) -> Result<bool, Error> {
         let tok = self.next_token()?;
-        Ok(if let Some(tok) = tok {
-            tok.ty == ty
-        } else {
-            false
-        })
+        Ok(tok.is_some_and(|tok| tok.ty == ty))
     }
 
     /// Look at the next token without actually consuming it
