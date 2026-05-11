@@ -842,7 +842,7 @@ pub fn get_str_fn_args<'a>(
     let mut dec: usize = dec.min(15);
 
     if len <= dec + 1 {
-        dec = (len.saturating_sub(2)).max(0); //to allow space for the '.', something like 2,1 doesn't make sense since there would be no space for the leading 0 so codebase just removes the dec
+        dec = len.saturating_sub(2); //to allow space for the '.', something like 2,1 doesn't make sense since there would be no space for the leading 0 so codebase just removes the dec
     }
 
     let fmt = if dec > 0 {

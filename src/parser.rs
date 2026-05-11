@@ -481,6 +481,8 @@ fn parse_binary_op<'input>(
                 ..
             })) = lexer.peek_token()
             {
+                // We've already popped the function name [name_token], now remove the left paren
+                lexer.next_token()?;
                 parse_fn_call(lexer, tree, scratch, &tok, depth.inc()?)
             } else {
                 // otherwise a field reference
@@ -644,11 +646,7 @@ fn parse_fn_call<'input>(
     //  stack frames are also using this buffer so it might not be empty.
     let scratch_start = scratch.len();
 
-    // We've already popped the function name [name_token], so expect a ParenLeft
-    if !lexer.consume(TokenType::ParenLeft)? {
-        return Err(Error::UnexpectedEof);
-    }
-
+    // We've already removed the function name and left paren, so jump right into the argument list
     // Zero or more arguments
     let mut first = true;
     loop {
@@ -661,7 +659,7 @@ fn parse_fn_call<'input>(
         }
 
         // If not closing the list, it must be another argument.
-        // If this isn't the first argument, expect a comment
+        // If this isn't the first argument, expect a comma
         if !first {
             if !lexer.consume(TokenType::Comma)? {
                 return Err(Error::UnexpectedToken(t));
