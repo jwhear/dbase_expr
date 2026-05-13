@@ -1,0 +1,22 @@
+name: CI Pipeline
+
+on:
+    push:
+        branches: ["master"]
+    pull_request:
+        branches: ["**"]
+
+env:
+    CARGO_TERM_COLOR: always
+
+jobs:
+    test:
+        name: cargo test
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v6
+            - uses: dtolnay/rust-toolchain@stable
+            - name: test
+              run: cargo test --all-features
+            - name: lint
+              run: cargo clippy -- -D warnings
