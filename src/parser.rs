@@ -691,7 +691,7 @@ fn parse_fn_call<'input>(
                 .to_owned(),
         )
     });
-    let args = tree.push_args(scratch.drain(scratch_start..scratch.len()));
+    let args = tree.push_args(scratch.drain(scratch_start..));
 
     Ok(Expression::FunctionCall { name, args })
 }
