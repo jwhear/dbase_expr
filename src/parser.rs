@@ -536,15 +536,11 @@ fn parse_binary_op<'input>(
                     break;
                 };
 
+                // Break if the binding power or op changes
                 if next_l_pow < min_binding_power || next_op_tok.ty != op_tok.ty {
                     break;
                 }
 
-                // Only continue the sequence if it's the exact same op
-                let next_op: BinaryOp = next_op_tok.try_into()?;
-                if next_op != seq_op {
-                    break;
-                }
                 _ = lexer.next_token()?;
 
                 // Parse the next RHS
