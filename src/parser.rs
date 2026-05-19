@@ -413,10 +413,11 @@ impl Default for Depth {
 impl Depth {
     fn inc(&self) -> Result<Self, Error> {
         let Self { limit, current } = *self;
-        let current = current + 1;
+        // Make sure incrementing is safe _before_ doing it (prevent overflow)
         if current == limit {
             return Err(Error::RecursionLimitReached(current));
         }
+        let current = current + 1;
         Ok(Self { limit, current })
     }
 
