@@ -140,6 +140,16 @@ pub struct ParseTree<'input> {
     arg_lists: Vec<ExpressionId>,
 }
 
+impl<'input> std::fmt::Debug for ParseTree<'input> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "ParseTree {{\n  expression: {:?},\n  arg_lists: {:?}}}",
+            self.expressions, self.arg_lists
+        )
+    }
+}
+
 impl<'input> ParseTree<'input> {
     pub fn new() -> Self {
         Self {
@@ -413,10 +423,11 @@ impl Default for Depth {
 impl Depth {
     fn inc(&self) -> Result<Self, Error> {
         let Self { limit, current } = *self;
-        let current = current + 1;
+        // Make sure incrementing is safe _before_ doing it (prevent overflow)
         if current == limit {
             return Err(Error::RecursionLimitReached(current));
         }
+        let current = current + 1;
         Ok(Self { limit, current })
     }
 
@@ -446,11 +457,16 @@ fn parse_binary_op<'input>(
             ..
         } => {
             let lhs = parse_binary_op(lexer, tree, scratch, 0, depth.inc()?)?;
-            if let Ok(Some(tok)) = lexer.next_token()
-                && tok.ty != TokenType::ParenRight
-            {
+
+            // Now that we've parsed the inner expression, make sure we consume
+            //  a ParenRight. Anything else (including None for EOF) is an error.
+            let Ok(Some(Token {
+                ty: TokenType::ParenRight,
+                ..
+            })) = lexer.next_token()
+            else {
                 return Err(Error::MissingCloseParen);
-            }
+            };
             Ok(lhs)
         }
         // Prefix '-' or '.NOT.'
@@ -535,15 +551,11 @@ fn parse_binary_op<'input>(
                     break;
                 };
 
+                // Break if the binding power or op changes
                 if next_l_pow < min_binding_power || next_op_tok.ty != op_tok.ty {
                     break;
                 }
 
-                // Only continue the sequence if it's the exact same op
-                let next_op: BinaryOp = next_op_tok.try_into()?;
-                if next_op != seq_op {
-                    break;
-                }
                 _ = lexer.next_token()?;
 
                 // Parse the next RHS
@@ -690,7 +702,7 @@ fn parse_fn_call<'input>(
                 .to_owned(),
         )
     });
-    let args = tree.push_args(scratch.drain(scratch_start..scratch.len()));
+    let args = tree.push_args(scratch.drain(scratch_start..));
 
     Ok(Expression::FunctionCall { name, args })
 }
@@ -984,5 +996,14 @@ mod tests {
         let Err(Error::UnexpectedEof) = res else {
             panic!("Expected an UnexpectedEof")
         };
+    }
+
+    #[test]
+    fn silent_close_failure() {
+        let res = parse("(1 + 2");
+        assert!(
+            matches!(res, Err(Error::MissingCloseParen)),
+            "expected MissingCloseParen, got {res:?}"
+        );
     }
 }
