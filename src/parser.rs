@@ -140,6 +140,16 @@ pub struct ParseTree<'input> {
     arg_lists: Vec<ExpressionId>,
 }
 
+impl<'input> std::fmt::Debug for ParseTree<'input> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "ParseTree {{\n  expression: {:?},\n  arg_lists: {:?}}}",
+            self.expressions, self.arg_lists
+        )
+    }
+}
+
 impl<'input> ParseTree<'input> {
     pub fn new() -> Self {
         Self {
@@ -447,11 +457,16 @@ fn parse_binary_op<'input>(
             ..
         } => {
             let lhs = parse_binary_op(lexer, tree, scratch, 0, depth.inc()?)?;
-            if let Ok(Some(tok)) = lexer.next_token()
-                && tok.ty != TokenType::ParenRight
-            {
+
+            // Now that we've parsed the inner expression, make sure we consume
+            //  a ParenRight. Anything else (including None for EOF) is an error.
+            let Ok(Some(Token {
+                ty: TokenType::ParenRight,
+                ..
+            })) = lexer.next_token()
+            else {
                 return Err(Error::MissingCloseParen);
-            }
+            };
             Ok(lhs)
         }
         // Prefix '-' or '.NOT.'
@@ -981,5 +996,14 @@ mod tests {
         let Err(Error::UnexpectedEof) = res else {
             panic!("Expected an UnexpectedEof")
         };
+    }
+
+    #[test]
+    fn silent_close_failure() {
+        let res = parse("(1 + 2");
+        assert!(
+            matches!(res, Err(Error::MissingCloseParen)),
+            "expected MissingCloseParen, got {res:?}"
+        );
     }
 }
