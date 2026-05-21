@@ -63,6 +63,7 @@ pub mod evaluate;
 pub mod lex;
 pub mod parser;
 pub mod simple_text_expr;
+#[cfg(test)]
 pub mod tests;
 pub mod to_sql;
 pub mod translate;
