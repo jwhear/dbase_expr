@@ -381,7 +381,11 @@ pub fn parse_with_depth<'input>(
     let root = parse_binary_op(&mut lexer, &mut pt, &mut arg_scratch, 0, depth)?;
 
     // Make sure we've completely parsed the input
-    if let Ok(Some(tok)) = lexer.next_token() {
+    if let Ok(Some(tok)) = lexer.next_token()
+        // Codebase stops parsing when it hits an unmatch right paren; this would
+        // normally be a bug, but when it is the last char it's acceptable.
+        && !(tok.ty == TokenType::ParenRight && lexer.is_empty())
+    {
         Err(Error::UnexpectedToken(tok))
     } else {
         Ok((pt, root))
@@ -1005,5 +1009,14 @@ mod tests {
             matches!(res, Err(Error::MissingCloseParen)),
             "expected MissingCloseParen, got {res:?}"
         );
+    }
+
+    #[test]
+    fn final_trailing_right_paren() {
+        let (_, _) = parse(r#".t.)"#).expect("a valid parse");
+        let res = parse(r#".t.))"#);
+        let Err(Error::UnexpectedToken(_)) = res else {
+            panic!("Expected an UnexpectedToken")
+        };
     }
 }
