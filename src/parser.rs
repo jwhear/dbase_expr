@@ -403,7 +403,11 @@ pub fn parse_into_tree<'input>(
     let root_id = tree.push_expr(root);
 
     // Make sure we've completely parsed the input
-    if let Ok(Some(tok)) = lexer.next_token() {
+    if let Ok(Some(tok)) = lexer.next_token()
+        // Codebase stops parsing when it hits an unmatch right paren; this would
+        // normally be a bug, but when it is the last char it's acceptable.
+        && !(tok.ty == TokenType::ParenRight && lexer.is_empty())
+    {
         Err(Error::UnexpectedToken(tok))
     } else {
         Ok(root_id)
