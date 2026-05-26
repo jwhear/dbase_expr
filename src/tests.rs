@@ -146,6 +146,54 @@ fn substr_test() {
 }
 
 #[test]
+fn numeric_cast_test() {
+    let (expression, field_type) = parse_expression("VAL(ID)").unwrap();
+    let Expression::Iif {
+        cond,
+        when_true,
+        when_false,
+    } = &*expression.borrow()
+    else {
+        panic!("Expected Iif condition, got {:?}", expression)
+    };
+
+    let Expression::FunctionCall { name, args } = &*cond.borrow() else {
+        panic!("Expected FunctionCall, got {:?}", cond)
+    };
+    assert_eq!(name, "pg_input_is_valid");
+    assert_eq!(args.len(), 2);
+    assert_eq!(field_type, FieldType::Numeric { len: 0, dec: 0 });
+    assert_eq!(
+        *args[0].borrow(),
+        Expression::Field {
+            name: "ID".to_string(),
+            field_type: FieldType::Character(10),
+        }
+    );
+    assert_eq!(
+        *args[1].borrow(),
+        Expression::SingleQuoteStringLiteral("numeric".to_string())
+    );
+
+    let Expression::Cast(field_ref, s) = &*when_true.borrow() else {
+        panic!("Expected Cast, got {:?}", when_true)
+    };
+    assert_eq!(
+        *field_ref.borrow(),
+        Expression::Field {
+            name: "ID".to_string(),
+            field_type: FieldType::Character(10),
+        }
+    );
+    assert_eq!(s, &"numeric");
+
+    let Expression::NumberLiteral(s) = &*when_false.borrow() else {
+        panic!("Expected NumberLiteral, got {:?}", when_false)
+    };
+    assert_eq!(*s, "0");
+}
+
+#[test]
 fn substr_wrong_params_test() {
     match parse_expression("substr(ID)") {
         Err(Error::IncorrectArgCount(func, count)) => {

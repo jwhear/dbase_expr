@@ -508,11 +508,25 @@ pub fn translate_fn_call<'a>(
                 ty,
             )
         }
-        // VAL(x) => CAST (x as numeric)
-        F::VAL => ok(
-            Expression::Cast(arg(0)??.0, "numeric"),
-            FieldType::Numeric { len: 0, dec: 0 },
-        ),
+        // VAL(x) => CASE WHEN pg_input_is_valid(x, 'numeric') THEN CAST(x AS NUMERIC) ELSE 0 END
+        F::VAL => {
+            let numeric = expr_ref(Expression::SingleQuoteStringLiteral("numeric".into()));
+            let cond = expr_ref(Expression::FunctionCall {
+                name: "pg_input_is_valid".into(),
+                args: vec![arg(0)??.0, numeric],
+            });
+            let when_true = expr_ref(Expression::Cast(arg(0)??.0, "numeric"));
+            // codebase inteprets any non-numeric string as a 0
+            let when_false = expr_ref(Expression::NumberLiteral(String::from("0")));
+            ok(
+                Expression::Iif {
+                    cond,
+                    when_true,
+                    when_false,
+                },
+                FieldType::Numeric { len: 0, dec: 0 },
+            )
+        }
 
         // YEAR(x) => DATE_PART('YEAR', x)
         F::YEAR => ok(
