@@ -71,7 +71,10 @@ impl PrinterContext for PostgresPrinterContext {
                 //no reason to coalesce RECNO5
                 write!(out, "COALESCE({}, 0)", quoted)
             }
-            FieldType::Logical => write!(out, "COALESCE({}, FALSE)", quoted),
+            FieldType::Logical if name != "__deleted" => {
+                //no reason to coalesce __deleted
+                write!(out, "COALESCE({}, FALSE)", quoted)
+            }
             FieldType::Memo => write!(out, "COALESCE({}, '')", quoted),
             _ => out.write_str(&quoted),
         }
