@@ -540,16 +540,8 @@ fn eval_function(
         F::VAL => match args {
             [Value::FixedLenStr(s, _, _) | Value::Str(s)] => match s.trim().parse::<f64>() {
                 Ok(v) => Ok(Value::Number(v, false)),
-                Err(_) => {
-                    if s.trim().chars().all(|c| c == 'F' || c == 'f') {
-                        Ok(Value::Number(0.0, false)) // these are placeholders for float, we'll just use 0.0
-                    } else {
-                        Err(Error::InvalidArguments(
-                            name.clone(),
-                            format!("VAL could not parse '{}' to a numeric value", s),
-                        ))
-                    }
-                }
+                // codebase treats all non-numeric values as 0
+                Err(_) => Ok(Value::Number(0.0, false)),
             },
             _ => Err(Error::InvalidArguments(
                 name.clone(),
@@ -856,6 +848,8 @@ fn days_since_jd0(date: NaiveDate) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    use crate::evaluate::Error::InvalidArguments;
+
     use super::*;
 
     const TRUE: Result<Value, Error> = Result::Ok(Value::Bool(true));
@@ -948,6 +942,19 @@ mod tests {
     #[test]
     fn substr_test_without_len() {
         assert_eq!(eval("SUBSTR('TEST', 3)"), Ok(Value::Str("ST".to_string())));
+    }
+
+    #[test]
+    fn val_with_numeric() {
+        assert_eq!(eval("VAL('1')"), Ok(Value::Number(1.0, true)));
+        assert_eq!(eval("VAL('-1.3')"), Ok(Value::Number(-1.3, true)));
+        assert_eq!(eval("VAL('1e6')"), Ok(Value::Number(1e6, true)));
+        assert_eq!(eval("VAL('+123')"), Ok(Value::Number(123.0, true)));
+        assert_eq!(eval("VAL('AR')"), Ok(Value::Number(0.0, false)));
+        assert_eq!(
+            eval("VAL(1)"),
+            Err(InvalidArguments(F::VAL, "VAL expects a string".to_string()))
+        );
     }
 
     #[test]
