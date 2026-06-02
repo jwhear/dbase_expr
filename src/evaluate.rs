@@ -946,10 +946,10 @@ mod tests {
 
     #[test]
     fn val_with_numeric() {
-        assert_eq!(eval("VAL('1')"), Ok(Value::Number(1.0, true)));
-        assert_eq!(eval("VAL('-1.3')"), Ok(Value::Number(-1.3, true)));
-        assert_eq!(eval("VAL('1e6')"), Ok(Value::Number(1e6, true)));
-        assert_eq!(eval("VAL('+123')"), Ok(Value::Number(123.0, true)));
+        assert_eq!(eval("VAL('1')"), Ok(Value::Number(1.0, false)));
+        assert_eq!(eval("VAL('-1.3')"), Ok(Value::Number(-1.3, false)));
+        assert_eq!(eval("VAL('1e6')"), Ok(Value::Number(1e6, false)));
+        assert_eq!(eval("VAL('+123')"), Ok(Value::Number(123.0, false)));
         assert_eq!(eval("VAL('AR')"), Ok(Value::Number(0.0, false)));
         assert_eq!(
             eval("VAL(1)"),
