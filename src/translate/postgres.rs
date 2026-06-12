@@ -314,27 +314,24 @@ pub fn translate_fn_call<'a>(
                         Parenthesize::No,
                     )
                 }
-                FieldType::Character(_)
-                | FieldType::Memo
-                | FieldType::Date
-                | FieldType::DateTime => {
-                    // COALESCE(TRIM(CAST(x AS TEXT)), '') = ''
-                    let trim = expr_ref(Expression::Cast(arg, "text"));
+                FieldType::Character(_) | FieldType::Memo => {
                     let trim = expr_ref(Expression::FunctionCall {
                         name: "TRIM".into(),
-                        args: vec![trim],
-                    });
-                    let coalesce = expr_ref(Expression::FunctionCall {
-                        name: "COALESCE".into(),
-                        args: vec![trim, expr_ref("".into())],
+                        args: vec![arg],
                     });
                     Expression::BinaryOperator(
-                        coalesce,
+                        trim,
                         BinaryOp::Eq,
                         expr_ref("".into()),
                         Parenthesize::No,
                     )
                 }
+                FieldType::Date | FieldType::DateTime => Expression::BinaryOperator(
+                    arg,
+                    BinaryOp::Eq,
+                    expr_ref(COALESCE_DATE.into()),
+                    Parenthesize::No,
+                ),
                 FieldType::MemoBinary | FieldType::CharacterBinary(_) | FieldType::General => {
                     // COALESCE(LENGTH(x), 0) = 0
                     let length_call = expr_ref(Expression::FunctionCall {
