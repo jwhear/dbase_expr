@@ -146,6 +146,58 @@ fn substr_test() {
 }
 
 #[test]
+fn empty_string_test() {
+    let (expression, field_type) = parse_expression("EMPTY(ID)").unwrap();
+    let Expression::BinaryOperator(l, op, r, _) = &*expression.borrow() else {
+        panic!("Expected BinaryOperator, got {:?}", expression)
+    };
+    assert_eq!(field_type, FieldType::Logical);
+    assert_eq!(op, &translate::BinaryOp::Eq);
+    let Expression::SingleQuoteStringLiteral(empty_str) = &*r.borrow() else {
+        panic!("Expected SingleQuoteStringLiteral, got {:?}", r)
+    };
+    assert_eq!(empty_str, "");
+
+    let Expression::FunctionCall {
+        name: func_name,
+        args,
+    } = &*l.borrow()
+    else {
+        panic!("Expected FunctionCall, got {:?}", l)
+    };
+    assert_eq!(func_name, "TRIM");
+    assert_eq!(args.len(), 1);
+
+    let inner = &*args[0].borrow();
+    let Expression::Field { name, field_type } = inner else {
+        panic!("Expected Field, got {:?}", inner)
+    };
+    assert_eq!(name, "ID");
+    assert_eq!(field_type, &FieldType::Character(10));
+}
+
+#[test]
+fn empty_date_test() {
+    let (expression, field_type) = parse_expression("EMPTY(SHIP_DATE)").unwrap();
+    let Expression::BinaryOperator(l, op, r, _) = &*expression.borrow() else {
+        panic!("Expected BinaryOperator, got {:?}", expression)
+    };
+    assert_eq!(field_type, FieldType::Logical);
+    assert_eq!(op, &translate::BinaryOp::Eq);
+    let Expression::SingleQuoteStringLiteral(coalesce_str) = &*r.borrow() else {
+        panic!("Expected SingleQuoteStringLiteral, got {:?}", r)
+    };
+    assert_eq!(coalesce_str, "0001-01-01");
+
+    let inner = &*l.borrow();
+    let Expression::Field { name, field_type } = inner else {
+        panic!("Expected Field, got {:?}", inner)
+    };
+    assert_eq!(name, "SHIP_DATE");
+    assert_eq!(field_type, &FieldType::Date);
+}
+
+#[test]
 fn numeric_cast_test() {
     let (expression, field_type) = parse_expression("VAL(ID)").unwrap();
     let Expression::Iif {
