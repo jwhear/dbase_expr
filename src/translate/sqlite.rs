@@ -55,10 +55,14 @@ where
         match (op, ty) {
             (
                 op @ (parser::BinaryOp::Eq | parser::BinaryOp::Ne),
-                FieldType::Character(_) | FieldType::Memo,
+                ty @ (FieldType::Memo | FieldType::Character(_)),
             ) => {
                 let translated_r = self.translate(r, tree)?.0;
-                let modified_r = expr_between_right_side(translated_r);
+                let modified_r = expr_between_right_side(match ty {
+                    FieldType::Memo => translated_r,
+                    FieldType::Character(len) => self.string_comp_right(translated_r, len),
+                    _ => unreachable!(),
+                });
                 let binop = match op {
                     parser::BinaryOp::Eq => TranslateBinaryOp::Between,
                     parser::BinaryOp::Ne => TranslateBinaryOp::NotBetween,
@@ -367,6 +371,34 @@ mod tests {
 
         let sql = format!("{p}");
         assert_eq!(r#"(INSTR("SCREEN",'Wizard ')>0)"#, sql);
+    }
+
+    #[test]
+    fn sqlite_trim_query_len() {
+        let translator = SqliteTranslator {
+            field_lookup: |_alias, _name| Ok((String::from("SCREEN"), FieldType::Character(5))),
+        };
+        let input = "SCREEN = 'XYZ  X'";
+        let (pt, root) = crate::parse(input).expect("parses");
+        let (res, FieldType::Logical) = translator.translate(&root, &pt).expect("translates")
+        else {
+            panic!("Expected a Logical");
+        };
+
+        use crate::to_sql::{Printer, PrinterConfig, SqlitePrinterContext};
+        let p = Printer::new(
+            res,
+            PrinterConfig {
+                context: Box::new(SqlitePrinterContext { pad_strings: false }),
+            },
+        );
+
+        //trimming the right side of the query to the length of the field (removes the 'X' in this case)
+        let sql = format!("{p}");
+        assert_eq!(
+            r#"("SCREEN" BETWEEN SUBSTR('XYZ  X',1,5) AND SUBSTR('XYZ  X',1,5) ||  char(0xFFFF) )"#,
+            sql
+        );
     }
 
     #[test]
