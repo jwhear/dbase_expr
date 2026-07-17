@@ -831,7 +831,6 @@ pub fn get_str_fn_args<'a>(
 
     let val_arg = arg(0)??.0;
     let len_arg = arg(1)??.0;
-    let dec_arg = arg(2)??.0;
 
     // `len` and dec` must be constants according to CB docs, so we can get them and convert to integers
     let len: i64 = match &*len_arg.borrow() {
@@ -841,6 +840,13 @@ pub fn get_str_fn_args<'a>(
     let len: usize = len
         .try_into()
         .map_err(|_| Error::Other("STR length must be a positive integer".into()))?;
+
+    // codebase treats a missing dec arg the same as a zero
+    if args.len() == 2 {
+        return Ok(StrArgs::WithArgs(val_arg, format!("FM{:9<len$}0", ""), len));
+    }
+
+    let dec_arg = arg(2)??.0;
     let dec: i64 = match &*dec_arg.borrow() {
         Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(2)),
         _ => Err(wrong_type(2)),
@@ -858,11 +864,9 @@ pub fn get_str_fn_args<'a>(
 
     let fmt = if dec > 0 {
         let x = len - dec - 1;
-        let y = dec;
-        format!("FM{:9<x$}0.{:0<y$}", "", "")
+        format!("FM{:9<x$}0.{:0<dec$}", "", "")
     } else {
-        let x = len;
-        format!("FM{:9<x$}0", "")
+        format!("FM{:9<len$}0", "")
     };
 
     Ok(StrArgs::WithArgs(val_arg, fmt, len))
