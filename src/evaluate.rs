@@ -506,34 +506,15 @@ fn eval_function(
                 let fmt = format!("{:width$.prec$}", n, width = 10, prec = 0); // DBASE defaults: https://www.dbase.com/downloads/dBLLanguageReference2.6.pdf
                 Ok(Value::Str(fmt.trim_end().to_string()))
             }
+            [Value::Number(n, _), Value::Number(len, _)] => evaluate_str(*n, *len, 0.0),
             [
                 Value::Number(n, _),
                 Value::Number(len, _),
                 Value::Number(dec, _),
-            ] => {
-                let len = (*len).max(0.0) as usize;
-                let mut dec = (*dec).max(0.0) as usize;
-                dec = dec.min(15);
-
-                if len == 0 {
-                    return Ok(Value::Str(String::new()));
-                }
-
-                if len <= dec + 1 {
-                    dec = len.saturating_sub(2); //to allow space for the '.', something like 2,1 doesn't make sense since there would be no space for the leading 0 so codebase just removes the dec
-                }
-
-                let fmt = format!("{:width$.prec$}", n, width = len, prec = dec);
-                Ok(Value::Str(if fmt.len() > len {
-                    "*".repeat(len)
-                } else {
-                    let text = fmt.trim_end().to_string();
-                    format!("{:>width$}", text, width = len)
-                }))
-            }
+            ] => evaluate_str(*n, *len, *dec),
             _ => Err(Error::InvalidArguments(
                 name.clone(),
-                "STR expects (number, len, dec)".to_string(),
+                "STR expects (number, [len], [dec])".to_string(),
             )),
         },
 
@@ -607,6 +588,26 @@ fn right_str_n(s: &str, n: f64) -> String {
 
         s[start..].to_string()
     }
+}
+
+fn evaluate_str(n: f64, len: f64, dec: f64) -> Result<Value, Error> {
+    let len = (len).max(0.0) as usize;
+    if len == 0 {
+        return Ok(Value::Str(String::new()));
+    }
+
+    let mut dec = dec.clamp(0.0, 15.0) as usize;
+    if dec > 0 && len <= dec + 1 {
+        dec = len.saturating_sub(2); // Allow space for '.', e.g., 2,1 doesn't make sense
+    }
+
+    let fmt = format!("{:width$.prec$}", n, width = len, prec = dec);
+    Ok(Value::Str(if fmt.len() > len {
+        "*".repeat(len)
+    } else {
+        let text = fmt.trim_end().to_string();
+        format!("{:>width$}", text, width = len)
+    }))
 }
 
 use Value::*;
