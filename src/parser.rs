@@ -1023,4 +1023,20 @@ mod tests {
             panic!("Expected an UnexpectedToken")
         };
     }
+
+    #[test]
+    fn codebase_time_fn() {
+        let (tree, root) = parse("Time() <= '13:00'").expect("a valid parse");
+        let Expression::BinaryOperator(l, BinaryOp::Le, _) = root else {
+            panic!("Expected a LE comparison");
+        };
+        let Expression::FunctionCall {
+            name: CodebaseFunction::TIME,
+            args,
+        } = tree.get_expr_unchecked(l)
+        else {
+            panic!("Expectected a function call");
+        };
+        assert!(args.is_empty());
+    }
 }

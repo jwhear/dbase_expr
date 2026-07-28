@@ -531,6 +531,14 @@ fn eval_function(
         },
 
         F::DATE => Ok(Value::Date(Some(chrono::Local::now().naive_local().date()))),
+        F::TIME => {
+            let now = chrono::Local::now().time();
+            Ok(Value::FixedLenStr(
+                now.format("%H:%M:%S").to_string(),
+                8,
+                true,
+            ))
+        }
 
         F::IIF => match args {
             [Value::Bool(cond), when_true, when_false] => {
@@ -978,5 +986,22 @@ mod tests {
             eval(r#"iif(.t.,'', '.' + ALLTRIM('  '))"#),
             Ok(Value::FixedLenStr("   ".to_string(), 3, false)) // should be the longest possible length
         );
+    }
+
+    #[test]
+    fn time_fn() {
+        // This is a bit tricky to test because it'll return a different time
+        //  every time it runs. So, we'll capture the current time...
+        let now = chrono::Local::now().time();
+
+        // ...evaluate the expression
+        let Value::FixedLenStr(time, 8, true) = eval("time()").expect("a time value") else {
+            panic!("a FixedLenStr");
+        };
+
+        let parsed = chrono::NaiveTime::parse_from_str(&time, "%H:%M:%S").expect("valid time");
+
+        // ...and make sure that `now` and `parsed` are close
+        assert!((parsed - now).abs().num_seconds() < 2);
     }
 }
