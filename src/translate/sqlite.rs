@@ -355,7 +355,8 @@ mod tests {
             field_lookup: |_alias, _name| Ok((String::from("SCREEN"), FieldType::Character(32))),
         };
         let input = "'Wizard '$(SCREEN)";
-        let (pt, root) = crate::parse(input).expect("parses");
+        let pt = crate::parse(input).expect("parses");
+        let root = pt.get_root().expect("a root node");
         let (res, FieldType::Logical) = translator.translate(&root, &pt).expect("translates")
         else {
             panic!("Expected a Logical");
@@ -379,7 +380,8 @@ mod tests {
             field_lookup: |_alias, _name| Ok((String::from("SCREEN"), FieldType::Character(5))),
         };
         let input = "SCREEN = 'XYZ  X'";
-        let (pt, root) = crate::parse(input).expect("parses");
+        let pt = crate::parse(input).expect("parses");
+        let root = pt.get_root().expect("a root node");
         let (res, FieldType::Logical) = translator.translate(&root, &pt).expect("translates")
         else {
             panic!("Expected a Logical");
@@ -407,7 +409,8 @@ mod tests {
             field_lookup: |_alias, _name| Ok((String::from("SCREEN"), FieldType::Character(32))),
         };
         let input = "'ab  '-'cd'";
-        let (pt, root) = crate::parse(input).expect("parses");
+        let pt = crate::parse(input).expect("parses");
+        let root = pt.get_root().expect("a root node");
         let (res, _) = translator.translate(&root, &pt).expect("translates");
 
         use crate::to_sql::{Printer, PrinterConfig, SqlitePrinterContext};

@@ -19,6 +19,7 @@ pub enum Error {
     DateSubtractionOverflow,
     IncompatibleBinaryOp(BinaryOp, String),
     UnknownFunction(String),
+    EmptyTree,
     Other(String),
 }
 
@@ -95,7 +96,18 @@ impl Debug for Value {
 pub type FieldValueGetter<'a> = &'a dyn Fn(Option<&str>, &str) -> Option<Value>;
 pub type CustomFunctions<'a> = &'a dyn Fn(&str) -> Option<Result<Value, String>>;
 
+/// Evaluate a [ParseTree].
 pub fn evaluate(
+    tree: &crate::parser::ParseTree,
+    get: FieldValueGetter,
+    custom_functions: CustomFunctions,
+) -> Result<Value, Error> {
+    let root = tree.get_root().ok_or(Error::EmptyTree)?;
+    evaluate_expr(root, tree, get, custom_functions)
+}
+
+/// Evaluate a particular [Expression] within a [ParseTree].
+pub fn evaluate_expr(
     expr: &Expression,
     tree: &crate::parser::ParseTree,
     get: FieldValueGetter,
@@ -189,10 +201,10 @@ pub fn evaluate(
 
                     // Evaluate the whole expression and push it to the stack
                     let first_expr = tree.get_expr_unchecked(arg_exprs[0]);
-                    let mut accum = evaluate(first_expr, tree, get, custom_functions)?;
+                    let mut accum = evaluate_expr(first_expr, tree, get, custom_functions)?;
                     for &expr_id in &arg_exprs[1..] {
                         let expr = tree.get_expr_unchecked(expr_id);
-                        let e = evaluate(expr, tree, get, custom_functions)?;
+                        let e = evaluate_expr(expr, tree, get, custom_functions)?;
                         accum = eval_binary_op(op, accum, e)?;
                     }
                     results.push(accum);
@@ -859,7 +871,7 @@ mod tests {
         let value_lookup = |_: Option<&str>, _: &str| -> Option<Value> { None };
         let custom_functions = |_: &str| None;
         match crate::parser::parse(expr) {
-            Ok((tree, expr)) => evaluate(&expr, &tree, &value_lookup, &custom_functions),
+            Ok(tree) => evaluate(&tree, &value_lookup, &custom_functions),
             Err(e) => Err(Error::Other(format!("{e}"))),
         }
     }

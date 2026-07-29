@@ -213,9 +213,9 @@ fn expr_tests() {
     for test in tests.iter() {
         //println!("{test}");
         match parse(test) {
-            Ok((tree, root)) => {
+            Ok(tree) => {
                 //println!("{t:?}");
-                match evaluate::evaluate(&root, &tree, &value_lookup, &custom_functions) {
+                match evaluate::evaluate(&tree, &value_lookup, &custom_functions) {
                     Ok(_tree) => {}
                     //println!("{test} => {tree:?}\n"),
                     Err(e) => {
@@ -266,7 +266,7 @@ fn to_sql_tests<T: TranslationContext>(cx: &T) {
 
     for test in tests.iter() {
         match parse(test) {
-            Ok((tree, root)) => match cx.translate(&root, &tree) {
+            Ok(tree) => match cx.translate(tree.get_root().unwrap(), &tree) {
                 Ok(tree) => println!(
                     "{test}\n=>\n{}\n",
                     Printer::new(tree.0, PrinterConfig::default())

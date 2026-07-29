@@ -8,7 +8,10 @@ fn main() {
         print!("[in {}μs] ", now.elapsed().as_micros());
         match res {
             Err(e) => println!("Error parsing input: {e}"),
-            Ok((tree, root)) => println!("{}", TreePrinter(tree, root)),
+            Ok(tree) => match tree.get_root_id() {
+                None => println!("Empty tree"),
+                Some(id) => println!("{}", TreePrinter(tree, id)),
+            },
         }
     }
 }

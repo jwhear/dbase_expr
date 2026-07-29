@@ -59,6 +59,7 @@
 
 pub mod codebase_functions;
 pub mod evaluate;
+pub mod expression_tree;
 //pub mod fuzz_helper; // Not fully adapted: custom functions now return translate::Expression, evalute expects parser::Expression
 pub mod lex;
 pub mod parser;

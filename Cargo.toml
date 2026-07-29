@@ -25,3 +25,11 @@ harness = false
 [[bench]]
 name = "lex"
 harness = false
+
+[[bench]]
+name = "eval"
+harness = false
+
+[[bench]]
+name = "translate"
+harness = false

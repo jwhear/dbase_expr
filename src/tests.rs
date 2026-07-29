@@ -276,7 +276,8 @@ fn substr_replace_0_with_1_test() {
 }
 
 fn parse_expression(expr: &str) -> translate::Result {
-    let (tree, root) = parser::parse(expr).unwrap();
+    let tree = parser::parse(expr).unwrap();
+    let root = tree.get_root().expect("a root node");
     let cx = TestTranslator {
         field_lookup: |alias: Option<&str>, field: &str| -> Result<(String, FieldType), String> {
             let field = field.to_string().to_uppercase();
