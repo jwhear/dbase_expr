@@ -208,6 +208,18 @@ pub fn translate_fn_call<'a>(
             ok(coalesce, FieldType::Date)
         }
 
+        // DATE() -> strftime('%Y%m%d', 'now', 'localtime')
+        F::DATE => ok(
+            TranslateExpression::FunctionCall {
+                name: "strftime".into(),
+                args: vec![
+                    expr_ref("%Y%m%d".into()),
+                    expr_ref("now".into()),
+                    expr_ref("localtime".into()),
+                ],
+            },
+            FieldType::Date,
+        ),
         F::DAY => ok(
             TranslateExpression::FunctionCall {
                 name: "CAST".to_string(),
@@ -325,6 +337,19 @@ pub fn translate_fn_call<'a>(
                 FieldType::Character(len as u32),
             )
         }
+        // TIME() -> time('now', 'localtime')
+        F::TIME => ok(
+            TranslateExpression::FunctionCall {
+                name: "time".into(),
+                args: vec![
+                    expr_ref(TranslateExpression::SingleQuoteStringLiteral("now".into())),
+                    expr_ref(TranslateExpression::SingleQuoteStringLiteral(
+                        "localtime".into(),
+                    )),
+                ],
+            },
+            FieldType::Character(8),
+        ),
         F::VAL => ok(
             TranslateExpression::Cast(arg(0)??.0, "REAL"),
             FieldType::Numeric { len: 0, dec: 0 },

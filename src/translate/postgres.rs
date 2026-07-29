@@ -231,6 +231,17 @@ pub fn translate_fn_call<'a>(
             Expression::BareFunctionCall("CURRENT_DATE".to_string()),
             FieldType::Date,
         ),
+        // TIME() => TO_CHAR(CURRENT_TIME, 'HH24:MI:SS')
+        F::TIME => ok(
+            Expression::FunctionCall {
+                name: "TO_CHAR".to_string(),
+                args: vec![
+                    expr_ref(Expression::BareFunctionCall("CURRENT_TIME".to_string())),
+                    expr_ref("HH24:MI:SS".into()),
+                ],
+            },
+            FieldType::Character(8),
+        ),
         // DAY(x) => DATE_PART('DAY' FROM x)
         F::DAY => ok(
             Expression::FunctionCall {
