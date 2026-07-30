@@ -35,8 +35,7 @@ where
 {
     for tree in tests {
         std::hint::black_box({
-            let root = tree.get_root().unwrap();
-            let (exp, _ft) = cx.translate(root, tree).expect("translated");
+            let (exp, _ft) = cx.translate(tree).expect("translated");
             let _as_sql = format!("{}", Printer::new(exp, PrinterConfig::default()));
         })
     }

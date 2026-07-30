@@ -4,9 +4,9 @@ use dbase_expr::{
     parser::parse,
     to_sql::PrinterConfig,
     translate::{
-        Error, ExprRef, Expression, FieldType, TranslationContext, expr_ref,
+        Expression, FieldType, SQLTree, TranslationContext,
         postgres::Translator,
-        postgres::{translate as default_translate, translate_binary_op, translate_fn_call},
+        postgres::{translate_binary_op, translate_expr as default_translate, translate_fn_call},
     },
     *,
 };
@@ -58,44 +58,43 @@ fn main() {
             (self.field_lookup)(alias, field)
         }
 
-        fn translate(
+        fn translate_expr(
             &self,
             source: &parser::Expression,
-            tree: &parser::ParseTree,
-        ) -> translate::Result {
-            default_translate(source, tree, self)
+            src_tree: &parser::ParseTree,
+            dst_tree: &mut SQLTree,
+        ) -> translate::ExpResult {
+            default_translate(source, src_tree, dst_tree, self)
         }
 
         fn translate_fn_call(
             &self,
             name: &CodebaseFunction,
             args: &[parser::ExpressionId],
-            tree: &parser::ParseTree,
-        ) -> std::result::Result<(ExprRef, FieldType), Error> {
-            let arg = |index: usize| {
-                args.get(index)
-                    .map(|a| tree.get_expr_unchecked(*a))
-                    .map(|a| default_translate(a, tree, self))
-                    .ok_or(Error::IncorrectArgCount(format!("{:?}", name), index))
-            };
+            src_tree: &parser::ParseTree,
+            dst_tree: &mut SQLTree,
+        ) -> translate::ExpResult {
+            let dst_args = translate::postgres::translate_args(args, src_tree, dst_tree, self)?;
 
             if let CodebaseFunction::Unknown(unknown) = name
                 && unknown.eq_ignore_ascii_case("USER")
             {
                 Ok((
-                    expr_ref(Expression::SingleQuoteStringLiteral("my user".to_owned())),
+                    Expression::SingleQuoteStringLiteral("my user".to_owned()),
                     FieldType::Memo,
                 ))
             } else if name == &CodebaseFunction::DTOS {
+                let date = dst_args[0].0;
+                let fmt = dst_tree.push_expr("YYYYMMDD".into());
                 Ok((
-                    expr_ref(Expression::FunctionCall {
+                    (Expression::FunctionCall {
                         name: "cb_date_to_text".into(),
-                        args: vec![arg(0)??.0, expr_ref("YYYYMMDD".into())],
+                        args: dst_tree.push_args([date, fmt].into_iter()),
                     }),
                     FieldType::Character(8),
                 ))
             } else {
-                translate_fn_call(name, args, tree, self)
+                translate_fn_call(name, args, src_tree, dst_tree, self)
             }
         }
 
@@ -104,9 +103,10 @@ fn main() {
             l: &parser::Expression,
             op: &parser::BinaryOp,
             r: &parser::Expression,
-            tree: &parser::ParseTree,
-        ) -> translate::Result {
-            translate_binary_op(self, l, op, r, tree)
+            src_tree: &parser::ParseTree,
+            dst_tree: &mut SQLTree,
+        ) -> translate::ExpResult {
+            translate_binary_op(self, l, op, r, src_tree, dst_tree)
         }
     }
     let cx = CustomTranslator {
@@ -266,7 +266,7 @@ fn to_sql_tests<T: TranslationContext>(cx: &T) {
 
     for test in tests.iter() {
         match parse(test) {
-            Ok(tree) => match cx.translate(tree.get_root().unwrap(), &tree) {
+            Ok(tree) => match cx.translate(&tree) {
                 Ok(tree) => println!(
                     "{test}\n=>\n{}\n",
                     Printer::new(tree.0, PrinterConfig::default())

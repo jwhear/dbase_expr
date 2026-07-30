@@ -1,12 +1,19 @@
 use super::{
-    BinaryOp, Error, Expression, FieldType, Result, TranslationContext, UnaryOp,
-    escape_single_quotes, ok,
+    BinaryOp, Error, ExpResult, Expression, FieldType, Parenthesize, SQLTree, TranslationContext,
+    UnaryOp, escape_single_quotes, exps, ok,
 };
 use crate::{
     codebase_functions::CodebaseFunction as F,
-    parser::{self, Expression as E},
-    translate::{COALESCE_DATE, ExprRef, Parenthesize, expr_ref},
+    parser::{self, Expression as E, ExpressionId, ParseTree},
 };
+
+//TODO pre-insert:
+// lit_0
+// lit_1
+// empty_string
+// true
+// false
+// COALESCE_DATE
 
 /// This type provides default function translation for Postgres. You can
 ///  "inherit" while allowing overriding by implementing the TranslationContext
@@ -31,8 +38,13 @@ where
         (self.field_lookup)(alias, field)
     }
 
-    fn translate(&self, source: &parser::Expression, tree: &crate::parser::ParseTree) -> Result {
-        translate(source, tree, self)
+    fn translate_expr(
+        &self,
+        source: &parser::Expression,
+        src_tree: &crate::parser::ParseTree,
+        dst_tree: &mut SQLTree,
+    ) -> ExpResult {
+        translate_expr(source, src_tree, dst_tree, self)
     }
 
     fn translate_binary_op(
@@ -40,27 +52,40 @@ where
         l: &parser::Expression,
         op: &parser::BinaryOp,
         r: &parser::Expression,
-        tree: &crate::parser::ParseTree,
-    ) -> Result {
-        translate_binary_op(self, l, op, r, tree)
+        src_tree: &crate::parser::ParseTree,
+        dst_tree: &mut SQLTree,
+    ) -> ExpResult {
+        translate_binary_op(self, l, op, r, src_tree, dst_tree)
     }
 
     fn translate_fn_call(
         &self,
         name: &crate::codebase_functions::CodebaseFunction,
         args: &[parser::ExpressionId],
-        tree: &crate::parser::ParseTree,
-    ) -> std::result::Result<(ExprRef, FieldType), Error> {
-        translate_fn_call(name, args, tree, self)
+        src_tree: &crate::parser::ParseTree,
+        dst_tree: &mut SQLTree,
+    ) -> ExpResult {
+        translate_fn_call(name, args, src_tree, dst_tree, self)
     }
 }
 
-/// Translates dBase expression to a SQL expression.
+/// Translates a parsed dBase expression to a SQL expression.
 pub fn translate<'a, C: TranslationContext>(
-    source: &'a E<'a>,
     tree: &'a crate::parser::ParseTree<'a>,
     cx: &'a C,
-) -> Result {
+) -> ExpResult {
+    let root = tree.get_root().ok_or(Error::EmptyTree)?;
+    let mut dst_tree = SQLTree::new();
+    translate_expr(root, tree, &mut dst_tree, cx)
+}
+
+/// Translates a particular dBase expression to a SQL expression.
+pub fn translate_expr<'a, C: TranslationContext>(
+    source: &'a E<'a>,
+    src_tree: &'a crate::parser::ParseTree<'a>,
+    dst_tree: &mut SQLTree,
+    cx: &'a C,
+) -> ExpResult {
     // helper for creating binary operators
     match source {
         E::BoolLiteral(v) => ok(Expression::BoolLiteral(*v), FieldType::Logical),
@@ -97,16 +122,15 @@ pub fn translate<'a, C: TranslationContext>(
             ok(Expression::Field { name, field_type }, field_type)
         }
         E::UnaryOperator(op, r) => {
-            let r = tree.get_expr_unchecked(*r);
+            let r = src_tree.get_expr_unchecked(*r);
+            let (r, t) = translate_expr(r, src_tree, dst_tree, cx)?;
+            let r = dst_tree.push_expr(r);
             match op {
                 parser::UnaryOp::Not => ok(
-                    Expression::UnaryOperator(UnaryOp::Not, translate(r, tree, cx)?.0),
+                    Expression::UnaryOperator(UnaryOp::Not, r),
                     FieldType::Logical,
                 ),
-                parser::UnaryOp::Neg => {
-                    let r = translate(r, tree, cx)?;
-                    ok(Expression::UnaryOperator(UnaryOp::Neg, r.0), r.1)
-                }
+                parser::UnaryOp::Neg => ok(Expression::UnaryOperator(UnaryOp::Neg, r), t),
             }
         }
         E::BinaryOperator(l, op, r) => {
@@ -114,13 +138,16 @@ pub fn translate<'a, C: TranslationContext>(
             // We translate the first operand and use its type to determine how
             //  to translate.
             cx.translate_binary_op(
-                tree.get_expr_unchecked(*l),
+                src_tree.get_expr_unchecked(*l),
                 op,
-                tree.get_expr_unchecked(*r),
-                tree,
+                src_tree.get_expr_unchecked(*r),
+                src_tree,
+                dst_tree,
             )
         }
-        E::FunctionCall { name, args } => cx.translate_fn_call(name, tree.get_args(args), tree),
+        E::FunctionCall { name, args } => {
+            cx.translate_fn_call(name, src_tree.get_args(args), src_tree, dst_tree)
+        }
         E::Sequence(operands, op) => {
             // We'll inspect the type of the first operand and use that to
             //  either emit a '+' or a '||'
@@ -128,15 +155,16 @@ pub fn translate<'a, C: TranslationContext>(
                 operands.len() >= 2,
                 "Sequence operation should only be generated for at least two operands"
             );
-            let operands = tree.get_args(operands);
+            let operands = src_tree.get_args(operands);
             let mut exprs = Vec::with_capacity(operands.len());
             let mut first_ty = None;
             for (i, operand) in operands.iter().enumerate() {
-                let (expr, ty) = cx.translate(tree.get_expr_unchecked(*operand), tree)?;
+                let (expr, ty) =
+                    cx.translate_expr(src_tree.get_expr_unchecked(*operand), src_tree, dst_tree)?;
                 if i == 0 {
                     first_ty = Some(ty);
                 }
-                exprs.push((expr, ty));
+                exprs.push((dst_tree.push_expr(expr), ty));
             }
             let first_ty = first_ty.unwrap();
             let (operator, ty) = match (op, first_ty) {
@@ -158,7 +186,7 @@ pub fn translate<'a, C: TranslationContext>(
                 _ => panic!("Unsupported binary operator for Sequence: {op:?}"),
             };
 
-            let exprs = exprs.into_iter().map(|(e, _)| e).collect();
+            let exprs = dst_tree.push_args(exprs.into_iter().map(|(e, _)| e));
             ok(Expression::BinaryOperatorSequence(operator, exprs), ty)
         }
     }
@@ -170,37 +198,62 @@ pub fn translate<'a, C: TranslationContext>(
 pub fn translate_fn_call<'a>(
     name: &'a F,
     args: &'a [parser::ExpressionId],
-    tree: &'a crate::parser::ParseTree<'a>,
+    src_tree: &'a crate::parser::ParseTree<'a>,
+    dst_tree: &mut SQLTree,
     cx: &'a impl TranslationContext,
-) -> std::result::Result<(ExprRef, FieldType), Error> {
-    let arg = |index: usize| get_arg(index, args, tree, cx, name);
-    let all_args = || get_all_args(args, tree, cx);
+) -> std::result::Result<(Expression, FieldType), Error> {
+    // This recursively translates all arguments and packs them into dst_tree,
+    //  returning their ExpressionIds and FieldTypes
+    let dst_args = translate_args(args, src_tree, dst_tree, cx)?;
+
+    // Gets the ExpressionId for the argument at `index`
+    let argid = |index| {
+        dst_args
+            .get(index)
+            .map(|&(a, _)| a)
+            .ok_or(Error::IncorrectArgCount(format!("{name:?}"), index))
+    };
+
+    // Gets the FieldType for the argument at `index`
+    let argtype = |index| {
+        dst_args
+            .get(index)
+            .map(|&(_, a)| a)
+            .ok_or(Error::IncorrectArgCount(format!("{name:?}"), index))
+    };
+
+    // Gets the translated Expression for the argument at `index`
+    let argexpr = |index| {
+        dst_args
+            .get(index)
+            .map(|&(a, _)| a)
+            .and_then(|a| dst_tree.get_expr(a))
+            .ok_or(Error::IncorrectArgCount(format!("{name:?}"), index))
+    };
+
     let wrong_type = |index| wrong_type(index, name, args);
-    let date = |format: &str| {
+
+    fn date(
+        format: &str,
+        value: ExpressionId,
+        dst_tree: &mut SQLTree,
+    ) -> Result<(Expression, FieldType), Error> {
         //this translates blank strings into the coalesce date so that it can be properly compared
-        let trim = Expression::FunctionCall {
-            name: "TRIM".into(),
-            args: vec![arg(0)??.0],
-        };
-        let null_if = Expression::FunctionCall {
-            name: "NULLIF".into(),
-            args: vec![expr_ref(trim), expr_ref("".into())],
-        };
-        let to_date = Expression::FunctionCall {
-            name: "TO_DATE".into(),
-            args: vec![expr_ref(null_if), expr_ref(format.into())],
-        };
+        let format = dst_tree.push_expr(format.into());
+        let trim = dst_tree.push_fn_call("TRIM", &[value]);
+        let null_if = dst_tree.push_fn_call("NULLIF", &[trim, exps::EMPTY_STR]);
+        let to_date = dst_tree.push_fn_call("TO_DATE", &[null_if, format]);
         let coalesce = Expression::FunctionCall {
             name: "COALESCE".into(),
-            args: vec![expr_ref(to_date), expr_ref(COALESCE_DATE.into())],
+            args: dst_tree.push_args([to_date, exps::COALESCE_DATE].into_iter()),
         };
-        ok(coalesce, FieldType::Date)
-    };
+        Ok((coalesce, FieldType::Date))
+    }
 
     match name {
         // ALLTRIM(x) => TRIM(x)
         F::ALLTRIM | F::LTRIM | F::RTRIM | F::TRIM => {
-            let ty = match arg(0)??.1 {
+            let ty = match argtype(0)? {
                 FieldType::Character(l) => FieldType::Character(l),
                 _ => FieldType::Memo,
             };
@@ -212,30 +265,30 @@ pub fn translate_fn_call<'a>(
             };
             let expr = Expression::FunctionCall {
                 name: f.into(),
-                args: vec![arg(0)??.0],
+                args: dst_tree.push_args([argid(0)?].into_iter()),
             };
             ok(expr, ty)
         }
         // CHR(x) => CHR(x)
         F::CHR => ok(
             Expression::FunctionCall {
-                name: "CHR".to_string(),
-                args: all_args()?,
+                name: "CHR",
+                args: dst_tree.push_args([argid(0)?].into_iter()),
             },
             FieldType::Character(1),
         ),
         // CTOD(x) => COALESCE(TO_DATE(NULLIF(TRIM(x),''),'MM/DD/YY'),'0001-01-01')
-        F::CTOD => date("MM/DD/YY"), //TODO KOB-104
+        F::CTOD => date("MM/DD/YY", argid(0)?, dst_tree),
         // DATE() => CURRENT_DATE
         F::DATE => ok(
             Expression::BareFunctionCall("CURRENT_DATE".to_string()),
             FieldType::Date,
         ),
-        // DAY(x) => DATE_PART('DAY' FROM x)
+        // DAY(x) => DATE_PART('DAY', x)
         F::DAY => ok(
             Expression::FunctionCall {
                 name: "DATE_PART".into(),
-                args: vec![expr_ref("DAY".into()), arg(0)??.0],
+                args: dst_tree.push_args([exps::LIT_DAY, argid(0)?].into_iter()),
             },
             FieldType::Double,
         ),
@@ -249,51 +302,41 @@ pub fn translate_fn_call<'a>(
 
         // DTOC(x) => TO_CHAR(x, 'MM/DD/YY')
         F::DTOC => {
-            if args.len() == 2 {
-                // Equivalent to DTOS
-                ok(
-                    Expression::FunctionCall {
-                        name: "TO_CHAR".into(),
-                        args: vec![arg(0)??.0, expr_ref("YYYYMMDD".into())],
-                    },
-                    FieldType::Character(8),
-                )
+            // Equivalent to DTOS
+            let fmt = dst_tree.push_expr(if args.len() == 2 {
+                "YYYYMMDD".into()
             } else {
-                ok(
-                    Expression::FunctionCall {
-                        name: "TO_CHAR".into(),
-                        args: vec![
-                            arg(0)??.0,
-                            //TODO KOB-104
-                            expr_ref("MM/DD/YY".into()),
-                        ],
-                    },
-                    FieldType::Character(8),
-                )
-            }
+                "MM/DD/YY".into()
+            });
+            ok(
+                Expression::FunctionCall {
+                    name: "TO_CHAR",
+                    args: dst_tree.push_args([argid(0)?, fmt].into_iter()),
+                },
+                FieldType::Character(8),
+            )
         }
-        F::DTOS => ok(
-            Expression::FunctionCall {
-                name: "TO_CHAR".into(),
-                args: vec![arg(0)??.0, expr_ref("YYYYMMDD".into())],
-            },
-            FieldType::Character(8),
-        ),
+        F::DTOS => {
+            let fmt = dst_tree.push_expr("YYYYMMDD".into());
+            ok(
+                Expression::FunctionCall {
+                    name: "TO_CHAR",
+                    args: dst_tree.push_args([argid(0)?, fmt].into_iter()),
+                },
+                FieldType::Character(8),
+            )
+        }
 
         //the result of EMPTY depends on the type
         F::EMPTY => {
-            let (arg, ty) = arg(0)??;
-            let expression = match ty {
+            let expression = match argtype(0)? {
                 FieldType::Logical => {
                     // COALESCE(x, false) = false
-                    let coalesce = expr_ref(Expression::FunctionCall {
-                        name: "COALESCE".into(),
-                        args: vec![arg.clone(), expr_ref(Expression::BoolLiteral(false))],
-                    });
+                    let coalesce = dst_tree.push_fn_call("COALESCE", &[argid(0)?, exps::LIT_FALSE]);
                     Expression::BinaryOperator(
                         coalesce,
                         BinaryOp::Eq,
-                        expr_ref(Expression::BoolLiteral(false)),
+                        dst_tree.push_expr(Expression::BoolLiteral(false)),
                         Parenthesize::No,
                     )
                 }
@@ -303,49 +346,38 @@ pub fn translate_fn_call<'a>(
                 | FieldType::Float
                 | FieldType::Numeric { .. } => {
                     // COALESCE(x, 0) = 0
-                    let coalesce = expr_ref(Expression::FunctionCall {
-                        name: "COALESCE".into(),
-                        args: vec![arg.clone(), expr_ref(Expression::NumberLiteral("0".into()))],
-                    });
+                    let coalesce = dst_tree.push_fn_call("COALESCE", &[argid(0)?, exps::LIT_0]);
                     Expression::BinaryOperator(
                         coalesce,
                         BinaryOp::Eq,
-                        expr_ref(Expression::NumberLiteral("0".into())),
+                        exps::LIT_0,
                         Parenthesize::No,
                     )
                 }
                 FieldType::Character(_) | FieldType::Memo => {
-                    let trim = expr_ref(Expression::FunctionCall {
-                        name: "TRIM".into(),
-                        args: vec![arg],
-                    });
+                    let trim = dst_tree.push_fn_call("TRIM", &[argid(0)?]);
                     Expression::BinaryOperator(
                         trim,
                         BinaryOp::Eq,
-                        expr_ref("".into()),
+                        exps::EMPTY_STR,
                         Parenthesize::No,
                     )
                 }
                 FieldType::Date | FieldType::DateTime => Expression::BinaryOperator(
-                    arg,
+                    argid(0)?,
                     BinaryOp::Eq,
-                    expr_ref(COALESCE_DATE.into()),
+                    exps::COALESCE_DATE,
                     Parenthesize::No,
                 ),
                 FieldType::MemoBinary | FieldType::CharacterBinary(_) | FieldType::General => {
                     // COALESCE(LENGTH(x), 0) = 0
-                    let length_call = expr_ref(Expression::FunctionCall {
-                        name: "length".into(),
-                        args: vec![arg],
-                    });
-                    let coalesce_call = expr_ref(Expression::FunctionCall {
-                        name: "COALESCE".into(),
-                        args: vec![length_call, expr_ref(Expression::NumberLiteral("0".into()))],
-                    });
+                    let length_call = dst_tree.push_fn_call("length", &[argid(0)?]);
+                    let coalesce_call =
+                        dst_tree.push_fn_call("COALESCE", &[length_call, exps::LIT_0]);
                     Expression::BinaryOperator(
                         coalesce_call,
                         BinaryOp::Eq,
-                        expr_ref(Expression::NumberLiteral("0".into())),
+                        exps::LIT_0,
                         Parenthesize::No,
                     )
                 }
@@ -361,8 +393,8 @@ pub fn translate_fn_call<'a>(
         // is always structurally equivalent to:
         //   CASE WHEN cond_a THEN v1 WHEN cond_b THEN v2 ELSE v3 END
         F::IIF => {
-            let true_ty = arg(1)??.1;
-            let false_ty = arg(2)??.1;
+            let true_ty = argtype(1)?;
+            let false_ty = argtype(2)?;
             let ty = match (true_ty, false_ty) {
                 (FieldType::Character(true_len), FieldType::Character(false_len)) => {
                     FieldType::Character(true_len.max(false_len)) //get the max of the two because the length shouldn't depend on the values
@@ -375,38 +407,54 @@ pub fn translate_fn_call<'a>(
             //OPT: come back and try to rework this
             let mut inner_args = args;
 
-            // Add this IIF as a When branch. If when_false is an IIF, traverse
+            // Add this IIF as a CaseBranch. If when_false is an IIF, traverse
             //  into it and repeat. We'll eventually encounter a when_false that
             //  is not an IIF: that will become our ELSE value.
             let r#else = loop {
                 match inner_args {
                     [cond, when_true, when_false] => {
                         // Convert this IIF to a WHEN
-                        branches.push(super::When {
-                            cond: cx.translate(tree.get_expr_unchecked(*cond), tree)?.0,
-                            then: cx.translate(tree.get_expr_unchecked(*when_true), tree)?.0,
-                        });
+                        let cond = cx
+                            .translate_expr(src_tree.get_expr_unchecked(*cond), src_tree, dst_tree)?
+                            .0;
+                        let cond = dst_tree.push_expr(cond);
+                        let then = cx
+                            .translate_expr(
+                                src_tree.get_expr_unchecked(*when_true),
+                                src_tree,
+                                dst_tree,
+                            )?
+                            .0;
+                        let then = dst_tree.push_expr(then);
+                        branches.push(dst_tree.push_expr(Expression::CaseBranch { cond, then }));
 
-                        let when_false = tree.get_expr_unchecked(*when_false);
+                        let when_false = src_tree.get_expr_unchecked(*when_false);
                         let parser::Expression::FunctionCall { name: F::IIF, args } = when_false
                         else {
                             break when_false;
                         };
                         // Go around with another branch
-                        inner_args = tree.get_args(args);
+                        inner_args = src_tree.get_args(args);
                     }
                     _ => panic!("IIF should always have three arguments"),
                 }
             };
-            let (r#else, _) = cx.translate(r#else, tree)?;
+            let (r#else, _) = cx.translate_expr(r#else, src_tree, dst_tree)?;
+            let r#else = dst_tree.push_expr(r#else);
 
-            ok(Expression::Case { branches, r#else }, ty)
+            ok(
+                Expression::Case {
+                    branches: dst_tree.push_args(branches.into_iter()),
+                    r#else,
+                },
+                ty,
+            )
         }
         // LEFT(x, n) => SUBSTR(x, 1, n)
         F::LEFT => ok(
             Expression::FunctionCall {
-                name: "SUBSTR".to_string(),
-                args: vec![arg(0)??.0, expr_ref(1.into()), arg(1)??.0],
+                name: "SUBSTR",
+                args: dst_tree.push_args([argid(0)?, exps::LIT_1, argid(1)?].into_iter()),
             },
             FieldType::Memo,
         ),
@@ -414,16 +462,18 @@ pub fn translate_fn_call<'a>(
         // MONTH(x) => DATE_PART('MONTH', x)
         F::MONTH => ok(
             Expression::FunctionCall {
-                name: "DATE_PART".into(),
-                args: vec![expr_ref("MONTH".into()), arg(0)??.0],
+                name: "DATE_PART",
+                args: dst_tree.push_args([exps::LIT_MONTH, argid(0)?].into_iter()),
             },
             FieldType::Double,
         ),
 
         F::PADL => ok(
             Expression::FunctionCall {
-                name: "LPAD".into(),
-                args: vec![arg(0)??.0, arg(1)??.0, expr_ref(" ".into())],
+                name: "LPAD",
+                //NOTE: Postgres uses spaces as the fill char by default so we
+                //  omit the third argument
+                args: dst_tree.push_args([argid(0)?, argid(1)?].into_iter()),
             },
             FieldType::Memo,
         ),
@@ -438,54 +488,46 @@ pub fn translate_fn_call<'a>(
 
         // RIGHT(x, n) => RIGHT(x, n)
         F::RIGHT => {
-            let (x, ty) = arg(0)??;
-            let n = match &*arg(1)??.0.borrow() {
+            let x = argid(0)?;
+            let n = match argexpr(1)? {
                 Expression::NumberLiteral(v) => v.parse::<u32>().map_err(|_| wrong_type(1)),
                 _ => Err(wrong_type(1)),
             }?;
-            let out_ty = match ty {
+            let out_ty = match argtype(0)? {
                 FieldType::Character(len) => FieldType::Character(len - n),
                 _ => FieldType::Memo,
             };
             ok(
                 Expression::FunctionCall {
                     name: "RIGHT".into(),
-                    args: vec![x, arg(1)??.0],
+                    args: dst_tree.push_args([x, argid(1)?].into_iter()),
                 },
                 out_ty,
             )
         }
 
         // STOD(x) => COALESCE(TO_DATE(NULLIF(TRIM(x),''),'YYYYMMDD'),'0001-01-01')
-        F::STOD => date("YYYYMMDD"),
+        F::STOD => date("YYYYMMDD", argid(0)?, dst_tree),
         // STR(num, len, dec) => PRINTF("%{len}.{dec}f", num)
         F::STR => {
-            match get_str_fn_args(args, tree, cx)? {
+            match get_str_fn_args(args, src_tree, dst_tree, cx)? {
                 StrArgs::WithArgs(val_arg, fmt, len) => {
-                    let expression = expr_ref(Expression::FunctionCall {
-                        name: "TO_CHAR".to_string(),
-                        args: vec![
-                            val_arg, // value to be formatted
-                            expr_ref(fmt.into()),
-                        ],
-                    });
+                    let fmt = dst_tree.push_expr(fmt.into());
+                    let expression = dst_tree.push_fn_call("TO_CHAR", &[val_arg, fmt]);
                     //if the length of the evaluated expression is greater than the specified len, fill the len with asterisks instead of showing any value at all
-                    let len_expr: std::rc::Rc<std::cell::RefCell<Expression>> =
-                        expr_ref(Expression::FunctionCall {
-                            name: "LENGTH".into(),
-                            args: vec![expression.clone()],
-                        });
-                    let cond = expr_ref(Expression::BinaryOperator(
+                    let len_expr = dst_tree.push_fn_call("LENGTH", &[expression]);
+                    let rhs = dst_tree.push_expr((len as i64).into());
+                    let cond = dst_tree.push_expr(Expression::BinaryOperator(
                         len_expr,
                         BinaryOp::Le,
-                        expr_ref((len as i64).into()),
+                        rhs,
                         Parenthesize::No,
                     ));
                     let asterisks = "*".repeat(len);
                     let iif = Expression::Iif {
                         cond,
                         when_true: expression,
-                        when_false: expr_ref(asterisks.into()),
+                        when_false: dst_tree.push_expr(asterisks.into()),
                     };
                     ok(iif, FieldType::Character(len as u32))
                 }
@@ -494,27 +536,22 @@ pub fn translate_fn_call<'a>(
                 }
             }
         }
-        F::SUBSTR => translate_substr("SUBSTR".to_string(), args, tree, cx),
-        F::UPPER => {
-            let (first, ty) = arg(0)??;
-            ok(
-                Expression::FunctionCall {
-                    name: "UPPER".into(),
-                    args: vec![first],
-                },
-                ty,
-            )
-        }
+        F::SUBSTR => translate_substr("SUBSTR", args, src_tree, dst_tree, cx),
+        F::UPPER => ok(
+            Expression::FunctionCall {
+                name: "UPPER".into(),
+                args: dst_tree.push_args([argid(0)?].into_iter()),
+            },
+            argtype(0)?,
+        ),
         // VAL(x) => CASE WHEN pg_input_is_valid(x, 'numeric') THEN CAST(x AS NUMERIC) ELSE 0 END
         F::VAL => {
-            let numeric = expr_ref(Expression::SingleQuoteStringLiteral("numeric".into()));
-            let cond = expr_ref(Expression::FunctionCall {
-                name: "pg_input_is_valid".into(),
-                args: vec![arg(0)??.0, numeric],
-            });
-            let when_true = expr_ref(Expression::Cast(arg(0)??.0, "numeric"));
+            let numeric =
+                dst_tree.push_expr(Expression::SingleQuoteStringLiteral("numeric".into()));
+            let cond = dst_tree.push_fn_call("pg_input_is_valid", &[argid(0)?, numeric]);
+            let when_true = dst_tree.push_expr(Expression::Cast(argid(0)?, "numeric"));
             // codebase inteprets any non-numeric string as a 0
-            let when_false = expr_ref(Expression::NumberLiteral(String::from("0")));
+            let when_false = dst_tree.push_expr(Expression::NumberLiteral("0".into()));
             ok(
                 Expression::Iif {
                     cond,
@@ -529,7 +566,7 @@ pub fn translate_fn_call<'a>(
         F::YEAR => ok(
             Expression::FunctionCall {
                 name: "DATE_PART".into(),
-                args: vec![expr_ref("YEAR".into()), arg(0)??.0],
+                args: dst_tree.push_args([exps::LIT_YEAR, argid(0)?].into_iter()),
             },
             FieldType::Double,
         ),
@@ -543,27 +580,31 @@ pub fn translate_binary_op<'a, T: TranslationContext>(
     ast_l: &'a parser::Expression<'a>,
     op: &'a parser::BinaryOp,
     r: &'a parser::Expression<'a>,
-    tree: &'a crate::parser::ParseTree<'a>,
-) -> Result {
-    let (l, ty) = translate(ast_l, tree, cx)?;
-    translate_binary_op_right(cx, ast_l, l, ty, op, r, tree)
+    src_tree: &'a crate::parser::ParseTree<'a>,
+    dst_tree: &mut SQLTree,
+) -> ExpResult {
+    let (l, ty) = translate_expr(ast_l, src_tree, dst_tree, cx)?;
+    translate_binary_op_right(cx, ast_l, l, ty, op, r, src_tree, dst_tree)
 }
 
 /// The same as translate_binary_op but useful if you've already translated l and don't want to do it again
 pub fn translate_binary_op_right<'a, T: TranslationContext>(
     cx: &'a T,
     ast_l: &'a parser::Expression<'a>,
-    l: ExprRef,
+    l: Expression,
     ty: FieldType,
     op: &'a parser::BinaryOp,
     r: &'a parser::Expression<'a>,
-    tree: &'a crate::parser::ParseTree<'a>,
-) -> Result {
+    src_tree: &'a crate::parser::ParseTree<'a>,
+    dst_tree: &mut SQLTree,
+) -> ExpResult {
     let tr_binop = |l, op, r, ty| ok(Expression::BinaryOperator(l, op, r, Parenthesize::Yes), ty);
-    let binop = |l, op, r, ty| {
+    let mut binop = |l, op, r, ty| {
         //OPT: order of operations is preserved by parenthesizing everything.
         // It'd be nice to analyze precedence to only do so when necessary.
-        let r = translate(r, tree, cx)?.0;
+        let l = dst_tree.push_expr(l);
+        let r = translate_expr(r, src_tree, dst_tree, cx)?.0;
+        let r = dst_tree.push_expr(r);
         tr_binop(l, op, r, ty)
     };
     match (op, ty) {
@@ -589,12 +630,17 @@ pub fn translate_binary_op_right<'a, T: TranslationContext>(
 
         // Add on a character type maps to CONCAT
         (parser::BinaryOp::Add, FieldType::Character(len)) => {
-            let (r, r_ty) = translate(r, tree, cx)?;
+            let (r, r_ty) = translate_expr(r, src_tree, dst_tree, cx)?;
             let ty = match r_ty {
                 FieldType::Character(r_len) => FieldType::Character(len + r_len), //combine the lengths
                 _ => FieldType::Memo, // everything else is a memo
             };
-            tr_binop(l, BinaryOp::Concat, r, ty)
+            tr_binop(
+                dst_tree.push_expr(l),
+                BinaryOp::Concat,
+                dst_tree.push_expr(r),
+                ty,
+            )
         }
 
         (parser::BinaryOp::Add, FieldType::Memo) => binop(l, BinaryOp::Concat, r, FieldType::Memo),
@@ -610,32 +656,23 @@ pub fn translate_binary_op_right<'a, T: TranslationContext>(
         // )
         //
         (parser::BinaryOp::Sub, FieldType::Character(_) | FieldType::Memo) => {
-            let without_spaces = expr_ref(Expression::FunctionCall {
-                name: "RTRIM".into(),
-                args: vec![l.clone()],
-            });
-            let length_without_spaces = expr_ref(Expression::FunctionCall {
-                name: "LENGTH".into(),
-                args: vec![without_spaces.clone()],
-            });
-            let length_with_spaces = expr_ref(Expression::FunctionCall {
-                name: "LENGTH".into(),
-                args: vec![l],
-            });
-            let num_spaces = expr_ref(Expression::BinaryOperator(
+            let l = dst_tree.push_expr(l);
+            let r = translate_expr(r, src_tree, dst_tree, cx)?.0;
+            let r = dst_tree.push_expr(r);
+            let without_spaces = dst_tree.push_fn_call("RTRIM", &[l]);
+            let length_without_spaces = dst_tree.push_fn_call("LENGTH", &[without_spaces]);
+            let length_with_spaces = dst_tree.push_fn_call("LENGTH", &[l]);
+            let num_spaces = dst_tree.push_expr(Expression::BinaryOperator(
                 length_with_spaces,
                 BinaryOp::Sub,
                 length_without_spaces,
                 Parenthesize::No,
             ));
-            let repeated_spaces = expr_ref(Expression::FunctionCall {
-                name: "REPEAT".into(),
-                args: vec![expr_ref("' '".into()), num_spaces],
-            });
+            let repeated_spaces = dst_tree.push_fn_call("REPEAT", &[exps::LIT_SPACE, num_spaces]);
             ok(
                 Expression::FunctionCall {
                     name: "CONCAT".into(),
-                    args: vec![without_spaces, translate(r, tree, cx)?.0, repeated_spaces],
+                    args: dst_tree.push_args([without_spaces, r, repeated_spaces].into_iter()),
                 },
                 FieldType::Memo,
             )
@@ -712,44 +749,84 @@ pub fn translate_binary_op_right<'a, T: TranslationContext>(
         }
         (parser::BinaryOp::Or, FieldType::Logical) => binop(l, BinaryOp::Or, r, FieldType::Logical),
         (parser::BinaryOp::Lt, FieldType::Character(len)) => {
-            let r_tr = translate(r, tree, cx)?.0;
-            let left = cx.string_comp_left(l, r_tr.clone());
-            let right = cx.string_comp_right(r_tr, len);
+            let l_tr = dst_tree.push_expr(l);
+            let r_tr = translate_expr(r, src_tree, dst_tree, cx)?.0;
+            let r_tr = dst_tree.push_expr(r_tr);
+            let left = cx.string_comp_left(l_tr, r_tr, dst_tree);
+            let left = dst_tree.push_expr(left);
+            let right = cx.string_comp_right(r_tr, len, dst_tree);
+            let right = dst_tree.push_expr(right);
             tr_binop(left, BinaryOp::Lt, right, FieldType::Logical)
         }
         (parser::BinaryOp::Le, FieldType::Character(len)) => {
-            let r_tr = translate(r, tree, cx)?.0;
-            let left = cx.string_comp_left(l, r_tr.clone());
-            let right = cx.string_comp_right(r_tr, len);
+            let l_tr = dst_tree.push_expr(l);
+            let r_tr = translate_expr(r, src_tree, dst_tree, cx)?.0;
+            let r_tr = dst_tree.push_expr(r_tr);
+            let left = cx.string_comp_left(l_tr, r_tr, dst_tree);
+            let left = dst_tree.push_expr(left);
+            let right = cx.string_comp_right(r_tr, len, dst_tree);
+            let right = dst_tree.push_expr(right);
             tr_binop(left, BinaryOp::Le, right, FieldType::Logical)
         }
         (parser::BinaryOp::Gt, FieldType::Character(len)) => {
-            let r_tr = translate(r, tree, cx)?.0;
-            let left = cx.string_comp_left(l, r_tr.clone());
-            let right = cx.string_comp_right(r_tr, len);
+            let l_tr = dst_tree.push_expr(l);
+            let r_tr = translate_expr(r, src_tree, dst_tree, cx)?.0;
+            let r_tr = dst_tree.push_expr(r_tr);
+            let left = cx.string_comp_left(l_tr, r_tr, dst_tree);
+            let left = dst_tree.push_expr(left);
+            let right = cx.string_comp_right(r_tr, len, dst_tree);
+            let right = dst_tree.push_expr(right);
             tr_binop(left, BinaryOp::Gt, right, FieldType::Logical)
         }
         (parser::BinaryOp::Ge, FieldType::Character(len)) => {
-            let r_tr = translate(r, tree, cx)?.0;
-            let left = cx.string_comp_left(l, r_tr.clone());
-            let right = cx.string_comp_right(r_tr, len);
+            let l_tr = dst_tree.push_expr(l);
+            let r_tr = translate_expr(r, src_tree, dst_tree, cx)?.0;
+            let r_tr = dst_tree.push_expr(r_tr);
+            let left = cx.string_comp_left(l_tr, r_tr, dst_tree);
+            let left = dst_tree.push_expr(left);
+            let right = cx.string_comp_right(r_tr, len, dst_tree);
+            let right = dst_tree.push_expr(right);
             tr_binop(left, BinaryOp::Ge, right, FieldType::Logical)
         }
         (parser::BinaryOp::Lt, FieldType::Memo) => {
-            let left = cx.string_comp_left(l, translate(r, tree, cx)?.0);
-            binop(left, BinaryOp::Lt, r, FieldType::Logical)
+            let left = dst_tree.push_expr(l);
+            let right = translate_expr(r, src_tree, dst_tree, cx)?.0;
+            let right = dst_tree.push_expr(right);
+            let left = cx.string_comp_left(left, right, dst_tree);
+            tr_binop(
+                dst_tree.push_expr(left),
+                BinaryOp::Lt,
+                right,
+                FieldType::Logical,
+            )
         }
         (parser::BinaryOp::Le, FieldType::Memo) => {
-            let left = cx.string_comp_left(l, translate(r, tree, cx)?.0);
-            binop(left, BinaryOp::Le, r, FieldType::Logical)
+            let left = dst_tree.push_expr(l);
+            let right = translate_expr(r, src_tree, dst_tree, cx)?.0;
+            let right = dst_tree.push_expr(right);
+            let left = cx.string_comp_left(left, right, dst_tree);
+            tr_binop(
+                dst_tree.push_expr(left),
+                BinaryOp::Le,
+                right,
+                FieldType::Logical,
+            )
         }
         (parser::BinaryOp::Gt, FieldType::Memo) => {
-            let left = cx.string_comp_left(l, translate(r, tree, cx)?.0);
-            binop(left, BinaryOp::Gt, r, FieldType::Logical)
+            let left = dst_tree.push_expr(l);
+            let right = translate_expr(r, src_tree, dst_tree, cx)?.0;
+            let right = dst_tree.push_expr(right);
+            let left = cx.string_comp_left(left, right, dst_tree);
+            let left = dst_tree.push_expr(left);
+            tr_binop(left, BinaryOp::Gt, right, FieldType::Logical)
         }
         (parser::BinaryOp::Ge, FieldType::Memo) => {
-            let left = cx.string_comp_left(l, translate(r, tree, cx)?.0);
-            binop(left, BinaryOp::Ge, r, FieldType::Logical)
+            let left = dst_tree.push_expr(l);
+            let right = translate_expr(r, src_tree, dst_tree, cx)?.0;
+            let right = dst_tree.push_expr(right);
+            let left = cx.string_comp_left(left, right, dst_tree);
+            let left = dst_tree.push_expr(left);
+            tr_binop(left, BinaryOp::Ge, right, FieldType::Logical)
         }
         (parser::BinaryOp::Eq, FieldType::Memo | FieldType::Character(_)) if is_trim(ast_l) => {
             binop(l, BinaryOp::Eq, r, FieldType::Logical)
@@ -761,18 +838,30 @@ pub fn translate_binary_op_right<'a, T: TranslationContext>(
             binop(l, BinaryOp::StartsWith, r, FieldType::Logical)
         }
         (parser::BinaryOp::Eq, FieldType::Character(len)) => {
-            let trimmed_r = cx.string_comp_right(translate(r, tree, cx)?.0, len);
-            tr_binop(l, BinaryOp::StartsWith, trimmed_r, FieldType::Logical)
+            let right = translate_expr(r, src_tree, dst_tree, cx)?.0;
+            let right = dst_tree.push_expr(right);
+            let trimmed_r = cx.string_comp_right(right, len, dst_tree);
+            let trimmed_r = dst_tree.push_expr(trimmed_r);
+            let left = dst_tree.push_expr(l);
+            tr_binop(left, BinaryOp::StartsWith, trimmed_r, FieldType::Logical)
         }
         (parser::BinaryOp::Ne, FieldType::Memo) => {
-            let starts_with = binop(l, BinaryOp::StartsWith, r, FieldType::Logical);
-            let expr = Expression::UnaryOperator(UnaryOp::Not, starts_with?.0);
+            let starts_with = binop(l, BinaryOp::StartsWith, r, FieldType::Logical)?.0;
+            let starts_with = dst_tree.push_expr(starts_with);
+            let expr = Expression::UnaryOperator(UnaryOp::Not, starts_with);
             ok(expr, FieldType::Logical)
         }
         (parser::BinaryOp::Ne, FieldType::Character(len)) => {
-            let trimmed_r = cx.string_comp_right(translate(r, tree, cx)?.0, len);
-            let starts_with = tr_binop(l, BinaryOp::StartsWith, trimmed_r, FieldType::Logical);
-            let expr = Expression::UnaryOperator(UnaryOp::Not, starts_with?.0);
+            let right = translate_expr(r, src_tree, dst_tree, cx)?.0;
+            let right = dst_tree.push_expr(right);
+            let trimmed_r = cx.string_comp_right(right, len, dst_tree);
+            let starts_with = tr_binop(
+                dst_tree.push_expr(l),
+                BinaryOp::StartsWith,
+                dst_tree.push_expr(trimmed_r),
+                FieldType::Logical,
+            );
+            let expr = Expression::UnaryOperator(UnaryOp::Not, dst_tree.push_expr(starts_with?.0));
             ok(expr, FieldType::Logical)
         }
         (
@@ -785,23 +874,28 @@ pub fn translate_binary_op_right<'a, T: TranslationContext>(
         ) => binop(l, BinaryOp::Ne, r, FieldType::Logical),
 
         // SQL doesn't have an exponentation operator, use the POW function
-        (parser::BinaryOp::Exp, FieldType::Integer) => ok(
-            Expression::FunctionCall {
-                name: "POW".to_string(),
-                args: vec![l, translate(r, tree, cx)?.0],
-            },
-            ty,
-        ),
+        (parser::BinaryOp::Exp, FieldType::Integer) => {
+            let l = dst_tree.push_expr(l);
+            let exponent = translate_expr(r, src_tree, dst_tree, cx)?.0;
+            let exponent = dst_tree.push_expr(exponent);
+            ok(
+                Expression::FunctionCall {
+                    name: "POW",
+                    args: dst_tree.push_args([l, exponent].into_iter()),
+                },
+                ty,
+            )
+        }
 
         // SQL doesn't have a contain operator, use the STRPOS function
         //NOTE(justin): not using LIKE here because the needle might contain
         // LIKE wildcards (% and _).
         (parser::BinaryOp::Contain, FieldType::Character(_)) => {
-            let strpos = expr_ref(Expression::FunctionCall {
-                name: "STRPOS".to_string(),
-                // Note that in CodeBase the haystack is the right arg
-                args: vec![translate(r, tree, cx)?.0, l],
-            });
+            // Note that in CodeBase the haystack is the right arg
+            let haystack = translate_expr(r, src_tree, dst_tree, cx)?.0;
+            let haystack = dst_tree.push_expr(haystack);
+            let needle = dst_tree.push_expr(l);
+            let strpos = dst_tree.push_fn_call("STRPOS", &[haystack, needle]);
             ok(Expression::Cast(strpos, "bool"), FieldType::Logical)
         }
 
@@ -812,28 +906,42 @@ pub fn translate_binary_op_right<'a, T: TranslationContext>(
 }
 
 pub enum StrArgs {
-    WithArgs(ExprRef, String, usize),
-    WithoutArgs(ExprRef),
+    WithArgs(ExpressionId, String, usize),
+    WithoutArgs(ExpressionId),
 }
 
 pub fn get_str_fn_args<'a>(
     args: &'a [parser::ExpressionId],
-    tree: &'a crate::parser::ParseTree<'a>,
+    src_tree: &'a crate::parser::ParseTree<'a>,
+    dst_tree: &mut SQLTree,
     cx: &'a impl TranslationContext,
 ) -> std::result::Result<StrArgs, Error> {
+    let dst_args = translate_args(args, src_tree, dst_tree, cx)?;
+    let name = F::STR;
+
+    // Gets the ExpressionId for the argument at `index`
+    let argid = |index| {
+        dst_args
+            .get(index)
+            .map(|&(a, _)| a)
+            .ok_or(Error::IncorrectArgCount(format!("{name:?}"), index))
+    };
+
     if args.len() == 1 {
-        let (val_arg, _) = get_arg(0, args, tree, cx, &F::STR)??;
-        return Ok(StrArgs::WithoutArgs(val_arg));
+        return Ok(StrArgs::WithoutArgs(argid(0)?));
     }
 
-    let arg = |index: usize| get_arg(index, args, tree, cx, &F::STR);
     let wrong_type = |index| wrong_type(index, &F::STR, args);
 
-    let val_arg = arg(0)??.0;
-    let len_arg = arg(1)??.0;
+    if args.len() < 2 {
+        return Err(Error::IncorrectArgCount(format!("{name:?}"), 1));
+    }
+
+    let val_arg_id = argid(0)?;
+    let len_arg = dst_tree.get_expr_unchecked(dst_args[1].0);
 
     // `len` and dec` must be constants according to CB docs, so we can get them and convert to integers
-    let len: i64 = match &*len_arg.borrow() {
+    let len: i64 = match len_arg {
         Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(1)),
         _ => Err(wrong_type(1)),
     }?;
@@ -843,11 +951,15 @@ pub fn get_str_fn_args<'a>(
 
     // codebase treats a missing dec arg the same as a zero
     if args.len() == 2 {
-        return Ok(StrArgs::WithArgs(val_arg, format!("FM{:9<len$}0", ""), len));
+        return Ok(StrArgs::WithArgs(
+            val_arg_id,
+            format!("FM{:9<len$}0", ""),
+            len,
+        ));
     }
 
-    let dec_arg = arg(2)??.0;
-    let dec: i64 = match &*dec_arg.borrow() {
+    let dec_arg = dst_tree.get_expr_unchecked(dst_args[2].0);
+    let dec: i64 = match dec_arg {
         Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(2)),
         _ => Err(wrong_type(2)),
     }?;
@@ -869,35 +981,40 @@ pub fn get_str_fn_args<'a>(
         format!("FM{:9<len$}0", "")
     };
 
-    Ok(StrArgs::WithArgs(val_arg, fmt, len))
+    Ok(StrArgs::WithArgs(val_arg_id, fmt, len))
 }
 
 pub fn translate_substr(
-    func: String,
+    func: &'static str,
     in_args: &[parser::ExpressionId],
-    tree: &parser::ParseTree,
+    src_tree: &parser::ParseTree,
+    dst_tree: &mut SQLTree,
     cx: &impl TranslationContext,
-) -> std::result::Result<(ExprRef, FieldType), Error> {
-    let mut args = get_all_args(in_args, tree, cx)?;
-    let wrong_type = |index| wrong_type(index, &F::SUBSTR, in_args);
+) -> std::result::Result<(Expression, FieldType), Error> {
+    let name = F::SUBSTR;
+    let mut args = translate_args(in_args, src_tree, dst_tree, cx)?;
 
-    let parsed_index: u32 = {
-        match &*args
-            .get(1)
-            .ok_or(Error::IncorrectArgCount(func.clone(), args.len()))?
-            .borrow()
-        {
-            Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(1)),
-            _ => Err(wrong_type(1)),
-        }?
-    };
+    let wrong_type = |index| wrong_type(index, &name, in_args);
+
+    let parsed_index = args
+        .get(1)
+        .ok_or_else(|| Error::IncorrectArgCount(func.to_string(), 1))?;
+    let parsed_index = dst_tree.get_expr_unchecked(parsed_index.0);
+    let parsed_index: u32 = match parsed_index {
+        Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(1)),
+        _ => Err(wrong_type(1)),
+    }?;
     if parsed_index == 0 {
-        //SUBSTR in codebase treats 0 and 1 exactly the same
-        args[1] = expr_ref(Expression::NumberLiteral("1".into()));
+        //SUBSTR in codebase treats 0 and 1 exactly the same, replace
+        // the 0 with a 1
+        args[1] = (exps::LIT_1, FieldType::Integer);
     }
 
-    let ty = if args.len() >= 3 {
-        let len: u32 = match &*args[2].borrow() {
+    // Optional length argument--if present we want the result type to be a
+    //  fixed length string
+    let ty = if let Some(len) = args.get(2) {
+        let len = dst_tree.get_expr_unchecked(len.0);
+        let len: u32 = match len {
             Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(2)),
             _ => Err(wrong_type(2)),
         }?;
@@ -905,31 +1022,24 @@ pub fn translate_substr(
     } else {
         FieldType::Memo
     };
+
+    let args = dst_tree.push_args(args.iter().map(|&(a, _)| a));
     ok(Expression::FunctionCall { name: func, args }, ty)
 }
 
-pub fn get_arg<'a>(
-    index: usize,
+pub fn translate_args<'a>(
     args: &'a [parser::ExpressionId],
-    tree: &'a crate::parser::ParseTree<'a>,
+    src_tree: &'a ParseTree,
+    dst_tree: &mut SQLTree,
     cx: &'a impl TranslationContext,
-    name: &'a F,
-) -> std::result::Result<std::result::Result<(ExprRef, FieldType), Error>, Error> {
-    args.get(index)
-        .map(|&a| tree.get_expr_unchecked(a))
-        .map(|a| translate(a, tree, cx))
-        .ok_or(Error::IncorrectArgCount(format!("{name:?}"), index))
-}
-
-pub fn get_all_args<'a>(
-    args: &'a [parser::ExpressionId],
-    tree: &'a crate::parser::ParseTree<'a>,
-    cx: &'a impl TranslationContext,
-) -> std::result::Result<Vec<ExprRef>, Error> {
-    args.iter()
-        .map(|&a| tree.get_expr_unchecked(a))
-        .map(|a| translate(a, tree, cx).map(|r| r.0))
-        .collect()
+) -> Result<Vec<(ExpressionId, FieldType)>, Error> {
+    let mut ret = Vec::new();
+    for arg in args {
+        let arg = src_tree.get_expr_unchecked(*arg);
+        let (arg, ft) = translate_expr(arg, src_tree, dst_tree, cx)?;
+        ret.push((dst_tree.push_expr(arg), ft));
+    }
+    Ok(ret)
 }
 
 pub fn wrong_type<'a>(index: usize, name: &'a F, _args: &'a [parser::ExpressionId]) -> Error {

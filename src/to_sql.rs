@@ -1,9 +1,5 @@
-use crate::translate::{BinaryOp, COALESCE_DATE, Expression, FieldType, UnaryOp};
-use std::{
-    cell::RefCell,
-    fmt::{Display, Formatter, Result},
-    rc::Rc,
-};
+use crate::translate::{BinaryOp, COALESCE_DATE_DEFAULT, Expression, FieldType, SQLTree, UnaryOp};
+use std::fmt::{Display, Formatter, Result};
 
 pub trait PrinterContext: std::fmt::Debug {
     fn format(
@@ -18,26 +14,28 @@ pub trait PrinterContext: std::fmt::Debug {
     fn write_operator(
         &self,
         out: &mut Formatter,
-        l: &Rc<RefCell<Expression>>,
+        l: &Expression,
         op: &BinaryOp,
-        r: &Rc<RefCell<Expression>>,
+        r: &Expression,
+        tree: &SQLTree,
         conf: &PrinterConfig,
     ) -> std::fmt::Result {
-        write_binary_default(out, l, op, r, conf)
+        write_binary_default(out, l, op, r, tree, conf)
     }
     fn box_clone(&self) -> Box<dyn PrinterContext>;
 }
 
 fn write_binary_default(
     out: &mut Formatter,
-    l: &Rc<RefCell<Expression>>,
+    l: &Expression,
     op: &BinaryOp,
-    r: &Rc<RefCell<Expression>>,
+    r: &Expression,
+    tree: &SQLTree,
     conf: &PrinterConfig,
 ) -> std::fmt::Result {
-    l.to_sql(out, conf)?;
-    op.to_sql(out, conf)?;
-    r.to_sql(out, conf)
+    l.to_sql(out, tree, conf)?;
+    op.to_sql(out, tree, conf)?;
+    r.to_sql(out, tree, conf)
 }
 
 impl Clone for Box<dyn PrinterContext> {
@@ -61,7 +59,11 @@ impl PrinterContext for PostgresPrinterContext {
             FieldType::Character(width) => {
                 write!(out, "RPAD(COALESCE({}, ''), {}, ' ')", quoted, width)
             }
-            FieldType::Date => write!(out, "COALESCE({}, DATE '{}')", quoted, COALESCE_DATE),
+            FieldType::Date => write!(
+                out,
+                "COALESCE({}, DATE '{}')",
+                quoted, COALESCE_DATE_DEFAULT
+            ),
             FieldType::Double
             | FieldType::Float
             | FieldType::Integer
@@ -109,7 +111,11 @@ impl PrinterContext for SqlitePrinterContext {
                     write!(out, "{}", quoted)
                 }
             }
-            FieldType::Date => write!(out, "COALESCE({}, DATE('{}'))", quoted, COALESCE_DATE),
+            FieldType::Date => write!(
+                out,
+                "COALESCE({}, DATE('{}'))",
+                quoted, COALESCE_DATE_DEFAULT
+            ),
             _ => out.write_str(&quoted),
         }
     }
@@ -137,7 +143,7 @@ impl PrinterContext for MssqlPrinterContext {
                     quoted, width, width
                 )
             }
-            FieldType::Date => write!(out, "COALESCE({}, '{}')", quoted, COALESCE_DATE),
+            FieldType::Date => write!(out, "COALESCE({}, '{}')", quoted, COALESCE_DATE_DEFAULT),
             FieldType::Double
             | FieldType::Float
             | FieldType::Integer
@@ -158,14 +164,15 @@ impl PrinterContext for MssqlPrinterContext {
     fn write_operator(
         &self,
         out: &mut Formatter,
-        l: &Rc<RefCell<Expression>>,
+        l: &Expression,
         op: &BinaryOp,
-        r: &Rc<RefCell<Expression>>,
+        r: &Expression,
+        tree: &SQLTree,
         conf: &PrinterConfig,
     ) -> std::fmt::Result {
         match op {
-            BinaryOp::StartsWith => write_binary_default(out, l, &BinaryOp::Eq, r, conf),
-            _ => write_binary_default(out, l, op, r, conf),
+            BinaryOp::StartsWith => write_binary_default(out, l, &BinaryOp::Eq, r, tree, conf),
+            _ => write_binary_default(out, l, op, r, tree, conf),
         }
     }
 }
@@ -195,38 +202,23 @@ impl<T> Printer<T> {
 }
 
 pub trait ToSQL {
-    fn to_sql(&self, out: &mut Formatter, conf: &PrinterConfig) -> Result;
+    fn to_sql(&self, out: &mut Formatter, tree: &SQLTree, conf: &PrinterConfig) -> Result;
 }
 
-impl<T> ToSQL for Box<T>
-where
-    T: ToSQL,
-{
-    fn to_sql(&self, out: &mut Formatter, conf: &PrinterConfig) -> Result {
-        self.as_ref().to_sql(out, conf)
-    }
-}
-
-impl<T> ToSQL for Rc<RefCell<T>>
-where
-    T: ToSQL,
-{
-    fn to_sql(&self, out: &mut Formatter, conf: &PrinterConfig) -> Result {
-        self.as_ref().borrow().to_sql(out, conf)
-    }
-}
-
-impl<T> Display for Printer<T>
-where
-    T: ToSQL,
-{
+impl Display for Printer<SQLTree> {
     fn fmt(&self, f: &mut Formatter) -> Result {
-        self.tree.to_sql(f, &self.config)
+        if self.tree.is_empty() {
+            return Ok(());
+        }
+        match self.tree.get_root() {
+            None => Ok(()),
+            Some(root) => root.to_sql(f, &self.tree, &self.config),
+        }
     }
 }
 
 impl ToSQL for BinaryOp {
-    fn to_sql(&self, out: &mut Formatter, _: &PrinterConfig) -> Result {
+    fn to_sql(&self, out: &mut Formatter, _tree: &SQLTree, _: &PrinterConfig) -> Result {
         match self {
             BinaryOp::Add => write!(out, "+"),
             BinaryOp::Sub => write!(out, "-"),
@@ -249,7 +241,7 @@ impl ToSQL for BinaryOp {
 }
 
 impl ToSQL for Expression {
-    fn to_sql(&self, out: &mut Formatter, conf: &PrinterConfig) -> Result {
+    fn to_sql(&self, out: &mut Formatter, tree: &SQLTree, conf: &PrinterConfig) -> Result {
         match self {
             Expression::BoolLiteral(v) => {
                 write!(out, "{}", if *v { "TRUE" } else { "FALSE" })
@@ -263,25 +255,34 @@ impl ToSQL for Expression {
                     UnaryOp::Not => write!(out, "NOT "),
                     UnaryOp::Neg => write!(out, "-"),
                 }?;
-                exp.to_sql(out, conf)?;
+                tree.get_expr_unchecked(*exp).to_sql(out, tree, conf)?;
                 write!(out, ")")
             }
             Expression::BinaryOperator(l, op, r, p) => {
                 p.open(out)?;
-                conf.context.write_operator(out, l, op, r, conf)?;
+                conf.context.write_operator(
+                    out,
+                    tree.get_expr_unchecked(*l),
+                    op,
+                    tree.get_expr_unchecked(*r),
+                    tree,
+                    conf,
+                )?;
                 p.close(out)
             }
             Expression::BinaryOperatorSequence(op, exprs) => {
+                let exprs = tree.get_args(exprs);
                 assert!(exprs.len() >= 2);
                 write!(out, "(")?;
-                exprs[0].to_sql(out, conf)?;
+                tree.get_expr_unchecked(exprs[0]).to_sql(out, tree, conf)?;
                 for e in &exprs[1..] {
-                    op.to_sql(out, conf)?;
-                    e.to_sql(out, conf)?;
+                    op.to_sql(out, tree, conf)?;
+                    tree.get_expr_unchecked(*e).to_sql(out, tree, conf)?;
                 }
                 write!(out, ")")
             }
             Expression::FunctionCall { name, args } => {
+                let args = tree.get_args(args);
                 write!(out, "{name}(")?;
                 let mut is_first = true;
                 for arg in args.iter() {
@@ -290,13 +291,13 @@ impl ToSQL for Expression {
                     } else {
                         write!(out, ",")?;
                     }
-                    arg.to_sql(out, conf)?;
+                    tree.get_expr_unchecked(*arg).to_sql(out, tree, conf)?;
                 }
                 write!(out, ")")
             }
             Expression::Cast(expr, to) => {
                 write!(out, "CAST (")?;
-                expr.to_sql(out, conf)?;
+                tree.get_expr_unchecked(*expr).to_sql(out, tree, conf)?;
                 write!(out, " AS {to}")?;
                 write!(out, ")")
             }
@@ -306,26 +307,34 @@ impl ToSQL for Expression {
                 when_false,
             } => {
                 write!(out, "(CASE WHEN ")?;
-                cond.to_sql(out, conf)?;
+                tree.get_expr_unchecked(*cond).to_sql(out, tree, conf)?;
                 write!(out, " THEN ")?;
-                when_true.to_sql(out, conf)?;
+                tree.get_expr_unchecked(*when_true)
+                    .to_sql(out, tree, conf)?;
                 write!(out, " ELSE ")?;
-                when_false.to_sql(out, conf)?;
+                tree.get_expr_unchecked(*when_false)
+                    .to_sql(out, tree, conf)?;
                 write!(out, " END)")
             }
             Expression::Case { branches, r#else } => {
+                let branches = tree.get_args(branches);
                 write!(out, "(CASE")?;
                 for branch in branches {
+                    let Expression::CaseBranch { cond, then } = tree.get_expr_unchecked(*branch)
+                    else {
+                        panic!("Incorrectly structured tree: expected a CaseWhen");
+                    };
                     write!(out, " WHEN ")?;
-                    branch.cond.to_sql(out, conf)?;
+                    tree.get_expr_unchecked(*cond).to_sql(out, tree, conf)?;
                     write!(out, " THEN ")?;
-                    branch.then.to_sql(out, conf)?;
+                    tree.get_expr_unchecked(*then).to_sql(out, tree, conf)?;
                 }
                 write!(out, " ELSE ")?;
-                r#else.to_sql(out, conf)?;
+                tree.get_expr_unchecked(*r#else).to_sql(out, tree, conf)?;
                 write!(out, " END) ")
             }
             Expression::BareFunctionCall(name) => write!(out, " {name} "),
+            Expression::CaseBranch { .. } => panic!("incorrectly formed tree: exposed CaseBranch"),
         }
     }
 }

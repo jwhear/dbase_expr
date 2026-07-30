@@ -14,8 +14,8 @@ type IndexImpl = u32;
 
 /// A newtype to wrap our index type that is smaller than usize and make it
 ///  convenient to go back and forth.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Index(IndexImpl);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Index(pub IndexImpl);
 
 impl From<Index> for usize {
     fn from(value: Index) -> Self {
@@ -32,7 +32,7 @@ impl From<usize> for Index {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExpressionId(pub Index);
 
 impl From<ExpressionId> for usize {
@@ -106,6 +106,7 @@ impl ArgList {
 ///
 /// So fn_a's ArgList (1,2) is the span at arg_lists[1..1+2], that is, ExpressionIds 1 and 2.
 /// These in turn map to FunctionCall(fn_b) and Number(2), which are indeed its two arguments.
+#[derive(Clone, PartialEq)]
 pub struct ExpressionTree<E> {
     /// All expressions are stored in a flat list. References are via ExpressionId.
     pub expressions: Vec<E>,
