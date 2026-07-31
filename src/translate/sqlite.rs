@@ -160,7 +160,7 @@ fn expr_between_right_side<'field_lookup, 'parse>(
     dst_tree: &mut SQLTree<'field_lookup, 'parse>,
 ) -> Expression<'field_lookup, 'parse> {
     let expression = dst_tree.push_expr(expression);
-    let char = dst_tree.push_expr(Expression::BareFunctionCall("char(0xFFFF)".to_string()));
+    let char = dst_tree.push_expr(Expression::BareFunctionCall("char(0xFFFF)"));
     let appended = dst_tree.push_expr(Expression::BinaryOperator(
         expression,
         TranslateBinaryOp::Concat,

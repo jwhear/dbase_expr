@@ -4,7 +4,7 @@
 //! Translation is accomplished by parsing dBase expressions to a parse tree
 //!  (the term "ast" is used for convenience though not strictly correct),
 //!  transformed to a SQL parse tree, then serialized to a SQL string.
-//! Each of these steps is implemented by the modules [grammar] and [ast],
+//! Each of these steps is implemented by the modules [parser],
 //!  [translate], and [to_sql].
 //!
 //! Additionally, the [evaluate] module implements evaluation of expressions:

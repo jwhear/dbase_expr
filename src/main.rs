@@ -234,7 +234,7 @@ fn expr_tests() {
     }
 }
 
-fn to_sql_tests<'field_lookup, T: TranslationContext>(cx: &'field_lookup T) {
+fn to_sql_tests<T: TranslationContext>(cx: &T) {
     let tests = [
         "deleted() = .f. .and. substr(id, 1, 3 ) <> \"($)\"",
         ".NOT.deleted()",

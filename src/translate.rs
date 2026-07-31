@@ -201,8 +201,7 @@ impl Parenthesize {
 #[derive(Debug, PartialEq, Clone)]
 pub enum Expression<'field_lookup, 'parse> {
     BoolLiteral(bool),
-    //NOTE: this should be safe as a &'input str
-    NumberLiteral(String),
+    NumberLiteral(Cow<'parse, str>),
     SingleQuoteStringLiteral(Cow<'parse, str>),
     Field {
         name: Cow<'field_lookup, str>,
@@ -237,7 +236,7 @@ pub enum Expression<'field_lookup, 'parse> {
     // used for things like "CURRENT_DATE" which are functions but don't
     //  allow the parentheses.
     //NOTE: review, could be &'static str
-    BareFunctionCall(String),
+    BareFunctionCall(&'static str),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -291,7 +290,7 @@ impl<'field_lookup, 'parse> From<String> for Expression<'field_lookup, 'parse> {
 }
 impl<'field_lookup, 'parse> From<i64> for Expression<'field_lookup, 'parse> {
     fn from(s: i64) -> Self {
-        Expression::NumberLiteral(s.to_string())
+        Expression::NumberLiteral(Cow::from(s.to_string()))
     }
 }
 pub type TreeResult<'field_lookup, 'parse> =
@@ -350,10 +349,10 @@ impl FieldType {
 ///     my_state: std::collections::HashMap<String, FieldType>,
 /// }
 ///
-/// impl<'field_lookup> TranslationContext<'field_lookup> for MyCustomTranslator
+/// impl TranslationContext for MyCustomTranslator
 /// {
-///     fn lookup_field(
-///         &self,
+///     fn lookup_field<'field_lookup>(
+///         &'field_lookup self,
 ///         alias: Option<&str>,
 ///         field: &str,
 ///     ) -> std::result::Result<(Cow<'field_lookup, str>, FieldType), String> {
@@ -363,7 +362,7 @@ impl FieldType {
 ///             .ok_or(format!("No field named {field}"))
 ///     }
 ///
-///     fn translate_expr<'parse>(
+///     fn translate_expr<'field_lookup, 'parse>(
 ///         &'field_lookup self,
 ///         source: &'parse parser::Expression,
 ///         src_tree: &'parse parser::ParseTree,
@@ -376,7 +375,7 @@ impl FieldType {
 ///         translate::postgres::translate_expr(source, src_tree, dst_tree, self)
 ///     }
 ///     
-///     fn translate_fn_call<'parse>(
+///     fn translate_fn_call<'field_lookup, 'parse>(
 ///         &'field_lookup self,
 ///         name: &'parse CodebaseFunction,
 ///         args: &'parse [parser::ExpressionId],
@@ -390,7 +389,7 @@ impl FieldType {
 ///         translate::postgres::translate_fn_call(name, args, src_tree, dst_tree, self)
 ///     }
 ///
-///     fn translate_binary_op<'parse>(
+///     fn translate_binary_op<'field_lookup, 'parse>(
 ///         &'field_lookup self,
 ///         l: &'parse parser::Expression,
 ///         op: &'parse parser::BinaryOp,
@@ -465,11 +464,8 @@ pub trait TranslationContext {
         len: u32,
         out_tree: &mut SQLTree<'field_lookup, 'parse>,
     ) -> Expression<'field_lookup, 'parse> {
-        //TODO lit_1 and possibly other nodes are going to be the same. These
-        // could be cached and the ExpressionIds reused in other parts of the tree
-        let lit_1 = out_tree.push_expr(Expression::NumberLiteral("1".into()));
-        let lit_len = out_tree.push_expr(Expression::NumberLiteral(len.to_string()));
-        let args = out_tree.push_args([r, lit_1, lit_len].into_iter());
+        let lit_len = out_tree.push_expr(i64::from(len).into());
+        let args = out_tree.push_args([r, exps::LIT_1, lit_len].into_iter());
         Expression::FunctionCall {
             name: "SUBSTR",
             args,

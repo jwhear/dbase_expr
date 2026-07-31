@@ -91,7 +91,7 @@ pub fn translate_expr<'field_lookup, 'parse, C: TranslationContext>(
                 .unwrap_or(0) as u32;
             let v = unsafe { std::str::from_utf8_unchecked(v) };
             ok(
-                Expression::NumberLiteral(v.to_owned()),
+                Expression::NumberLiteral(Cow::from(v)),
                 FieldType::Numeric {
                     len: v.len() as u32,
                     dec,
@@ -276,7 +276,7 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
         F::CTOD => date("MM/DD/YY", argid(0)?, dst_tree),
         // DATE() => CURRENT_DATE
         F::DATE => ok(
-            Expression::BareFunctionCall("CURRENT_DATE".to_string()),
+            Expression::BareFunctionCall("CURRENT_DATE"),
             FieldType::Date,
         ),
         // DAY(x) => DATE_PART('DAY', x)

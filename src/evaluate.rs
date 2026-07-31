@@ -4,9 +4,8 @@ use std::fmt::Debug;
 use chrono::Datelike;
 use chrono::NaiveDate;
 
-use crate::parser::{BinaryOp, Expression, UnaryOp};
-
 use crate::codebase_functions::CodebaseFunction as F;
+use crate::parser::{BinaryOp, Expression, ParseTree, UnaryOp};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Error {
@@ -98,7 +97,7 @@ pub type CustomFunctions<'a> = &'a dyn Fn(&str) -> Option<Result<Value, String>>
 
 /// Evaluate a [ParseTree].
 pub fn evaluate(
-    tree: &crate::parser::ParseTree,
+    tree: &ParseTree,
     get: FieldValueGetter,
     custom_functions: CustomFunctions,
 ) -> Result<Value, Error> {
@@ -109,7 +108,7 @@ pub fn evaluate(
 /// Evaluate a particular [Expression] within a [ParseTree].
 pub fn evaluate_expr(
     expr: &Expression,
-    tree: &crate::parser::ParseTree,
+    tree: &ParseTree,
     get: FieldValueGetter,
     custom_functions: CustomFunctions,
 ) -> Result<Value, Error> {

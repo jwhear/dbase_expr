@@ -153,11 +153,11 @@ fn substr_test() {
     );
     assert_eq!(
         *tree.get_expr(args[1]).expect("second arg"),
-        Expression::NumberLiteral("1".to_string())
+        Expression::NumberLiteral(Cow::from("1"))
     );
     assert_eq!(
         *tree.get_expr(args[2]).expect("third arg"),
-        Expression::NumberLiteral("3".to_string())
+        Expression::NumberLiteral(Cow::from("3"))
     );
 }
 
@@ -313,10 +313,10 @@ fn substr_replace_0_with_1_test() {
     assert_eq!(field_type, FieldType::Character(3));
     assert_eq!(
         *tree.get_expr_unchecked(args[1]),
-        Expression::NumberLiteral("1".to_string())
+        Expression::NumberLiteral(Cow::from("1"))
     );
     assert_eq!(
         *tree.get_expr_unchecked(args[2]),
-        Expression::NumberLiteral("3".to_string())
+        Expression::NumberLiteral(Cow::from("3"))
     );
 }

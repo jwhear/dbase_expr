@@ -92,9 +92,10 @@ impl ArgList {
 /// Argument lists require a bit of special handling because we don't want
 ///  FunctionCall and ConcatOp to actually carry a Vec and own the subexpressions.
 /// To handle these, all arguments get parsed as Expressions and stored in
-///  [expressions], then their ids are stored in [arg_lists]. A particular argument
-///  list is contiguous within [arg_lists]. For example, when this expression is
-///  parsed:
+///  [expressions](Self::expressions), then their ids are stored in
+///  [arg_lists](Self::arg_lists).
+/// A particular argument list is contiguous within [arg_lists](Self::arg_lists).
+///  For example, when this expression is parsed:
 ///     fn_a(fn_b(1), 2)
 ///
 /// This will get parsed into an expressions list:
