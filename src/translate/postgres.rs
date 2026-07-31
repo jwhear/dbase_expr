@@ -743,7 +743,16 @@ pub fn translate_binary_op_right<'parse, 'field_lookup, T: TranslationContext>(
             binop(l, BinaryOp::And, r, FieldType::Logical)
         }
         (parser::BinaryOp::Or, FieldType::Logical) => binop(l, BinaryOp::Or, r, FieldType::Logical),
-        (parser::BinaryOp::Lt, FieldType::Character(len)) => {
+
+        // When comparing fixed-len character strings, we have to accomodate
+        //  Codebase's 'starts-with' logic
+        (
+            parser::BinaryOp::Lt
+            | parser::BinaryOp::Le
+            | parser::BinaryOp::Gt
+            | parser::BinaryOp::Ge,
+            FieldType::Character(len),
+        ) => {
             let l_tr = dst_tree.push_expr(l);
             let r_tr = translate_expr(r, src_tree, dst_tree, cx)?.0;
             let r_tr = dst_tree.push_expr(r_tr);
@@ -751,77 +760,26 @@ pub fn translate_binary_op_right<'parse, 'field_lookup, T: TranslationContext>(
             let left = dst_tree.push_expr(left);
             let right = cx.string_comp_right(r_tr, len, dst_tree);
             let right = dst_tree.push_expr(right);
-            tr_binop(left, BinaryOp::Lt, right, FieldType::Logical)
+            tr_binop(left, op.try_into().unwrap(), right, FieldType::Logical)
         }
-        (parser::BinaryOp::Le, FieldType::Character(len)) => {
-            let l_tr = dst_tree.push_expr(l);
-            let r_tr = translate_expr(r, src_tree, dst_tree, cx)?.0;
-            let r_tr = dst_tree.push_expr(r_tr);
-            let left = cx.string_comp_left(l_tr, r_tr, dst_tree);
-            let left = dst_tree.push_expr(left);
-            let right = cx.string_comp_right(r_tr, len, dst_tree);
-            let right = dst_tree.push_expr(right);
-            tr_binop(left, BinaryOp::Le, right, FieldType::Logical)
-        }
-        (parser::BinaryOp::Gt, FieldType::Character(len)) => {
-            let l_tr = dst_tree.push_expr(l);
-            let r_tr = translate_expr(r, src_tree, dst_tree, cx)?.0;
-            let r_tr = dst_tree.push_expr(r_tr);
-            let left = cx.string_comp_left(l_tr, r_tr, dst_tree);
-            let left = dst_tree.push_expr(left);
-            let right = cx.string_comp_right(r_tr, len, dst_tree);
-            let right = dst_tree.push_expr(right);
-            tr_binop(left, BinaryOp::Gt, right, FieldType::Logical)
-        }
-        (parser::BinaryOp::Ge, FieldType::Character(len)) => {
-            let l_tr = dst_tree.push_expr(l);
-            let r_tr = translate_expr(r, src_tree, dst_tree, cx)?.0;
-            let r_tr = dst_tree.push_expr(r_tr);
-            let left = cx.string_comp_left(l_tr, r_tr, dst_tree);
-            let left = dst_tree.push_expr(left);
-            let right = cx.string_comp_right(r_tr, len, dst_tree);
-            let right = dst_tree.push_expr(right);
-            tr_binop(left, BinaryOp::Ge, right, FieldType::Logical)
-        }
-        (parser::BinaryOp::Lt, FieldType::Memo) => {
+        // Similar logic with a memo
+        (
+            parser::BinaryOp::Lt
+            | parser::BinaryOp::Le
+            | parser::BinaryOp::Gt
+            | parser::BinaryOp::Ge,
+            FieldType::Memo,
+        ) => {
             let left = dst_tree.push_expr(l);
             let right = translate_expr(r, src_tree, dst_tree, cx)?.0;
             let right = dst_tree.push_expr(right);
             let left = cx.string_comp_left(left, right, dst_tree);
             tr_binop(
                 dst_tree.push_expr(left),
-                BinaryOp::Lt,
+                op.try_into().unwrap(),
                 right,
                 FieldType::Logical,
             )
-        }
-        (parser::BinaryOp::Le, FieldType::Memo) => {
-            let left = dst_tree.push_expr(l);
-            let right = translate_expr(r, src_tree, dst_tree, cx)?.0;
-            let right = dst_tree.push_expr(right);
-            let left = cx.string_comp_left(left, right, dst_tree);
-            tr_binop(
-                dst_tree.push_expr(left),
-                BinaryOp::Le,
-                right,
-                FieldType::Logical,
-            )
-        }
-        (parser::BinaryOp::Gt, FieldType::Memo) => {
-            let left = dst_tree.push_expr(l);
-            let right = translate_expr(r, src_tree, dst_tree, cx)?.0;
-            let right = dst_tree.push_expr(right);
-            let left = cx.string_comp_left(left, right, dst_tree);
-            let left = dst_tree.push_expr(left);
-            tr_binop(left, BinaryOp::Gt, right, FieldType::Logical)
-        }
-        (parser::BinaryOp::Ge, FieldType::Memo) => {
-            let left = dst_tree.push_expr(l);
-            let right = translate_expr(r, src_tree, dst_tree, cx)?.0;
-            let right = dst_tree.push_expr(right);
-            let left = cx.string_comp_left(left, right, dst_tree);
-            let left = dst_tree.push_expr(left);
-            tr_binop(left, BinaryOp::Ge, right, FieldType::Logical)
         }
         (parser::BinaryOp::Eq, FieldType::Memo | FieldType::Character(_)) if is_trim(ast_l) => {
             binop(l, BinaryOp::Eq, r, FieldType::Logical)

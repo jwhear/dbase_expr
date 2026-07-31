@@ -166,6 +166,31 @@ pub enum BinaryOp {
     Concat,
 }
 
+#[derive(Debug)]
+pub struct UnsupportedOperator;
+
+impl TryFrom<&parser::BinaryOp> for BinaryOp {
+    type Error = UnsupportedOperator;
+    fn try_from(value: &parser::BinaryOp) -> Result<Self, Self::Error> {
+        use parser::BinaryOp as BO;
+        match value {
+            BO::Add => Ok(Self::Add),
+            BO::Sub => Ok(Self::Sub),
+            BO::Mul => Ok(Self::Mul),
+            BO::Div => Ok(Self::Div),
+            BO::Eq => Ok(Self::Eq),
+            BO::Ne => Ok(Self::Ne),
+            BO::Lt => Ok(Self::Lt),
+            BO::Le => Ok(Self::Le),
+            BO::Gt => Ok(Self::Gt),
+            BO::Ge => Ok(Self::Ge),
+            BO::And => Ok(Self::And),
+            BO::Or => Ok(Self::Or),
+            BO::Contain | BO::Exp => Err(UnsupportedOperator),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOp {
     Not,
