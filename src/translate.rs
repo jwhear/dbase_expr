@@ -66,7 +66,6 @@ pub mod exps {
 pub struct SQLTree<'field_lookup, 'parse> {
     pub inner: ExpressionTree<Expression<'field_lookup, 'parse>>,
     pub prelude_length: usize,
-    //TODO scratch buffer here?
 }
 
 impl<'field_lookup, 'parse> SQLTree<'field_lookup, 'parse> {
@@ -107,33 +106,38 @@ impl<'field_lookup, 'parse> SQLTree<'field_lookup, 'parse> {
         }
     }
 
-    /// Get the expression with [id]. This panics if [id] doesn't reference an
-    ///  expression pushed to this tree.
+    /// See [ExpressionTree::get_expr_unchecked]
     #[inline]
     pub fn get_expr_unchecked(&self, id: ExpressionId) -> &Expression<'field_lookup, 'parse> {
         self.inner.get_expr_unchecked(id)
     }
 
+    /// See [ExpressionTree::get_expr]
     #[inline]
     pub fn get_expr(&self, id: ExpressionId) -> Option<&Expression<'field_lookup, 'parse>> {
         self.inner.get_expr(id)
     }
 
+    /// See [ExpressionTree::get_args]
     #[inline]
     pub fn get_args(&self, list: &ArgList) -> &[ExpressionId] {
         self.inner.get_args(list)
     }
 
+    /// See [ExpressionTree::push_expr]
     #[inline]
     pub fn push_expr(&mut self, expr: Expression<'field_lookup, 'parse>) -> ExpressionId {
         self.inner.push_expr(expr)
     }
 
+    /// See [ExpressionTree::push_args]
     #[inline]
     pub fn push_args(&mut self, ids: impl ExactSizeIterator<Item = ExpressionId>) -> ArgList {
         self.inner.push_args(ids)
     }
 
+    /// Pushes an [Expression::FunctionCall] to the the tree, with the provided
+    ///  `name` and `args`. Returns the resulting [ExpressionId]
     pub fn push_fn_call(&mut self, name: &'static str, args: &[ExpressionId]) -> ExpressionId {
         let args = self.push_args(args.iter().copied());
         self.push_expr(Expression::FunctionCall { name, args })
@@ -166,9 +170,11 @@ pub enum BinaryOp {
     Concat,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnsupportedOperator;
 
+/// Map operators directly across where possible. `Contain` and `Exp` are not
+///  directly supported and will result in an error.
 impl TryFrom<&parser::BinaryOp> for BinaryOp {
     type Error = UnsupportedOperator;
     fn try_from(value: &parser::BinaryOp) -> Result<Self, Self::Error> {
@@ -318,8 +324,12 @@ impl<'field_lookup, 'parse> From<i64> for Expression<'field_lookup, 'parse> {
         Expression::NumberLiteral(Cow::from(s.to_string()))
     }
 }
+
+/// The result of a translate call is a SQLTree and the type of the root expression.
 pub type TreeResult<'field_lookup, 'parse> =
     std::result::Result<(SQLTree<'field_lookup, 'parse>, FieldType), Error>;
+
+/// The result of a translate_expr call is an Expression and its type
 pub type ExpResult<'field_lookup, 'parse> =
     std::result::Result<(Expression<'field_lookup, 'parse>, FieldType), Error>;
 

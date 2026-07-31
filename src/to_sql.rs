@@ -1,5 +1,5 @@
 use crate::translate::{BinaryOp, COALESCE_DATE_DEFAULT, Expression, FieldType, SQLTree, UnaryOp};
-use std::fmt::{Display, Formatter, Result};
+use std::fmt::{Display, Formatter, Result, Write};
 
 pub trait PrinterContext: std::fmt::Debug {
     fn format(
@@ -25,6 +25,7 @@ pub trait PrinterContext: std::fmt::Debug {
     fn box_clone(&self) -> Box<dyn PrinterContext>;
 }
 
+#[inline]
 fn write_binary_default(
     out: &mut Formatter,
     l: &Expression,
@@ -57,13 +58,9 @@ impl PrinterContext for PostgresPrinterContext {
         let quoted = format!("\"{name}\"");
         match field_type {
             FieldType::Character(width) => {
-                write!(out, "RPAD(COALESCE({}, ''), {}, ' ')", quoted, width)
+                write!(out, "RPAD(COALESCE({quoted}, ''), {width}, ' ')")
             }
-            FieldType::Date => write!(
-                out,
-                "COALESCE({}, DATE '{}')",
-                quoted, COALESCE_DATE_DEFAULT
-            ),
+            FieldType::Date => write!(out, "COALESCE({quoted}, DATE '{COALESCE_DATE_DEFAULT}')",),
             FieldType::Double
             | FieldType::Float
             | FieldType::Integer
@@ -71,13 +68,13 @@ impl PrinterContext for PostgresPrinterContext {
                 if name != "RECNO5" =>
             {
                 //no reason to coalesce RECNO5
-                write!(out, "COALESCE({}, 0)", quoted)
+                write!(out, "COALESCE({quoted}, 0)")
             }
             FieldType::Logical if name != "__deleted" => {
                 //no reason to coalesce __deleted
-                write!(out, "COALESCE({}, FALSE)", quoted)
+                write!(out, "COALESCE({quoted}, FALSE)")
             }
-            FieldType::Memo => write!(out, "COALESCE({}, '')", quoted),
+            FieldType::Memo => write!(out, "COALESCE({quoted}, '')"),
             _ => out.write_str(&quoted),
         }
     }
@@ -108,14 +105,10 @@ impl PrinterContext for SqlitePrinterContext {
                         "COALESCE({quoted}, '') || SUBSTR('{spaces}', 1, CASE WHEN {width} - LENGTH(COALESCE({quoted}, '')) > 0 THEN {width} - LENGTH(COALESCE({quoted}, '')) ELSE 0 END)",
                     )
                 } else {
-                    write!(out, "{}", quoted)
+                    out.write_str(&quoted)
                 }
             }
-            FieldType::Date => write!(
-                out,
-                "COALESCE({}, DATE('{}'))",
-                quoted, COALESCE_DATE_DEFAULT
-            ),
+            FieldType::Date => write!(out, "COALESCE({quoted}, DATE('{COALESCE_DATE_DEFAULT}'))",),
             _ => out.write_str(&quoted),
         }
     }
@@ -139,11 +132,10 @@ impl PrinterContext for MssqlPrinterContext {
             FieldType::Character(width) => {
                 write!(
                     out,
-                    "LEFT(COALESCE({}, '') + REPLICATE(' ', {}), {})",
-                    quoted, width, width
+                    "LEFT(COALESCE({quoted}, '') + REPLICATE(' ', {width}), {width})",
                 )
             }
-            FieldType::Date => write!(out, "COALESCE({}, '{}')", quoted, COALESCE_DATE_DEFAULT),
+            FieldType::Date => write!(out, "COALESCE({quoted}, '{COALESCE_DATE_DEFAULT}')"),
             FieldType::Double
             | FieldType::Float
             | FieldType::Integer
@@ -151,10 +143,10 @@ impl PrinterContext for MssqlPrinterContext {
                 if name != "RECNO5" =>
             {
                 //no reason to coalesce RECNO5
-                write!(out, "COALESCE({}, 0)", quoted)
+                write!(out, "COALESCE({quoted}, 0)")
             }
-            FieldType::Logical => write!(out, "COALESCE({}, FALSE)", quoted),
-            FieldType::Memo => write!(out, "COALESCE({}, '')", quoted),
+            FieldType::Logical => write!(out, "COALESCE({quoted}, FALSE)"),
+            FieldType::Memo => write!(out, "COALESCE({quoted}, '')"),
             _ => out.write_str(&quoted),
         }
     }
@@ -220,22 +212,22 @@ impl<'field_lookup, 'parse> Display for Printer<SQLTree<'field_lookup, 'parse>> 
 impl ToSQL for BinaryOp {
     fn to_sql(&self, out: &mut Formatter, _tree: &SQLTree, _: &PrinterConfig) -> Result {
         match self {
-            BinaryOp::Add => write!(out, "+"),
-            BinaryOp::Sub => write!(out, "-"),
-            BinaryOp::Mul => write!(out, "*"),
-            BinaryOp::Div => write!(out, "/"),
-            BinaryOp::Eq => write!(out, "="),
-            BinaryOp::Ne => write!(out, "!="),
-            BinaryOp::Lt => write!(out, "<"),
-            BinaryOp::Le => write!(out, "<="),
-            BinaryOp::Gt => write!(out, ">"),
-            BinaryOp::Ge => write!(out, ">="),
-            BinaryOp::And => write!(out, " AND "),
-            BinaryOp::Or => write!(out, " OR "),
-            BinaryOp::Concat => write!(out, " || "),
-            BinaryOp::StartsWith => write!(out, " ^@ "),
-            BinaryOp::Between => write!(out, " BETWEEN "),
-            BinaryOp::NotBetween => write!(out, " NOT BETWEEN "),
+            BinaryOp::Add => out.write_str("+"),
+            BinaryOp::Sub => out.write_str("-"),
+            BinaryOp::Mul => out.write_str("*"),
+            BinaryOp::Div => out.write_str("/"),
+            BinaryOp::Eq => out.write_str("="),
+            BinaryOp::Ne => out.write_str("!="),
+            BinaryOp::Lt => out.write_str("<"),
+            BinaryOp::Le => out.write_str("<="),
+            BinaryOp::Gt => out.write_str(">"),
+            BinaryOp::Ge => out.write_str(">="),
+            BinaryOp::And => out.write_str(" AND "),
+            BinaryOp::Or => out.write_str(" OR "),
+            BinaryOp::Concat => out.write_str(" || "),
+            BinaryOp::StartsWith => out.write_str(" ^@ "),
+            BinaryOp::Between => out.write_str(" BETWEEN "),
+            BinaryOp::NotBetween => out.write_str(" NOT BETWEEN "),
         }
     }
 }
@@ -243,20 +235,18 @@ impl ToSQL for BinaryOp {
 impl<'field_lookup, 'parse> ToSQL for Expression<'field_lookup, 'parse> {
     fn to_sql(&self, out: &mut Formatter, tree: &SQLTree, conf: &PrinterConfig) -> Result {
         match self {
-            Expression::BoolLiteral(v) => {
-                write!(out, "{}", if *v { "TRUE" } else { "FALSE" })
-            }
-            Expression::NumberLiteral(v) => write!(out, "{v}"),
+            Expression::BoolLiteral(v) => out.write_str(if *v { "TRUE" } else { "FALSE" }),
+            Expression::NumberLiteral(v) => out.write_str(v),
             Expression::SingleQuoteStringLiteral(v) => write!(out, "'{v}'"),
             Expression::Field { name, field_type } => conf.context.format(out, name, field_type),
             Expression::UnaryOperator(op, exp) => {
-                write!(out, "(")?;
+                out.write_str("(")?;
                 match op {
-                    UnaryOp::Not => write!(out, "NOT "),
-                    UnaryOp::Neg => write!(out, "-"),
+                    UnaryOp::Not => out.write_str("NOT "),
+                    UnaryOp::Neg => out.write_str("-"),
                 }?;
                 tree.get_expr_unchecked(*exp).to_sql(out, tree, conf)?;
-                write!(out, ")")
+                out.write_str(")")
             }
             Expression::BinaryOperator(l, op, r, p) => {
                 p.open(out)?;
@@ -273,67 +263,73 @@ impl<'field_lookup, 'parse> ToSQL for Expression<'field_lookup, 'parse> {
             Expression::BinaryOperatorSequence(op, exprs) => {
                 let exprs = tree.get_args(exprs);
                 assert!(exprs.len() >= 2);
-                write!(out, "(")?;
+                out.write_str("(")?;
                 tree.get_expr_unchecked(exprs[0]).to_sql(out, tree, conf)?;
                 for e in &exprs[1..] {
                     op.to_sql(out, tree, conf)?;
                     tree.get_expr_unchecked(*e).to_sql(out, tree, conf)?;
                 }
-                write!(out, ")")
+                out.write_str(")")
             }
             Expression::FunctionCall { name, args } => {
                 let args = tree.get_args(args);
-                write!(out, "{name}(")?;
+                out.write_str(name)?;
+                out.write_char('(')?;
                 let mut is_first = true;
                 for arg in args.iter() {
                     if is_first {
                         is_first = false;
                     } else {
-                        write!(out, ",")?;
+                        out.write_str(",")?;
                     }
                     tree.get_expr_unchecked(*arg).to_sql(out, tree, conf)?;
                 }
-                write!(out, ")")
+                out.write_str(")")
             }
             Expression::Cast(expr, to) => {
-                write!(out, "CAST (")?;
+                out.write_str("CAST (")?;
                 tree.get_expr_unchecked(*expr).to_sql(out, tree, conf)?;
-                write!(out, " AS {to}")?;
-                write!(out, ")")
+                out.write_str(" AS ")?;
+                out.write_str(to)?;
+                out.write_str(")")
             }
             Expression::Iif {
                 cond,
                 when_true,
                 when_false,
             } => {
-                write!(out, "(CASE WHEN ")?;
+                out.write_str("(CASE WHEN ")?;
                 tree.get_expr_unchecked(*cond).to_sql(out, tree, conf)?;
-                write!(out, " THEN ")?;
+                out.write_str(" THEN ")?;
                 tree.get_expr_unchecked(*when_true)
                     .to_sql(out, tree, conf)?;
-                write!(out, " ELSE ")?;
+                out.write_str(" ELSE ")?;
                 tree.get_expr_unchecked(*when_false)
                     .to_sql(out, tree, conf)?;
-                write!(out, " END)")
+                out.write_str(" END)")
             }
             Expression::Case { branches, r#else } => {
                 let branches = tree.get_args(branches);
-                write!(out, "(CASE")?;
+                out.write_str("(CASE")?;
                 for branch in branches {
                     let Expression::CaseBranch { cond, then } = tree.get_expr_unchecked(*branch)
                     else {
                         panic!("Incorrectly structured tree: expected a CaseWhen");
                     };
-                    write!(out, " WHEN ")?;
+                    out.write_str(" WHEN ")?;
                     tree.get_expr_unchecked(*cond).to_sql(out, tree, conf)?;
-                    write!(out, " THEN ")?;
+                    out.write_str(" THEN ")?;
                     tree.get_expr_unchecked(*then).to_sql(out, tree, conf)?;
                 }
-                write!(out, " ELSE ")?;
+                out.write_str(" ELSE ")?;
                 tree.get_expr_unchecked(*r#else).to_sql(out, tree, conf)?;
-                write!(out, " END) ")
+                out.write_str(" END) ")
             }
-            Expression::BareFunctionCall(name) => write!(out, " {name} "),
+            Expression::BareFunctionCall(name) => {
+                out.write_char(' ')?;
+                out.write_str(name)?;
+                out.write_char(' ')
+            }
             Expression::CaseBranch { .. } => panic!("incorrectly formed tree: exposed CaseBranch"),
         }
     }

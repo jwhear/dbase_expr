@@ -397,6 +397,7 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
                 _ => true_ty, // otherwise the result type will be the type of the when_true expression
             };
 
+            //TODO use scratch here
             let mut branches = Vec::new();
             // We have to take ownership of args for the loop to work
             //OPT: come back and try to rework this

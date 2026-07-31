@@ -51,7 +51,7 @@
 //!  the [TranslationContext] and [PrinterConfig] need to be adjusted for
 //!  different SQL backends.
 //!
-//! For a fuller example, with nice error handling, see
+//! For a fuller example, with nice error handling, see main.rs
 //!
 //! ## Backends
 //! Different SQL databases having varying types, functions, and even syntax.

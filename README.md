@@ -16,3 +16,10 @@ A library for parsing CodeBase (dBase) expressions and mechanically translating 
 * The SQL AST is in `src/translate.rs` and the various SQL dialects are in `src/translate`.
 * The SQL serialization is in `src/to_sql.rs`
 * Limited support for evaluation of expressions is also provided in `src/evaluate.rs`
+
+## Profiling
+You can use `cargo flamegraph` to see what parts of the code time is spent in. Use on a benchmark like so:
+
+```
+RUSTFLAGS="-C force-frame-pointers=yes" CARGO_PROFILE_BENCH_DEBUG=true cargo flamegraph --bench translate -- --bench --profile-time 10
+```

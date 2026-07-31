@@ -143,13 +143,15 @@ impl<E> ExpressionTree<E> {
         self.arg_lists.clear();
     }
 
-    /// Add [expr] to this tree, returning the ExpressionId
+    /// Add `expr` to this tree, returning the ExpressionId
     pub fn push_expr(&mut self, expr: E) -> ExpressionId {
         let id = self.expressions.len().into();
         self.expressions.push(expr);
         id
     }
 
+    /// Adds the `ids` to the internal argument list and returns an [ArgList]
+    ///  that can be used with [get_args](Self::get_args) to later retrieve them.
     pub fn push_args(&mut self, ids: impl ExactSizeIterator<Item = ExpressionId>) -> ArgList {
         let start = self.arg_lists.len().into();
         let len = ids.len().into();
@@ -157,7 +159,7 @@ impl<E> ExpressionTree<E> {
         ArgList { start, len }
     }
 
-    /// Get the expression with [id]. This panics if [id] doesn't reference an
+    /// Get the expression with `id`. This panics if `id` doesn't reference an
     ///  expression pushed to this tree.
     #[inline]
     pub fn get_expr_unchecked(&self, id: ExpressionId) -> &E {

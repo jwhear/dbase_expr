@@ -59,7 +59,7 @@ impl std::fmt::Display for Error {
     }
 }
 
-/// Assumes that [word] is eight ASCII characters packed into a u64 and
+/// Assumes that `word` is eight ASCII characters packed into a u64 and
 ///  returns the lowercased equivalent.
 #[inline]
 pub fn lowercase_u64(word: u64) -> u64 {
@@ -276,8 +276,8 @@ impl<'input> Lexer<'input> {
         &self.source[token.start..token.end]
     }
 
-    /// Like [source_of] but omits the opening and closing quotes of string
-    ///  literal tokens.
+    /// Like [source_of](Self::source_of) but omits the opening and closing quotes
+    ///  of string literal tokens.
     #[inline]
     pub fn contents(&self, token: &Token) -> &'input [u8] {
         let s = self.source_of(token);
