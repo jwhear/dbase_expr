@@ -12,24 +12,55 @@ pub mod sqlite;
 
 pub const COALESCE_DATE_DEFAULT: &str = "0001-01-01";
 
+/// This module defines a number of commonly used tree elements
+///  (e.g. literal false) and defines a function to inject them as a "prelude"
+///  in a tree.
 pub mod exps {
-    use super::{ExpressionId, Index};
-    macro_rules! prelude {
-        ($name:ident, $index:literal) => {
-            pub const $name: ExpressionId = ExpressionId(Index($index));
+    use super::{COALESCE_DATE_DEFAULT, Expression, ExpressionId, ExpressionTree, Index};
+
+    // I used a macro here to ensure that the constants and the order of push_expr
+    //  is guaranteed to be consistent.
+    macro_rules! inject_prelude_gen {
+        ( $( ($name:ident, $expr:expr) ),* $(,)? ) => {
+            inject_prelude_gen!(@count 0; $( ($name, $expr) ),*);
+
+            pub fn inject_prelude(tree: &mut ExpressionTree<Expression>) -> usize {
+                $( tree.push_expr($expr); )*
+                tree.expressions.len()
+            }
         };
+
+        // Peel off one (name, expr) pair, emit its const, recurse with idx+1
+        (@count $idx:expr; ($name:ident, $expr:expr) $(, ($rest_name:ident, $rest_expr:expr))* ) => {
+            pub const $name: ExpressionId = ExpressionId(Index($idx));
+            inject_prelude_gen!(@count ($idx + 1); $( ($rest_name, $rest_expr) ),*);
+        };
+
+        // Base case: nothing left
+        (@count $idx:expr; ) => {};
     }
 
-    prelude!(LIT_0, 0);
-    prelude!(LIT_1, 1);
-    prelude!(EMPTY_STR, 2);
-    prelude!(COALESCE_DATE, 3);
-    prelude!(LIT_YEAR, 4);
-    prelude!(LIT_MONTH, 5);
-    prelude!(LIT_DAY, 6);
-    prelude!(LIT_FALSE, 7);
-    prelude!(LIT_TRUE, 8);
-    prelude!(LIT_SPACE, 9);
+    inject_prelude_gen!(
+        (LIT_0, Expression::NumberLiteral("0".into())),
+        (LIT_1, Expression::NumberLiteral("1".into())),
+        (EMPTY_STR, Expression::SingleQuoteStringLiteral("".into())),
+        (
+            COALESCE_DATE,
+            Expression::SingleQuoteStringLiteral(COALESCE_DATE_DEFAULT.into())
+        ),
+        (
+            LIT_YEAR,
+            Expression::SingleQuoteStringLiteral("YEAR".into())
+        ),
+        (
+            LIT_MONTH,
+            Expression::SingleQuoteStringLiteral("MONTH".into())
+        ),
+        (LIT_DAY, Expression::SingleQuoteStringLiteral("DAY".into())),
+        (LIT_FALSE, Expression::BoolLiteral(false)),
+        (LIT_TRUE, Expression::BoolLiteral(true)),
+        (LIT_SPACE, Expression::SingleQuoteStringLiteral(" ".into())),
+    );
 }
 
 pub struct SQLTree<'field_lookup> {
@@ -39,33 +70,6 @@ pub struct SQLTree<'field_lookup> {
 }
 
 impl<'field_lookup> SQLTree<'field_lookup> {
-    fn inject_prelude(inner: &mut ExpressionTree<Expression>) -> usize {
-        // LIT_0
-        inner.push_expr(Expression::NumberLiteral("0".into()));
-        // LIT_1
-        inner.push_expr(Expression::NumberLiteral("1".into()));
-        // EMPTY_STR
-        inner.push_expr(Expression::SingleQuoteStringLiteral("".into()));
-        // COALESCE_DATE
-        inner.push_expr(Expression::SingleQuoteStringLiteral(
-            COALESCE_DATE_DEFAULT.into(),
-        ));
-        // LIT_YEAR
-        inner.push_expr(Expression::SingleQuoteStringLiteral("YEAR".into()));
-        // LIT_MONTH
-        inner.push_expr(Expression::SingleQuoteStringLiteral("MONTH".into()));
-        // LIT_DAY
-        inner.push_expr(Expression::SingleQuoteStringLiteral("DAY".into()));
-        // LIT_FALS
-        inner.push_expr(Expression::BoolLiteral(false));
-        // LIT_TRUE
-        inner.push_expr(Expression::BoolLiteral(true));
-        // LIT_SPACE
-        inner.push_expr(Expression::SingleQuoteStringLiteral(" ".into()));
-
-        inner.expressions.len()
-    }
-
     pub fn new() -> Self {
         // The default capacities in ExpressionTree are better suited to parsing.
         // We usually need more space.
@@ -80,7 +84,7 @@ impl<'field_lookup> SQLTree<'field_lookup> {
         arg_lists: Vec<ExpressionId>,
     ) -> Self {
         let mut inner = ExpressionTree::new_from_vecs(expressions, arg_lists);
-        let prelude_length = Self::inject_prelude(&mut inner);
+        let prelude_length = exps::inject_prelude(&mut inner);
         Self {
             inner,
             prelude_length,
@@ -338,22 +342,23 @@ impl FieldType {
 ///  translator but intercept anything that needs to be handled differently:
 ///
 /// ```rust
+/// # use std::borrow::Cow;
 /// # use dbase_expr::{parser, translate::{self, Expression, FieldType, TranslationContext, Error, SQLTree, ExpResult }, codebase_functions::CodebaseFunction,};
 /// struct MyCustomTranslator
 /// {
 ///     my_state: std::collections::HashMap<String, FieldType>,
 /// }
 ///
-/// impl TranslationContext for MyCustomTranslator
+/// impl<'field_lookup> TranslationContext<'field_lookup> for MyCustomTranslator
 /// {
 ///     fn lookup_field(
 ///         &self,
 ///         alias: Option<&str>,
 ///         field: &str,
-///     ) -> std::result::Result<(String, FieldType), String> {
+///     ) -> std::result::Result<(Cow<'field_lookup, str>, FieldType), String> {
 ///         let norm = field.to_uppercase();
 ///         self.my_state.get(&norm)
-///             .map(|t| (norm, *t))
+///             .map(|t| (Cow::from(norm), *t))
 ///             .ok_or(format!("No field named {field}"))
 ///     }
 ///
@@ -361,8 +366,8 @@ impl FieldType {
 ///         &self,
 ///         source: &parser::Expression,
 ///         src_tree: &parser::ParseTree,
-///         dst_tree: &mut SQLTree
-///     ) -> ExpResult {
+///         dst_tree: &mut SQLTree<'field_lookup>
+///     ) -> ExpResult<'field_lookup> {
 ///         // This is the place to handle specific cases which are different from Postgres,
 ///         //  including cases which should be errors
 ///
@@ -375,8 +380,8 @@ impl FieldType {
 ///         name: &CodebaseFunction,
 ///         args: &[parser::ExpressionId],
 ///         src_tree: &parser::ParseTree,
-///         dst_tree: &mut SQLTree
-///     ) -> ExpResult {
+///         dst_tree: &mut SQLTree<'field_lookup>
+///     ) -> ExpResult<'field_lookup> {
 ///         // Use a similar pattern here: most function calls probably resolve to the
 ///         //  same thing that Postgres uses but handle the differences here
 ///
@@ -390,8 +395,8 @@ impl FieldType {
 ///         op: &parser::BinaryOp,
 ///         r: &parser::Expression,
 ///         src_tree: &parser::ParseTree,
-///         dst_tree: &mut SQLTree,
-///     ) -> ExpResult {
+///         dst_tree: &mut SQLTree<'field_lookup>,
+///     ) -> ExpResult<'field_lookup> {
 ///         translate::postgres::translate_binary_op(self, l, op, r, src_tree, dst_tree)
 ///     }
 /// }

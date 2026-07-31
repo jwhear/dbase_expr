@@ -19,6 +19,7 @@
 //! ## Translation
 //! To translate a dBase expression to PostgreSQL:
 //! ```
+//! # use std::borrow::Cow;
 //! # use dbase_expr::translate::FieldType;
 //! # fn main() -> Result<(), String> {
 //! use dbase_expr::{parser::parse, translate::{TranslationContext, postgres}, to_sql::{Printer, PrinterConfig}};
@@ -35,7 +36,7 @@
 //!       // Return a Ok((<normalized field name>, <field_type>))
 //!       //  or
 //!       // Err(<string describing the problem>)
-//!       Ok((String::from("FOO"), FieldType::Logical))
+//!       Ok((Cow::from("FOO"), FieldType::Logical))
 //!    }
 //! };
 //! let (sql_tree, result_type) = translator.translate(&tree)
