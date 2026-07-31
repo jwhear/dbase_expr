@@ -9,40 +9,44 @@ use crate::{
     },
 };
 
-pub struct TestTranslator<'field_lookup, F>
-where
-    F: Fn(Option<&str>, &str) -> std::result::Result<(Cow<'field_lookup, str>, FieldType), String>,
-{
-    pub field_lookup: F,
-}
-impl<'field_lookup, F> TranslationContext<'field_lookup> for TestTranslator<'field_lookup, F>
-where
-    F: Fn(Option<&str>, &str) -> std::result::Result<(Cow<'field_lookup, str>, FieldType), String>,
-{
+pub struct TestTranslator;
+
+impl TranslationContext for TestTranslator {
     fn lookup_field(
         &self,
         alias: Option<&str>,
         field: &str,
-    ) -> std::result::Result<(Cow<'field_lookup, str>, FieldType), String> {
-        (self.field_lookup)(alias, field)
+    ) -> std::result::Result<(Cow<'_, str>, FieldType), String> {
+        let field = field.to_string().to_uppercase();
+        let field_type = match (alias, field.as_ref()) {
+            (_, "A" | "B" | "C") => FieldType::Integer,
+            (_, "BINDATAFIELD") => FieldType::MemoBinary,
+            (_, "SHIP_DATE") => FieldType::Date,
+            (_, "ID") => FieldType::Character(10),
+            (_, "L_NAME") => FieldType::Character(20),
+            (_, "__DELETED") => FieldType::Logical,
+            (Some(alias), _) => panic!("unknown field: {alias}.{field}"),
+            (None, _) => panic!("unknown field: {field}"),
+        };
+        Ok((field.into(), field_type))
     }
 
-    fn translate_expr(
-        &self,
-        source: &parser::Expression,
-        src_tree: &parser::ParseTree,
-        dst_tree: &mut SQLTree<'field_lookup>,
-    ) -> translate::ExpResult<'field_lookup> {
+    fn translate_expr<'field_lookup, 'parse>(
+        &'field_lookup self,
+        source: &'parse parser::Expression,
+        src_tree: &'parse parser::ParseTree,
+        dst_tree: &mut SQLTree<'field_lookup, 'parse>,
+    ) -> translate::ExpResult<'field_lookup, 'parse> {
         default_translate(source, src_tree, dst_tree, self)
     }
 
-    fn translate_fn_call(
-        &self,
-        name: &CodebaseFunction,
-        args: &[parser::ExpressionId],
-        src_tree: &parser::ParseTree,
-        dst_tree: &mut SQLTree<'field_lookup>,
-    ) -> translate::ExpResult<'field_lookup> {
+    fn translate_fn_call<'field_lookup, 'parse>(
+        &'field_lookup self,
+        name: &'parse CodebaseFunction,
+        args: &'parse [parser::ExpressionId],
+        src_tree: &'parse parser::ParseTree,
+        dst_tree: &mut SQLTree<'field_lookup, 'parse>,
+    ) -> translate::ExpResult<'field_lookup, 'parse> {
         let dst_args = translate::postgres::translate_args(args, src_tree, dst_tree, self)?;
 
         if name == &CodebaseFunction::DTOS {
@@ -59,7 +63,7 @@ where
             && name.eq_ignore_ascii_case("USER")
         {
             Ok((
-                translate::Expression::SingleQuoteStringLiteral("my user".to_string()),
+                translate::Expression::SingleQuoteStringLiteral(Cow::from("my user")),
                 FieldType::Memo,
             ))
         } else {
@@ -67,21 +71,23 @@ where
         }
     }
 
-    fn translate_binary_op(
-        &self,
-        l: &parser::Expression,
-        op: &parser::BinaryOp,
-        r: &parser::Expression,
-        src_tree: &parser::ParseTree,
-        dst_tree: &mut SQLTree<'field_lookup>,
-    ) -> translate::ExpResult<'field_lookup> {
+    fn translate_binary_op<'field_lookup, 'parse>(
+        &'field_lookup self,
+        l: &'parse parser::Expression,
+        op: &'parse parser::BinaryOp,
+        r: &'parse parser::Expression,
+        src_tree: &'parse parser::ParseTree,
+        dst_tree: &mut SQLTree<'field_lookup, 'parse>,
+    ) -> translate::ExpResult<'field_lookup, 'parse> {
         translate_binary_op(self, l, op, r, src_tree, dst_tree)
     }
 }
 
 #[test]
 fn field_concat_len_test() {
-    let (_, field_type) = translate_expression("ID + L_NAME").unwrap();
+    let cx = TestTranslator;
+    let parse_tree = parser::parse("ID + L_NAME").unwrap();
+    let (_tree, field_type) = cx.translate(&parse_tree).unwrap();
     let FieldType::Character(30) = &field_type else {
         panic!(
             "Expected FieldType::Character(30) field type, got {:?}",
@@ -92,7 +98,9 @@ fn field_concat_len_test() {
 
 #[test]
 fn field_concat_if_else_len_test() {
-    let (_, field_type) = translate_expression("ID + iif(__DELETED,'..', '.')").unwrap();
+    let cx = TestTranslator;
+    let parse_tree = parser::parse("ID + iif(__DELETED,'..', '.')").unwrap();
+    let (_, field_type) = cx.translate(&parse_tree).unwrap();
     let FieldType::Character(12) = &field_type else {
         panic!(
             "Expected FieldType::Character(12) field type (length of ID plus max length of if/else), got {:?}",
@@ -100,7 +108,8 @@ fn field_concat_if_else_len_test() {
         )
     };
 
-    let (_, field_type) = translate_expression("ID + iif(__DELETED,'', '.')").unwrap();
+    let parse_tree = parser::parse("ID + iif(__DELETED,'', '.')").unwrap();
+    let (_, field_type) = cx.translate(&parse_tree).unwrap();
     let FieldType::Character(11) = &field_type else {
         panic!(
             "Expected FieldType::Character(11) field type (length of ID plus max length of if/else), got {:?}",
@@ -111,7 +120,9 @@ fn field_concat_if_else_len_test() {
 
 #[test]
 fn field_concat_if_else_alltrim_len_test() {
-    let (_, field_type) = translate_expression("ID + iif(__DELETED,'', ALLTRIM('.  '))").unwrap();
+    let cx = TestTranslator;
+    let parse_tree = parser::parse("ID + iif(__DELETED,'', ALLTRIM('.  '))").unwrap();
+    let (_, field_type) = cx.translate(&parse_tree).unwrap();
     let FieldType::Character(13) = &field_type else {
         panic!(
             "Expected FieldType::Character(13) field type (length of ID plus max length of if/else), got {:?}",
@@ -122,7 +133,9 @@ fn field_concat_if_else_alltrim_len_test() {
 
 #[test]
 fn substr_test() {
-    let (tree, field_type) = translate_expression("substr(ID, 0, 3)").unwrap();
+    let cx = TestTranslator;
+    let parse_tree = parser::parse("substr(ID, 0, 3)").unwrap();
+    let (tree, field_type) = cx.translate(&parse_tree).unwrap();
     let root = tree.get_root().expect("a root node");
     let Expression::FunctionCall { name, args } = root else {
         panic!("Expected FunctionCall, got {root:?}")
@@ -150,7 +163,9 @@ fn substr_test() {
 
 #[test]
 fn empty_string_test() {
-    let (tree, field_type) = translate_expression("EMPTY(ID)").unwrap();
+    let cx = TestTranslator;
+    let parse_tree = parser::parse("EMPTY(ID)").unwrap();
+    let (tree, field_type) = cx.translate(&parse_tree).unwrap();
     let root = tree.get_root().expect("a root node");
 
     // Expect ID = ''
@@ -188,7 +203,9 @@ fn empty_string_test() {
 
 #[test]
 fn empty_date_test() {
-    let (tree, field_type) = translate_expression("EMPTY(SHIP_DATE)").unwrap();
+    let cx = TestTranslator;
+    let parse_tree = parser::parse("EMPTY(SHIP_DATE)").unwrap();
+    let (tree, field_type) = cx.translate(&parse_tree).unwrap();
     let root = tree.get_root().expect("a root node");
 
     let Expression::BinaryOperator(l, op, r, _) = root else {
@@ -212,7 +229,9 @@ fn empty_date_test() {
 
 #[test]
 fn numeric_cast_test() {
-    let (tree, field_type) = translate_expression("VAL(ID)").unwrap();
+    let cx = TestTranslator;
+    let parse_tree = parser::parse("VAL(ID)").unwrap();
+    let (tree, field_type) = cx.translate(&parse_tree).unwrap();
     let root = tree.get_root().expect("a root node");
     let Expression::Iif {
         cond,
@@ -241,7 +260,7 @@ fn numeric_cast_test() {
     );
     assert_eq!(
         *tree.get_expr_unchecked(args[1]),
-        Expression::SingleQuoteStringLiteral("numeric".to_string())
+        Expression::SingleQuoteStringLiteral(Cow::from("numeric"))
     );
 
     let when_true = tree.get_expr_unchecked(*when_true);
@@ -266,7 +285,9 @@ fn numeric_cast_test() {
 
 #[test]
 fn substr_wrong_params_test() {
-    match translate_expression("substr(ID)") {
+    let cx = TestTranslator;
+    let parse_tree = parser::parse("substr(ID)").unwrap();
+    match cx.translate(&parse_tree) {
         Err(Error::IncorrectArgCount(func, count)) => {
             assert_eq!(func, "SUBSTR");
             assert_eq!(count, 1);
@@ -278,7 +299,9 @@ fn substr_wrong_params_test() {
 
 #[test]
 fn substr_replace_0_with_1_test() {
-    let (tree, field_type) = translate_expression("substr(ID, 0, 3)").unwrap();
+    let cx = TestTranslator;
+    let parse_tree = parser::parse("substr(ID, 0, 3)").unwrap();
+    let (tree, field_type) = cx.translate(&parse_tree).unwrap();
     let root = tree.get_root().expect("a root node");
     let Expression::FunctionCall { name, args } = root else {
         panic!("Expected FunctionCall, got {root:?}")
@@ -296,27 +319,4 @@ fn substr_replace_0_with_1_test() {
         *tree.get_expr_unchecked(args[2]),
         Expression::NumberLiteral("3".to_string())
     );
-}
-
-fn translate_expression<'field_lookup>(expr: &str) -> translate::TreeResult<'field_lookup> {
-    let tree = parser::parse(expr).unwrap();
-    let cx = TestTranslator {
-        field_lookup: |alias: Option<&str>,
-                       field: &str|
-         -> Result<(Cow<'field_lookup, str>, FieldType), String> {
-            let field = field.to_string().to_uppercase();
-            let field_type = match (alias, field.as_ref()) {
-                (_, "A" | "B" | "C") => FieldType::Integer,
-                (_, "BINDATAFIELD") => FieldType::MemoBinary,
-                (_, "SHIP_DATE") => FieldType::Date,
-                (_, "ID") => FieldType::Character(10),
-                (_, "L_NAME") => FieldType::Character(20),
-                (_, "__DELETED") => FieldType::Logical,
-                (Some(alias), _) => panic!("unknown field: {alias}.{field}"),
-                (None, _) => panic!("unknown field: {field}"),
-            };
-            Ok((field.into(), field_type))
-        },
-    };
-    cx.translate(&tree)
 }

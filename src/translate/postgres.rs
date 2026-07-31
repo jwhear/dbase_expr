@@ -13,73 +13,73 @@ use crate::{
 ///  "inherit" while allowing overriding by implementing the TranslationContext
 ///  trait and dispatching to `translate_fn_call` any function calls you're not
 ///  interested in overriding.
-pub struct Translator<'field_lookup, F>
+pub struct Translator<'fl, F>
 where
-    F: Fn(Option<&str>, &str) -> std::result::Result<(Cow<'field_lookup, str>, FieldType), String>,
+    F: Fn(Option<&str>, &str) -> std::result::Result<(Cow<'fl, str>, FieldType), String>,
 {
     pub field_lookup: F,
 }
 
-impl<'field_lookup, F> TranslationContext<'field_lookup> for Translator<'field_lookup, F>
+impl<'fl, F> TranslationContext for Translator<'fl, F>
 where
-    F: Fn(Option<&str>, &str) -> std::result::Result<(Cow<'field_lookup, str>, FieldType), String>,
+    F: Fn(Option<&str>, &str) -> std::result::Result<(Cow<'fl, str>, FieldType), String>,
 {
-    fn lookup_field(
-        &self,
+    fn lookup_field<'field_lookup>(
+        &'field_lookup self,
         alias: Option<&str>,
         field: &str,
     ) -> std::result::Result<(Cow<'field_lookup, str>, FieldType), String> {
         (self.field_lookup)(alias, field)
     }
 
-    fn translate_expr(
-        &self,
-        source: &parser::Expression,
-        src_tree: &crate::parser::ParseTree,
-        dst_tree: &mut SQLTree<'field_lookup>,
-    ) -> ExpResult<'field_lookup> {
+    fn translate_expr<'field_lookup, 'parse>(
+        &'field_lookup self,
+        source: &'parse parser::Expression,
+        src_tree: &'parse crate::parser::ParseTree,
+        dst_tree: &mut SQLTree<'field_lookup, 'parse>,
+    ) -> ExpResult<'field_lookup, 'parse> {
         translate_expr(source, src_tree, dst_tree, self)
     }
 
-    fn translate_binary_op(
-        &self,
-        l: &parser::Expression,
-        op: &parser::BinaryOp,
-        r: &parser::Expression,
-        src_tree: &crate::parser::ParseTree,
-        dst_tree: &mut SQLTree<'field_lookup>,
-    ) -> ExpResult<'field_lookup> {
+    fn translate_binary_op<'field_lookup, 'parse>(
+        &'field_lookup self,
+        l: &'parse parser::Expression,
+        op: &'parse parser::BinaryOp,
+        r: &'parse parser::Expression,
+        src_tree: &'parse crate::parser::ParseTree,
+        dst_tree: &mut SQLTree<'field_lookup, 'parse>,
+    ) -> ExpResult<'field_lookup, 'parse> {
         translate_binary_op(self, l, op, r, src_tree, dst_tree)
     }
 
-    fn translate_fn_call(
-        &self,
-        name: &crate::codebase_functions::CodebaseFunction,
-        args: &[parser::ExpressionId],
-        src_tree: &crate::parser::ParseTree,
-        dst_tree: &mut SQLTree<'field_lookup>,
-    ) -> ExpResult<'field_lookup> {
+    fn translate_fn_call<'field_lookup, 'parse>(
+        &'field_lookup self,
+        name: &'parse crate::codebase_functions::CodebaseFunction,
+        args: &'parse [parser::ExpressionId],
+        src_tree: &'parse crate::parser::ParseTree,
+        dst_tree: &mut SQLTree<'field_lookup, 'parse>,
+    ) -> ExpResult<'field_lookup, 'parse> {
         translate_fn_call(name, args, src_tree, dst_tree, self)
     }
 }
 
 /// Translates a parsed dBase expression to a SQL expression.
-pub fn translate<'a, 'field_lookup, C: TranslationContext<'field_lookup>>(
-    tree: &'a crate::parser::ParseTree<'a>,
-    cx: &'a C,
-) -> ExpResult<'field_lookup> {
+pub fn translate<'field_lookup, 'parse, C: TranslationContext>(
+    tree: &'parse crate::parser::ParseTree<'parse>,
+    cx: &'field_lookup C,
+) -> ExpResult<'field_lookup, 'parse> {
     let root = tree.get_root().ok_or(Error::EmptyTree)?;
     let mut dst_tree = SQLTree::new();
     translate_expr(root, tree, &mut dst_tree, cx)
 }
 
 /// Translates a particular dBase expression to a SQL expression.
-pub fn translate_expr<'a, 'field_lookup, C: TranslationContext<'field_lookup>>(
-    source: &'a E<'a>,
-    src_tree: &'a crate::parser::ParseTree<'a>,
-    dst_tree: &mut SQLTree<'field_lookup>,
-    cx: &'a C,
-) -> ExpResult<'field_lookup> {
+pub fn translate_expr<'field_lookup, 'parse, C: TranslationContext>(
+    source: &'parse E<'parse>,
+    src_tree: &'parse crate::parser::ParseTree<'parse>,
+    dst_tree: &mut SQLTree<'field_lookup, 'parse>,
+    cx: &'field_lookup C,
+) -> ExpResult<'field_lookup, 'parse> {
     // helper for creating binary operators
     match source {
         E::BoolLiteral(v) => ok(Expression::BoolLiteral(*v), FieldType::Logical),
@@ -190,13 +190,13 @@ pub fn translate_expr<'a, 'field_lookup, C: TranslationContext<'field_lookup>>(
 // This function does the kind of gross work of converting dBase function calls
 //  to the SQL equivalent.  Some are super straightforward: `CHR(97)` -> `CHR(97)`
 //  but others have no exact equivalent and have to resolve to a nested bundle.
-pub fn translate_fn_call<'a, 'field_lookup>(
-    name: &'a F,
-    args: &'a [parser::ExpressionId],
-    src_tree: &'a crate::parser::ParseTree<'a>,
-    dst_tree: &mut SQLTree<'field_lookup>,
-    cx: &'a impl TranslationContext<'field_lookup>,
-) -> std::result::Result<(Expression<'field_lookup>, FieldType), Error> {
+pub fn translate_fn_call<'parse, 'field_lookup>(
+    name: &'parse F,
+    args: &'parse [parser::ExpressionId],
+    src_tree: &'parse crate::parser::ParseTree<'parse>,
+    dst_tree: &mut SQLTree<'field_lookup, 'parse>,
+    cx: &'field_lookup impl TranslationContext,
+) -> std::result::Result<(Expression<'field_lookup, 'parse>, FieldType), Error> {
     // This recursively translates all arguments and packs them into dst_tree,
     //  returning their ExpressionIds and FieldTypes
     let dst_args = translate_args(args, src_tree, dst_tree, cx)?;
@@ -228,11 +228,11 @@ pub fn translate_fn_call<'a, 'field_lookup>(
 
     let wrong_type = |index| wrong_type(index, name, args);
 
-    fn date<'field_lookup>(
-        format: &str,
+    fn date<'field_lookup, 'parse>(
+        format: &'parse str,
         value: ExpressionId,
-        dst_tree: &mut SQLTree,
-    ) -> Result<(Expression<'field_lookup>, FieldType), Error> {
+        dst_tree: &mut SQLTree<'field_lookup, 'parse>,
+    ) -> Result<(Expression<'field_lookup, 'parse>, FieldType), Error> {
         //this translates blank strings into the coalesce date so that it can be properly compared
         let format = dst_tree.push_expr(format.into());
         let trim = dst_tree.push_fn_call("TRIM", &[value]);
@@ -570,29 +570,29 @@ pub fn translate_fn_call<'a, 'field_lookup>(
     }
 }
 
-pub fn translate_binary_op<'a, 'field_lookup, T: TranslationContext<'field_lookup>>(
-    cx: &'a T,
-    ast_l: &'a parser::Expression<'a>,
-    op: &'a parser::BinaryOp,
-    r: &'a parser::Expression<'a>,
-    src_tree: &'a crate::parser::ParseTree<'a>,
-    dst_tree: &mut SQLTree<'field_lookup>,
-) -> ExpResult<'field_lookup> {
+pub fn translate_binary_op<'parse, 'field_lookup, T: TranslationContext>(
+    cx: &'field_lookup T,
+    ast_l: &'parse parser::Expression<'parse>,
+    op: &'parse parser::BinaryOp,
+    r: &'parse parser::Expression<'parse>,
+    src_tree: &'parse crate::parser::ParseTree<'parse>,
+    dst_tree: &mut SQLTree<'field_lookup, 'parse>,
+) -> ExpResult<'field_lookup, 'parse> {
     let (l, ty) = translate_expr(ast_l, src_tree, dst_tree, cx)?;
     translate_binary_op_right(cx, ast_l, l, ty, op, r, src_tree, dst_tree)
 }
 
 /// The same as translate_binary_op but useful if you've already translated l and don't want to do it again
-pub fn translate_binary_op_right<'a, 'field_lookup, T: TranslationContext<'field_lookup>>(
-    cx: &'a T,
-    ast_l: &'a parser::Expression<'a>,
-    l: Expression<'field_lookup>,
+pub fn translate_binary_op_right<'parse, 'field_lookup, T: TranslationContext>(
+    cx: &'field_lookup T,
+    ast_l: &'parse parser::Expression<'parse>,
+    l: Expression<'field_lookup, 'parse>,
     ty: FieldType,
-    op: &'a parser::BinaryOp,
-    r: &'a parser::Expression<'a>,
-    src_tree: &'a crate::parser::ParseTree<'a>,
-    dst_tree: &mut SQLTree<'field_lookup>,
-) -> ExpResult<'field_lookup> {
+    op: &'parse parser::BinaryOp,
+    r: &'parse parser::Expression<'parse>,
+    src_tree: &'parse crate::parser::ParseTree<'parse>,
+    dst_tree: &mut SQLTree<'field_lookup, 'parse>,
+) -> ExpResult<'field_lookup, 'parse> {
     let tr_binop = |l, op, r, ty| ok(Expression::BinaryOperator(l, op, r, Parenthesize::Yes), ty);
     let mut binop = |l, op, r, ty| {
         //OPT: order of operations is preserved by parenthesizing everything.
@@ -905,11 +905,11 @@ pub enum StrArgs {
     WithoutArgs(ExpressionId),
 }
 
-pub fn get_str_fn_args<'a, 'field_lookup>(
-    args: &'a [parser::ExpressionId],
-    src_tree: &'a crate::parser::ParseTree<'a>,
-    dst_tree: &mut SQLTree<'field_lookup>,
-    cx: &'a impl TranslationContext<'field_lookup>,
+pub fn get_str_fn_args<'parse, 'field_lookup>(
+    args: &'parse [parser::ExpressionId],
+    src_tree: &'parse crate::parser::ParseTree<'parse>,
+    dst_tree: &mut SQLTree<'field_lookup, 'parse>,
+    cx: &'field_lookup impl TranslationContext,
 ) -> std::result::Result<StrArgs, Error> {
     let dst_args = translate_args(args, src_tree, dst_tree, cx)?;
     let name = F::STR;
@@ -979,13 +979,13 @@ pub fn get_str_fn_args<'a, 'field_lookup>(
     Ok(StrArgs::WithArgs(val_arg_id, fmt, len))
 }
 
-pub fn translate_substr<'field_lookup>(
+pub fn translate_substr<'parse, 'field_lookup>(
     func: &'static str,
-    in_args: &[parser::ExpressionId],
-    src_tree: &parser::ParseTree,
-    dst_tree: &mut SQLTree<'field_lookup>,
-    cx: &impl TranslationContext<'field_lookup>,
-) -> std::result::Result<(Expression<'field_lookup>, FieldType), Error> {
+    in_args: &'parse [parser::ExpressionId],
+    src_tree: &'parse parser::ParseTree,
+    dst_tree: &mut SQLTree<'field_lookup, 'parse>,
+    cx: &'field_lookup impl TranslationContext,
+) -> std::result::Result<(Expression<'field_lookup, 'parse>, FieldType), Error> {
     let name = F::SUBSTR;
     let mut args = translate_args(in_args, src_tree, dst_tree, cx)?;
 
@@ -1022,11 +1022,11 @@ pub fn translate_substr<'field_lookup>(
     ok(Expression::FunctionCall { name: func, args }, ty)
 }
 
-pub fn translate_args<'a, 'field_lookup>(
-    args: &'a [parser::ExpressionId],
-    src_tree: &'a ParseTree,
-    dst_tree: &mut SQLTree<'field_lookup>,
-    cx: &'a impl TranslationContext<'field_lookup>,
+pub fn translate_args<'parse, 'field_lookup>(
+    args: &'parse [parser::ExpressionId],
+    src_tree: &'parse ParseTree,
+    dst_tree: &mut SQLTree<'field_lookup, 'parse>,
+    cx: &'field_lookup impl TranslationContext,
 ) -> Result<Vec<(ExpressionId, FieldType)>, Error> {
     let mut ret = Vec::new();
     for arg in args {

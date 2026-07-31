@@ -63,13 +63,13 @@ pub mod exps {
     );
 }
 
-pub struct SQLTree<'field_lookup> {
-    pub inner: ExpressionTree<Expression<'field_lookup>>,
+pub struct SQLTree<'field_lookup, 'parse> {
+    pub inner: ExpressionTree<Expression<'field_lookup, 'parse>>,
     pub prelude_length: usize,
     //TODO scratch buffer here?
 }
 
-impl<'field_lookup> SQLTree<'field_lookup> {
+impl<'field_lookup, 'parse> SQLTree<'field_lookup, 'parse> {
     pub fn new() -> Self {
         // The default capacities in ExpressionTree are better suited to parsing.
         // We usually need more space.
@@ -80,7 +80,7 @@ impl<'field_lookup> SQLTree<'field_lookup> {
 
     /// Create using previously allocated Vecs.
     pub fn new_from_vecs(
-        expressions: Vec<Expression<'field_lookup>>,
+        expressions: Vec<Expression<'field_lookup, 'parse>>,
         arg_lists: Vec<ExpressionId>,
     ) -> Self {
         let mut inner = ExpressionTree::new_from_vecs(expressions, arg_lists);
@@ -98,7 +98,7 @@ impl<'field_lookup> SQLTree<'field_lookup> {
     }
 
     #[inline]
-    pub fn get_root(&self) -> Option<&Expression<'field_lookup>> {
+    pub fn get_root(&self) -> Option<&Expression<'field_lookup, 'parse>> {
         // We ignore the prelude for the purposes of get_root
         if self.is_empty() {
             None
@@ -110,12 +110,12 @@ impl<'field_lookup> SQLTree<'field_lookup> {
     /// Get the expression with [id]. This panics if [id] doesn't reference an
     ///  expression pushed to this tree.
     #[inline]
-    pub fn get_expr_unchecked(&self, id: ExpressionId) -> &Expression<'field_lookup> {
+    pub fn get_expr_unchecked(&self, id: ExpressionId) -> &Expression<'field_lookup, 'parse> {
         self.inner.get_expr_unchecked(id)
     }
 
     #[inline]
-    pub fn get_expr(&self, id: ExpressionId) -> Option<&Expression<'field_lookup>> {
+    pub fn get_expr(&self, id: ExpressionId) -> Option<&Expression<'field_lookup, 'parse>> {
         self.inner.get_expr(id)
     }
 
@@ -125,7 +125,7 @@ impl<'field_lookup> SQLTree<'field_lookup> {
     }
 
     #[inline]
-    pub fn push_expr(&mut self, expr: Expression<'field_lookup>) -> ExpressionId {
+    pub fn push_expr(&mut self, expr: Expression<'field_lookup, 'parse>) -> ExpressionId {
         self.inner.push_expr(expr)
     }
 
@@ -140,7 +140,7 @@ impl<'field_lookup> SQLTree<'field_lookup> {
     }
 }
 
-impl<'field_lookup> Default for SQLTree<'field_lookup> {
+impl<'field_lookup, 'parse> Default for SQLTree<'field_lookup, 'parse> {
     fn default() -> Self {
         Self::new()
     }
@@ -199,15 +199,12 @@ impl Parenthesize {
 /// This is the output type of translation: a Codebase AST goes in, a SQL AST
 ///  comes out.
 #[derive(Debug, PartialEq, Clone)]
-pub enum Expression<'field_lookup> {
+pub enum Expression<'field_lookup, 'parse> {
     BoolLiteral(bool),
     //NOTE: this should be safe as a &'input str
     NumberLiteral(String),
-    //NOTE: since we escape single quotes, this probably needs to be a Cow
-    SingleQuoteStringLiteral(String),
+    SingleQuoteStringLiteral(Cow<'parse, str>),
     Field {
-        //NOTE: this comes from the lookup mechanism; there's probably some
-        // alpha in making it a Cow
         name: Cow<'field_lookup, str>,
         field_type: FieldType,
     },
@@ -281,27 +278,31 @@ impl std::fmt::Display for Error {
 impl std::error::Error for Error {}
 
 // These From implementations help the translation implementation
-impl<'field_lookup> From<&str> for Expression<'field_lookup> {
-    fn from(s: &str) -> Self {
-        Expression::SingleQuoteStringLiteral(s.to_string())
+impl<'field_lookup, 'parse> From<&'parse str> for Expression<'field_lookup, 'parse> {
+    fn from(s: &'parse str) -> Self {
+        Expression::SingleQuoteStringLiteral(escape_single_quotes(s))
     }
 }
-impl<'field_lookup> From<String> for Expression<'field_lookup> {
+impl<'field_lookup, 'parse> From<String> for Expression<'field_lookup, 'parse> {
     fn from(s: String) -> Self {
-        Expression::SingleQuoteStringLiteral(s)
+        let escaped = escape_single_quotes(&s).into_owned();
+        Expression::SingleQuoteStringLiteral(Cow::from(escaped))
     }
 }
-impl<'field_lookup> From<i64> for Expression<'field_lookup> {
+impl<'field_lookup, 'parse> From<i64> for Expression<'field_lookup, 'parse> {
     fn from(s: i64) -> Self {
         Expression::NumberLiteral(s.to_string())
     }
 }
-pub type TreeResult<'field_lookup> =
-    std::result::Result<(SQLTree<'field_lookup>, FieldType), Error>;
-pub type ExpResult<'field_lookup> =
-    std::result::Result<(Expression<'field_lookup>, FieldType), Error>;
+pub type TreeResult<'field_lookup, 'parse> =
+    std::result::Result<(SQLTree<'field_lookup, 'parse>, FieldType), Error>;
+pub type ExpResult<'field_lookup, 'parse> =
+    std::result::Result<(Expression<'field_lookup, 'parse>, FieldType), Error>;
 
-fn ok(exp: Expression, ty: FieldType) -> ExpResult {
+fn ok<'field_lookup, 'parse>(
+    exp: Expression<'field_lookup, 'parse>,
+    ty: FieldType,
+) -> ExpResult<'field_lookup, 'parse> {
     Ok((exp, ty))
 }
 
@@ -362,12 +363,12 @@ impl FieldType {
 ///             .ok_or(format!("No field named {field}"))
 ///     }
 ///
-///     fn translate_expr(
-///         &self,
-///         source: &parser::Expression,
-///         src_tree: &parser::ParseTree,
-///         dst_tree: &mut SQLTree<'field_lookup>
-///     ) -> ExpResult<'field_lookup> {
+///     fn translate_expr<'parse>(
+///         &'field_lookup self,
+///         source: &'parse parser::Expression,
+///         src_tree: &'parse parser::ParseTree,
+///         dst_tree: &mut SQLTree<'field_lookup, 'parse>
+///     ) -> ExpResult<'field_lookup, 'parse> {
 ///         // This is the place to handle specific cases which are different from Postgres,
 ///         //  including cases which should be errors
 ///
@@ -375,13 +376,13 @@ impl FieldType {
 ///         translate::postgres::translate_expr(source, src_tree, dst_tree, self)
 ///     }
 ///     
-///     fn translate_fn_call(
-///         &self,
-///         name: &CodebaseFunction,
-///         args: &[parser::ExpressionId],
-///         src_tree: &parser::ParseTree,
-///         dst_tree: &mut SQLTree<'field_lookup>
-///     ) -> ExpResult<'field_lookup> {
+///     fn translate_fn_call<'parse>(
+///         &'field_lookup self,
+///         name: &'parse CodebaseFunction,
+///         args: &'parse [parser::ExpressionId],
+///         src_tree: &'parse parser::ParseTree,
+///         dst_tree: &mut SQLTree<'field_lookup, 'parse>
+///     ) -> ExpResult<'field_lookup, 'parse> {
 ///         // Use a similar pattern here: most function calls probably resolve to the
 ///         //  same thing that Postgres uses but handle the differences here
 ///
@@ -389,33 +390,36 @@ impl FieldType {
 ///         translate::postgres::translate_fn_call(name, args, src_tree, dst_tree, self)
 ///     }
 ///
-///     fn translate_binary_op(
-///         &self,
-///         l: &parser::Expression,
-///         op: &parser::BinaryOp,
-///         r: &parser::Expression,
-///         src_tree: &parser::ParseTree,
-///         dst_tree: &mut SQLTree<'field_lookup>,
-///     ) -> ExpResult<'field_lookup> {
+///     fn translate_binary_op<'parse>(
+///         &'field_lookup self,
+///         l: &'parse parser::Expression,
+///         op: &'parse parser::BinaryOp,
+///         r: &'parse parser::Expression,
+///         src_tree: &'parse parser::ParseTree,
+///         dst_tree: &mut SQLTree<'field_lookup, 'parse>,
+///     ) -> ExpResult<'field_lookup, 'parse> {
 ///         translate::postgres::translate_binary_op(self, l, op, r, src_tree, dst_tree)
 ///     }
 /// }
 ///
 /// ```
-pub trait TranslationContext<'field_lookup> {
+pub trait TranslationContext {
     /// Called to determine the proper name and type of a field.
     ///   `alias`: the table reference if the field is qualified (in `foo.x` the alias is `foo`)
     ///   `field`: the name of the field from the expression
     ///
     /// On success, returns a tuple of the proper (e.g. capitalized) name and the field type
-    fn lookup_field(
-        &self,
+    fn lookup_field<'field_lookup>(
+        &'field_lookup self,
         alias: Option<&str>,
         field: &str,
     ) -> std::result::Result<(Cow<'field_lookup, str>, FieldType), String>;
 
     /// Called to translate a [ParseTree].
-    fn translate(&self, tree: &ParseTree) -> TreeResult<'field_lookup> {
+    fn translate<'field_lookup, 'parse>(
+        &'field_lookup self,
+        tree: &'parse ParseTree,
+    ) -> TreeResult<'field_lookup, 'parse> {
         let root = tree.get_root().ok_or(Error::EmptyTree)?;
         let mut out_tree = SQLTree::new();
         let (root, root_type) = self.translate_expr(root, tree, &mut out_tree)?;
@@ -424,43 +428,43 @@ pub trait TranslationContext<'field_lookup> {
     }
 
     /// Called to translate a specific expression within a [ParseTree].
-    fn translate_expr(
-        &self,
-        source: &parser::Expression,
-        in_tree: &ParseTree,
-        out_tree: &mut SQLTree<'field_lookup>,
-    ) -> ExpResult<'field_lookup>;
+    fn translate_expr<'field_lookup, 'parse>(
+        &'field_lookup self,
+        source: &'parse parser::Expression,
+        in_tree: &'parse ParseTree,
+        out_tree: &mut SQLTree<'field_lookup, 'parse>,
+    ) -> ExpResult<'field_lookup, 'parse>;
 
     /// Called to translate a function call.
     ///   `name`: the name of the function in the original expression
     ///   `args`: the arguments to the function
     ///
     /// On success, returns an expression and the type the expression would return.
-    fn translate_fn_call(
-        &self,
-        name: &CodebaseFunction,
-        args: &[parser::ExpressionId],
-        in_tree: &ParseTree,
-        out_tree: &mut SQLTree<'field_lookup>,
-    ) -> ExpResult<'field_lookup>;
+    fn translate_fn_call<'field_lookup, 'parse>(
+        &'field_lookup self,
+        name: &'parse CodebaseFunction,
+        args: &'parse [parser::ExpressionId],
+        in_tree: &'parse ParseTree,
+        out_tree: &mut SQLTree<'field_lookup, 'parse>,
+    ) -> ExpResult<'field_lookup, 'parse>;
 
     /// Called to translate a binary operator expression.
-    fn translate_binary_op(
-        &self,
-        l: &parser::Expression,
-        op: &parser::BinaryOp,
-        r: &parser::Expression,
-        in_tree: &ParseTree,
-        out_tree: &mut SQLTree<'field_lookup>,
-    ) -> ExpResult<'field_lookup>;
+    fn translate_binary_op<'field_lookup, 'parse>(
+        &'field_lookup self,
+        l: &'parse parser::Expression,
+        op: &'parse parser::BinaryOp,
+        r: &'parse parser::Expression,
+        in_tree: &'parse ParseTree,
+        out_tree: &mut SQLTree<'field_lookup, 'parse>,
+    ) -> ExpResult<'field_lookup, 'parse>;
 
     /// Truncate the right side of a string comparison to a fixed length.
-    fn string_comp_right(
-        &self,
+    fn string_comp_right<'field_lookup, 'parse>(
+        &'field_lookup self,
         r: ExpressionId,
         len: u32,
-        out_tree: &mut SQLTree<'field_lookup>,
-    ) -> Expression<'field_lookup> {
+        out_tree: &mut SQLTree<'field_lookup, 'parse>,
+    ) -> Expression<'field_lookup, 'parse> {
         //TODO lit_1 and possibly other nodes are going to be the same. These
         // could be cached and the ExpressionIds reused in other parts of the tree
         let lit_1 = out_tree.push_expr(Expression::NumberLiteral("1".into()));
@@ -474,12 +478,12 @@ pub trait TranslationContext<'field_lookup> {
 
     /// The left side of the string comparison should be truncated to the length of the right side (basically a startswith compare)
     /// The output will look like `SUBSTR(l, 1, LENGTH(r))`
-    fn string_comp_left(
-        &self,
+    fn string_comp_left<'field_lookup, 'parse>(
+        &'field_lookup self,
         l: ExpressionId,
         r: ExpressionId,
-        out_tree: &mut SQLTree<'field_lookup>,
-    ) -> Expression<'field_lookup> {
+        out_tree: &mut SQLTree<'field_lookup, 'parse>,
+    ) -> Expression<'field_lookup, 'parse> {
         // First prep a LENGTH(r) call
         let args = out_tree.push_args([r].into_iter());
         let right_side_len = out_tree.push_expr(Expression::FunctionCall {
@@ -496,16 +500,28 @@ pub trait TranslationContext<'field_lookup> {
     }
 }
 
-fn escape_single_quotes(s: &str) -> String {
-    let mut res = String::new();
-    res.reserve(s.len());
-    for c in s.chars() {
-        if c == '\'' {
-            res.push('\''); // Add an extra quote to escape it
+fn escape_single_quotes(s: &str) -> Cow<'_, str> {
+    const SQ: char = '\'';
+    match s.find(SQ) {
+        // If no single quotes, no escaping needed
+        None => Cow::Borrowed(s),
+        Some(start) => {
+            let mut res = String::with_capacity(s.len());
+            let (before, contains_sq) = s.split_at(start);
+
+            // We know no single quotes before start, so that portion can be memcpy'd
+            res.push_str(before);
+
+            // Go character by character for the rest
+            for c in contains_sq.chars() {
+                if c == SQ {
+                    res.push(SQ); // Add an extra quote to escape it
+                }
+                res.push(c);
+            }
+            res.into()
         }
-        res.push(c);
     }
-    res
 }
 
 #[cfg(test)]

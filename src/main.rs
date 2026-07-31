@@ -44,53 +44,47 @@ fn main() {
 
     // Overriding the DTOS function
     println!("Running to_sql tests with function overriding...");
-    pub struct CustomTranslator<'field_lookup, F>
+    pub struct CustomTranslator<'f, F>
     where
-        F: Fn(
-            Option<&str>,
-            &str,
-        ) -> std::result::Result<(Cow<'field_lookup, str>, FieldType), String>,
+        F: Fn(Option<&str>, &str) -> std::result::Result<(Cow<'f, str>, FieldType), String>,
     {
         field_lookup: F,
     }
-    impl<'field_lookup, F> TranslationContext<'field_lookup> for CustomTranslator<'field_lookup, F>
+    impl<'f, F> TranslationContext for CustomTranslator<'f, F>
     where
-        F: Fn(
-            Option<&str>,
-            &str,
-        ) -> std::result::Result<(Cow<'field_lookup, str>, FieldType), String>,
+        F: Fn(Option<&str>, &str) -> std::result::Result<(Cow<'f, str>, FieldType), String>,
     {
-        fn lookup_field(
-            &self,
+        fn lookup_field<'field_lookup>(
+            &'field_lookup self,
             alias: Option<&str>,
             field: &str,
         ) -> std::result::Result<(Cow<'field_lookup, str>, FieldType), String> {
             (self.field_lookup)(alias, field)
         }
 
-        fn translate_expr(
-            &self,
-            source: &parser::Expression,
-            src_tree: &parser::ParseTree,
-            dst_tree: &mut SQLTree<'field_lookup>,
-        ) -> translate::ExpResult<'field_lookup> {
+        fn translate_expr<'field_lookup, 'parse>(
+            &'field_lookup self,
+            source: &'parse parser::Expression,
+            src_tree: &'parse parser::ParseTree,
+            dst_tree: &mut SQLTree<'field_lookup, 'parse>,
+        ) -> translate::ExpResult<'field_lookup, 'parse> {
             default_translate(source, src_tree, dst_tree, self)
         }
 
-        fn translate_fn_call(
-            &self,
-            name: &CodebaseFunction,
-            args: &[parser::ExpressionId],
-            src_tree: &parser::ParseTree,
-            dst_tree: &mut SQLTree<'field_lookup>,
-        ) -> translate::ExpResult<'field_lookup> {
+        fn translate_fn_call<'field_lookup, 'parse>(
+            &'field_lookup self,
+            name: &'parse CodebaseFunction,
+            args: &'parse [parser::ExpressionId],
+            src_tree: &'parse parser::ParseTree,
+            dst_tree: &mut SQLTree<'field_lookup, 'parse>,
+        ) -> translate::ExpResult<'field_lookup, 'parse> {
             let dst_args = translate::postgres::translate_args(args, src_tree, dst_tree, self)?;
 
             if let CodebaseFunction::Unknown(unknown) = name
                 && unknown.eq_ignore_ascii_case("USER")
             {
                 Ok((
-                    Expression::SingleQuoteStringLiteral("my user".to_owned()),
+                    Expression::SingleQuoteStringLiteral(Cow::from("my user")),
                     FieldType::Memo,
                 ))
             } else if name == &CodebaseFunction::DTOS {
@@ -108,14 +102,14 @@ fn main() {
             }
         }
 
-        fn translate_binary_op(
-            &self,
-            l: &parser::Expression,
-            op: &parser::BinaryOp,
-            r: &parser::Expression,
-            src_tree: &parser::ParseTree,
-            dst_tree: &mut SQLTree<'field_lookup>,
-        ) -> translate::ExpResult<'field_lookup> {
+        fn translate_binary_op<'field_lookup, 'parse>(
+            &'field_lookup self,
+            l: &'parse parser::Expression,
+            op: &'parse parser::BinaryOp,
+            r: &'parse parser::Expression,
+            src_tree: &'parse parser::ParseTree,
+            dst_tree: &mut SQLTree<'field_lookup, 'parse>,
+        ) -> translate::ExpResult<'field_lookup, 'parse> {
             translate_binary_op(self, l, op, r, src_tree, dst_tree)
         }
     }
@@ -240,7 +234,7 @@ fn expr_tests() {
     }
 }
 
-fn to_sql_tests<'field_lookup, T: TranslationContext<'field_lookup>>(cx: &T) {
+fn to_sql_tests<'field_lookup, T: TranslationContext>(cx: &'field_lookup T) {
     let tests = [
         "deleted() = .f. .and. substr(id, 1, 3 ) <> \"($)\"",
         ".NOT.deleted()",

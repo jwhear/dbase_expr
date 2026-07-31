@@ -205,7 +205,7 @@ pub trait ToSQL {
     fn to_sql(&self, out: &mut Formatter, tree: &SQLTree, conf: &PrinterConfig) -> Result;
 }
 
-impl<'field_lookup> Display for Printer<SQLTree<'field_lookup>> {
+impl<'field_lookup, 'parse> Display for Printer<SQLTree<'field_lookup, 'parse>> {
     fn fmt(&self, f: &mut Formatter) -> Result {
         if self.tree.is_empty() {
             return Ok(());
@@ -240,7 +240,7 @@ impl ToSQL for BinaryOp {
     }
 }
 
-impl<'field_lookup> ToSQL for Expression<'field_lookup> {
+impl<'field_lookup, 'parse> ToSQL for Expression<'field_lookup, 'parse> {
     fn to_sql(&self, out: &mut Formatter, tree: &SQLTree, conf: &PrinterConfig) -> Result {
         match self {
             Expression::BoolLiteral(v) => {
