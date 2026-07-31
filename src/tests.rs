@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::{
     codebase_functions::CodebaseFunction,
     parser,
@@ -7,21 +9,21 @@ use crate::{
     },
 };
 
-pub struct TestTranslator<F>
+pub struct TestTranslator<'field_lookup, F>
 where
-    F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
+    F: Fn(Option<&str>, &str) -> std::result::Result<(Cow<'field_lookup, str>, FieldType), String>,
 {
     pub field_lookup: F,
 }
-impl<F> TranslationContext for TestTranslator<F>
+impl<'field_lookup, F> TranslationContext<'field_lookup> for TestTranslator<'field_lookup, F>
 where
-    F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
+    F: Fn(Option<&str>, &str) -> std::result::Result<(Cow<'field_lookup, str>, FieldType), String>,
 {
     fn lookup_field(
         &self,
         alias: Option<&str>,
         field: &str,
-    ) -> std::result::Result<(String, FieldType), String> {
+    ) -> std::result::Result<(Cow<'field_lookup, str>, FieldType), String> {
         (self.field_lookup)(alias, field)
     }
 
@@ -29,8 +31,8 @@ where
         &self,
         source: &parser::Expression,
         src_tree: &parser::ParseTree,
-        dst_tree: &mut SQLTree,
-    ) -> translate::ExpResult {
+        dst_tree: &mut SQLTree<'field_lookup>,
+    ) -> translate::ExpResult<'field_lookup> {
         default_translate(source, src_tree, dst_tree, self)
     }
 
@@ -39,8 +41,8 @@ where
         name: &CodebaseFunction,
         args: &[parser::ExpressionId],
         src_tree: &parser::ParseTree,
-        dst_tree: &mut SQLTree,
-    ) -> translate::ExpResult {
+        dst_tree: &mut SQLTree<'field_lookup>,
+    ) -> translate::ExpResult<'field_lookup> {
         let dst_args = translate::postgres::translate_args(args, src_tree, dst_tree, self)?;
 
         if name == &CodebaseFunction::DTOS {
@@ -71,8 +73,8 @@ where
         op: &parser::BinaryOp,
         r: &parser::Expression,
         src_tree: &parser::ParseTree,
-        dst_tree: &mut SQLTree,
-    ) -> translate::ExpResult {
+        dst_tree: &mut SQLTree<'field_lookup>,
+    ) -> translate::ExpResult<'field_lookup> {
         translate_binary_op(self, l, op, r, src_tree, dst_tree)
     }
 }
@@ -132,7 +134,7 @@ fn substr_test() {
     assert_eq!(
         *tree.get_expr(args[0]).expect("first arg"),
         Expression::Field {
-            name: "ID".to_string(),
+            name: "ID".into(),
             field_type: FieldType::Character(10),
         }
     );
@@ -233,7 +235,7 @@ fn numeric_cast_test() {
     assert_eq!(
         *tree.get_expr_unchecked(args[0]),
         Expression::Field {
-            name: "ID".to_string(),
+            name: "ID".into(),
             field_type: FieldType::Character(10),
         }
     );
@@ -249,7 +251,7 @@ fn numeric_cast_test() {
     assert_eq!(
         *tree.get_expr_unchecked(*field_ref),
         Expression::Field {
-            name: "ID".to_string(),
+            name: "ID".into(),
             field_type: FieldType::Character(10),
         }
     );
@@ -296,10 +298,12 @@ fn substr_replace_0_with_1_test() {
     );
 }
 
-fn translate_expression(expr: &str) -> translate::TreeResult {
+fn translate_expression<'field_lookup>(expr: &str) -> translate::TreeResult<'field_lookup> {
     let tree = parser::parse(expr).unwrap();
     let cx = TestTranslator {
-        field_lookup: |alias: Option<&str>, field: &str| -> Result<(String, FieldType), String> {
+        field_lookup: |alias: Option<&str>,
+                       field: &str|
+         -> Result<(Cow<'field_lookup, str>, FieldType), String> {
             let field = field.to_string().to_uppercase();
             let field_type = match (alias, field.as_ref()) {
                 (_, "A" | "B" | "C") => FieldType::Integer,
@@ -311,7 +315,7 @@ fn translate_expression(expr: &str) -> translate::TreeResult {
                 (Some(alias), _) => panic!("unknown field: {alias}.{field}"),
                 (None, _) => panic!("unknown field: {field}"),
             };
-            Ok((field, field_type))
+            Ok((field.into(), field_type))
         },
     };
     cx.translate(&tree)

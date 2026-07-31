@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use criterion::{Criterion, criterion_group, criterion_main};
 use dbase_expr::{
     parse,
@@ -24,14 +26,15 @@ const TESTS: [&str; 9] = [
 Keeping Score
 --------------
 ea6fe21: [115.55 µs 115.90 µs 116.23 µs]  Original version
+1cec594: [20.666 µs 20.694 µs 20.726 µs]  Rewrite to ExpressionTree, tests pass
 
 */
 
 // This tests both the translate and the to_sql because they really go together
 //  (you're unlikely to call translate without also calling to_sql)
-fn translate<F>(tests: &[ParseTree], cx: &Translator<F>)
+fn translate<'field_lookup, F>(tests: &[ParseTree], cx: &Translator<'field_lookup, F>)
 where
-    F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
+    F: Fn(Option<&str>, &str) -> std::result::Result<(Cow<'field_lookup, str>, FieldType), String>,
 {
     for tree in tests {
         std::hint::black_box({
@@ -47,7 +50,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     let tests: Vec<_> = TESTS.iter().map(|t| parse(t).expect("valid")).collect();
     let cx = Translator {
         field_lookup: |_: Option<&str>, name: &str| match name {
-            "ID" => Ok(("ID".into(), FieldType::Character(8))),
+            "ID" => Ok((Cow::from("ID"), FieldType::Character(8))),
             "WAREHOUSE" => Ok(("WAREHOUSE".into(), FieldType::Character(12))),
             "PICK_LOC" => Ok(("PICK_LOC".into(), FieldType::Logical)),
             "LOCATION" => Ok(("LOCATION".into(), FieldType::Character(12))),

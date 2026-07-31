@@ -122,7 +122,7 @@ impl<E> ExpressionTree<E> {
         }
     }
 
-    /// Create a ParseTree using previously allocated Vecs.
+    /// Create an ExpressionTree using previously allocated Vecs.
     pub fn new_from_vecs(expressions: Vec<E>, arg_lists: Vec<ExpressionId>) -> Self {
         Self {
             expressions,

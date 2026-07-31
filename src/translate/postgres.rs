@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use super::{
     BinaryOp, Error, ExpResult, Expression, FieldType, Parenthesize, SQLTree, TranslationContext,
     UnaryOp, escape_single_quotes, exps, ok,
@@ -7,34 +9,26 @@ use crate::{
     parser::{self, Expression as E, ExpressionId, ParseTree},
 };
 
-//TODO pre-insert:
-// lit_0
-// lit_1
-// empty_string
-// true
-// false
-// COALESCE_DATE
-
 /// This type provides default function translation for Postgres. You can
 ///  "inherit" while allowing overriding by implementing the TranslationContext
 ///  trait and dispatching to `translate_fn_call` any function calls you're not
 ///  interested in overriding.
-pub struct Translator<F>
+pub struct Translator<'field_lookup, F>
 where
-    F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
+    F: Fn(Option<&str>, &str) -> std::result::Result<(Cow<'field_lookup, str>, FieldType), String>,
 {
     pub field_lookup: F,
 }
 
-impl<F> TranslationContext for Translator<F>
+impl<'field_lookup, F> TranslationContext<'field_lookup> for Translator<'field_lookup, F>
 where
-    F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
+    F: Fn(Option<&str>, &str) -> std::result::Result<(Cow<'field_lookup, str>, FieldType), String>,
 {
     fn lookup_field(
         &self,
         alias: Option<&str>,
         field: &str,
-    ) -> std::result::Result<(String, FieldType), String> {
+    ) -> std::result::Result<(Cow<'field_lookup, str>, FieldType), String> {
         (self.field_lookup)(alias, field)
     }
 
@@ -42,8 +36,8 @@ where
         &self,
         source: &parser::Expression,
         src_tree: &crate::parser::ParseTree,
-        dst_tree: &mut SQLTree,
-    ) -> ExpResult {
+        dst_tree: &mut SQLTree<'field_lookup>,
+    ) -> ExpResult<'field_lookup> {
         translate_expr(source, src_tree, dst_tree, self)
     }
 
@@ -53,8 +47,8 @@ where
         op: &parser::BinaryOp,
         r: &parser::Expression,
         src_tree: &crate::parser::ParseTree,
-        dst_tree: &mut SQLTree,
-    ) -> ExpResult {
+        dst_tree: &mut SQLTree<'field_lookup>,
+    ) -> ExpResult<'field_lookup> {
         translate_binary_op(self, l, op, r, src_tree, dst_tree)
     }
 
@@ -63,29 +57,29 @@ where
         name: &crate::codebase_functions::CodebaseFunction,
         args: &[parser::ExpressionId],
         src_tree: &crate::parser::ParseTree,
-        dst_tree: &mut SQLTree,
-    ) -> ExpResult {
+        dst_tree: &mut SQLTree<'field_lookup>,
+    ) -> ExpResult<'field_lookup> {
         translate_fn_call(name, args, src_tree, dst_tree, self)
     }
 }
 
 /// Translates a parsed dBase expression to a SQL expression.
-pub fn translate<'a, C: TranslationContext>(
+pub fn translate<'a, 'field_lookup, C: TranslationContext<'field_lookup>>(
     tree: &'a crate::parser::ParseTree<'a>,
     cx: &'a C,
-) -> ExpResult {
+) -> ExpResult<'field_lookup> {
     let root = tree.get_root().ok_or(Error::EmptyTree)?;
     let mut dst_tree = SQLTree::new();
     translate_expr(root, tree, &mut dst_tree, cx)
 }
 
 /// Translates a particular dBase expression to a SQL expression.
-pub fn translate_expr<'a, C: TranslationContext>(
+pub fn translate_expr<'a, 'field_lookup, C: TranslationContext<'field_lookup>>(
     source: &'a E<'a>,
     src_tree: &'a crate::parser::ParseTree<'a>,
-    dst_tree: &mut SQLTree,
+    dst_tree: &mut SQLTree<'field_lookup>,
     cx: &'a C,
-) -> ExpResult {
+) -> ExpResult<'field_lookup> {
     // helper for creating binary operators
     match source {
         E::BoolLiteral(v) => ok(Expression::BoolLiteral(*v), FieldType::Logical),
@@ -156,6 +150,7 @@ pub fn translate_expr<'a, C: TranslationContext>(
                 "Sequence operation should only be generated for at least two operands"
             );
             let operands = src_tree.get_args(operands);
+            //TODO use scratch buffer here
             let mut exprs = Vec::with_capacity(operands.len());
             let mut first_ty = None;
             for (i, operand) in operands.iter().enumerate() {
@@ -195,13 +190,13 @@ pub fn translate_expr<'a, C: TranslationContext>(
 // This function does the kind of gross work of converting dBase function calls
 //  to the SQL equivalent.  Some are super straightforward: `CHR(97)` -> `CHR(97)`
 //  but others have no exact equivalent and have to resolve to a nested bundle.
-pub fn translate_fn_call<'a>(
+pub fn translate_fn_call<'a, 'field_lookup>(
     name: &'a F,
     args: &'a [parser::ExpressionId],
     src_tree: &'a crate::parser::ParseTree<'a>,
-    dst_tree: &mut SQLTree,
-    cx: &'a impl TranslationContext,
-) -> std::result::Result<(Expression, FieldType), Error> {
+    dst_tree: &mut SQLTree<'field_lookup>,
+    cx: &'a impl TranslationContext<'field_lookup>,
+) -> std::result::Result<(Expression<'field_lookup>, FieldType), Error> {
     // This recursively translates all arguments and packs them into dst_tree,
     //  returning their ExpressionIds and FieldTypes
     let dst_args = translate_args(args, src_tree, dst_tree, cx)?;
@@ -233,18 +228,18 @@ pub fn translate_fn_call<'a>(
 
     let wrong_type = |index| wrong_type(index, name, args);
 
-    fn date(
+    fn date<'field_lookup>(
         format: &str,
         value: ExpressionId,
         dst_tree: &mut SQLTree,
-    ) -> Result<(Expression, FieldType), Error> {
+    ) -> Result<(Expression<'field_lookup>, FieldType), Error> {
         //this translates blank strings into the coalesce date so that it can be properly compared
         let format = dst_tree.push_expr(format.into());
         let trim = dst_tree.push_fn_call("TRIM", &[value]);
         let null_if = dst_tree.push_fn_call("NULLIF", &[trim, exps::EMPTY_STR]);
         let to_date = dst_tree.push_fn_call("TO_DATE", &[null_if, format]);
         let coalesce = Expression::FunctionCall {
-            name: "COALESCE".into(),
+            name: "COALESCE",
             args: dst_tree.push_args([to_date, exps::COALESCE_DATE].into_iter()),
         };
         Ok((coalesce, FieldType::Date))
@@ -257,14 +252,14 @@ pub fn translate_fn_call<'a>(
                 FieldType::Character(l) => FieldType::Character(l),
                 _ => FieldType::Memo,
             };
-            let f = match name {
+            let name = match name {
                 F::ALLTRIM | F::TRIM => "TRIM",
                 F::LTRIM => "LTRIM",
                 F::RTRIM => "RTRIM",
                 _ => unreachable!(),
             };
             let expr = Expression::FunctionCall {
-                name: f.into(),
+                name,
                 args: dst_tree.push_args([argid(0)?].into_iter()),
             };
             ok(expr, ty)
@@ -287,7 +282,7 @@ pub fn translate_fn_call<'a>(
         // DAY(x) => DATE_PART('DAY', x)
         F::DAY => ok(
             Expression::FunctionCall {
-                name: "DATE_PART".into(),
+                name: "DATE_PART",
                 args: dst_tree.push_args([exps::LIT_DAY, argid(0)?].into_iter()),
             },
             FieldType::Double,
@@ -499,7 +494,7 @@ pub fn translate_fn_call<'a>(
             };
             ok(
                 Expression::FunctionCall {
-                    name: "RIGHT".into(),
+                    name: "RIGHT",
                     args: dst_tree.push_args([x, argid(1)?].into_iter()),
                 },
                 out_ty,
@@ -539,7 +534,7 @@ pub fn translate_fn_call<'a>(
         F::SUBSTR => translate_substr("SUBSTR", args, src_tree, dst_tree, cx),
         F::UPPER => ok(
             Expression::FunctionCall {
-                name: "UPPER".into(),
+                name: "UPPER",
                 args: dst_tree.push_args([argid(0)?].into_iter()),
             },
             argtype(0)?,
@@ -551,7 +546,7 @@ pub fn translate_fn_call<'a>(
             let cond = dst_tree.push_fn_call("pg_input_is_valid", &[argid(0)?, numeric]);
             let when_true = dst_tree.push_expr(Expression::Cast(argid(0)?, "numeric"));
             // codebase inteprets any non-numeric string as a 0
-            let when_false = dst_tree.push_expr(Expression::NumberLiteral("0".into()));
+            let when_false = exps::LIT_0;
             ok(
                 Expression::Iif {
                     cond,
@@ -565,7 +560,7 @@ pub fn translate_fn_call<'a>(
         // YEAR(x) => DATE_PART('YEAR', x)
         F::YEAR => ok(
             Expression::FunctionCall {
-                name: "DATE_PART".into(),
+                name: "DATE_PART",
                 args: dst_tree.push_args([exps::LIT_YEAR, argid(0)?].into_iter()),
             },
             FieldType::Double,
@@ -575,29 +570,29 @@ pub fn translate_fn_call<'a>(
     }
 }
 
-pub fn translate_binary_op<'a, T: TranslationContext>(
+pub fn translate_binary_op<'a, 'field_lookup, T: TranslationContext<'field_lookup>>(
     cx: &'a T,
     ast_l: &'a parser::Expression<'a>,
     op: &'a parser::BinaryOp,
     r: &'a parser::Expression<'a>,
     src_tree: &'a crate::parser::ParseTree<'a>,
-    dst_tree: &mut SQLTree,
-) -> ExpResult {
+    dst_tree: &mut SQLTree<'field_lookup>,
+) -> ExpResult<'field_lookup> {
     let (l, ty) = translate_expr(ast_l, src_tree, dst_tree, cx)?;
     translate_binary_op_right(cx, ast_l, l, ty, op, r, src_tree, dst_tree)
 }
 
 /// The same as translate_binary_op but useful if you've already translated l and don't want to do it again
-pub fn translate_binary_op_right<'a, T: TranslationContext>(
+pub fn translate_binary_op_right<'a, 'field_lookup, T: TranslationContext<'field_lookup>>(
     cx: &'a T,
     ast_l: &'a parser::Expression<'a>,
-    l: Expression,
+    l: Expression<'field_lookup>,
     ty: FieldType,
     op: &'a parser::BinaryOp,
     r: &'a parser::Expression<'a>,
     src_tree: &'a crate::parser::ParseTree<'a>,
-    dst_tree: &mut SQLTree,
-) -> ExpResult {
+    dst_tree: &mut SQLTree<'field_lookup>,
+) -> ExpResult<'field_lookup> {
     let tr_binop = |l, op, r, ty| ok(Expression::BinaryOperator(l, op, r, Parenthesize::Yes), ty);
     let mut binop = |l, op, r, ty| {
         //OPT: order of operations is preserved by parenthesizing everything.
@@ -671,7 +666,7 @@ pub fn translate_binary_op_right<'a, T: TranslationContext>(
             let repeated_spaces = dst_tree.push_fn_call("REPEAT", &[exps::LIT_SPACE, num_spaces]);
             ok(
                 Expression::FunctionCall {
-                    name: "CONCAT".into(),
+                    name: "CONCAT",
                     args: dst_tree.push_args([without_spaces, r, repeated_spaces].into_iter()),
                 },
                 FieldType::Memo,
@@ -910,11 +905,11 @@ pub enum StrArgs {
     WithoutArgs(ExpressionId),
 }
 
-pub fn get_str_fn_args<'a>(
+pub fn get_str_fn_args<'a, 'field_lookup>(
     args: &'a [parser::ExpressionId],
     src_tree: &'a crate::parser::ParseTree<'a>,
-    dst_tree: &mut SQLTree,
-    cx: &'a impl TranslationContext,
+    dst_tree: &mut SQLTree<'field_lookup>,
+    cx: &'a impl TranslationContext<'field_lookup>,
 ) -> std::result::Result<StrArgs, Error> {
     let dst_args = translate_args(args, src_tree, dst_tree, cx)?;
     let name = F::STR;
@@ -984,13 +979,13 @@ pub fn get_str_fn_args<'a>(
     Ok(StrArgs::WithArgs(val_arg_id, fmt, len))
 }
 
-pub fn translate_substr(
+pub fn translate_substr<'field_lookup>(
     func: &'static str,
     in_args: &[parser::ExpressionId],
     src_tree: &parser::ParseTree,
-    dst_tree: &mut SQLTree,
-    cx: &impl TranslationContext,
-) -> std::result::Result<(Expression, FieldType), Error> {
+    dst_tree: &mut SQLTree<'field_lookup>,
+    cx: &impl TranslationContext<'field_lookup>,
+) -> std::result::Result<(Expression<'field_lookup>, FieldType), Error> {
     let name = F::SUBSTR;
     let mut args = translate_args(in_args, src_tree, dst_tree, cx)?;
 
@@ -1027,11 +1022,11 @@ pub fn translate_substr(
     ok(Expression::FunctionCall { name: func, args }, ty)
 }
 
-pub fn translate_args<'a>(
+pub fn translate_args<'a, 'field_lookup>(
     args: &'a [parser::ExpressionId],
     src_tree: &'a ParseTree,
-    dst_tree: &mut SQLTree,
-    cx: &'a impl TranslationContext,
+    dst_tree: &mut SQLTree<'field_lookup>,
+    cx: &'a impl TranslationContext<'field_lookup>,
 ) -> Result<Vec<(ExpressionId, FieldType)>, Error> {
     let mut ret = Vec::new();
     for arg in args {

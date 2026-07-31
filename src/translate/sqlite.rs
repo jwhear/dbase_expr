@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::{
     codebase_functions::CodebaseFunction as F,
     parser::{self, ParseTree},
@@ -11,22 +13,22 @@ use crate::{
     },
 };
 
-pub struct SqliteTranslator<F>
+pub struct SqliteTranslator<'field_lookup, F>
 where
-    F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
+    F: Fn(Option<&str>, &str) -> std::result::Result<(Cow<'field_lookup, str>, FieldType), String>,
 {
     pub field_lookup: F,
 }
 
-impl<F> TranslationContext for SqliteTranslator<F>
+impl<'field_lookup, F> TranslationContext<'field_lookup> for SqliteTranslator<'field_lookup, F>
 where
-    F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
+    F: Fn(Option<&str>, &str) -> std::result::Result<(Cow<'field_lookup, str>, FieldType), String>,
 {
     fn lookup_field(
         &self,
         alias: Option<&str>,
         field: &str,
-    ) -> std::result::Result<(String, FieldType), String> {
+    ) -> std::result::Result<(Cow<'field_lookup, str>, FieldType), String> {
         (self.field_lookup)(alias, field)
     }
 
@@ -34,8 +36,8 @@ where
         &self,
         source: &parser::Expression,
         src_tree: &ParseTree,
-        dst_tree: &mut SQLTree,
-    ) -> ExpResult {
+        dst_tree: &mut SQLTree<'field_lookup>,
+    ) -> ExpResult<'field_lookup> {
         default_translate(source, src_tree, dst_tree, self)
     }
 
@@ -44,8 +46,8 @@ where
         name: &crate::codebase_functions::CodebaseFunction,
         args: &[parser::ExpressionId],
         src_tree: &ParseTree,
-        dst_tree: &mut SQLTree,
-    ) -> ExpResult {
+        dst_tree: &mut SQLTree<'field_lookup>,
+    ) -> ExpResult<'field_lookup> {
         translate_fn_call(name, args, src_tree, dst_tree, self)
     }
 
@@ -55,8 +57,8 @@ where
         op: &parser::BinaryOp,
         r: &parser::Expression,
         src_tree: &ParseTree,
-        dst_tree: &mut SQLTree,
-    ) -> ExpResult {
+        dst_tree: &mut SQLTree<'field_lookup>,
+    ) -> ExpResult<'field_lookup> {
         let (translated_l, ty) = self.translate_expr(l, src_tree, dst_tree)?;
         match (op, ty) {
             (
@@ -154,7 +156,10 @@ where
     }
 }
 
-fn expr_between_right_side(expression: Expression, dst_tree: &mut SQLTree) -> Expression {
+fn expr_between_right_side<'field_lookup>(
+    expression: Expression<'field_lookup>,
+    dst_tree: &mut SQLTree<'field_lookup>,
+) -> Expression<'field_lookup> {
     let expression = dst_tree.push_expr(expression);
     let char = dst_tree.push_expr(Expression::BareFunctionCall("char(0xFFFF)".to_string()));
     let appended = dst_tree.push_expr(Expression::BinaryOperator(
@@ -171,13 +176,13 @@ fn expr_between_right_side(expression: Expression, dst_tree: &mut SQLTree) -> Ex
     )
 }
 
-pub fn translate_fn_call<'a>(
+pub fn translate_fn_call<'a, 'field_lookup>(
     name: &'a F,
     args: &'a [parser::ExpressionId],
     src_tree: &'a ParseTree<'a>,
-    dst_tree: &mut SQLTree,
-    cx: &'a impl TranslationContext,
-) -> ExpResult {
+    dst_tree: &mut SQLTree<'field_lookup>,
+    cx: &'a impl TranslationContext<'field_lookup>,
+) -> ExpResult<'field_lookup> {
     let dst_args = translate_args(args, src_tree, dst_tree, cx)?;
     // Gets the ExpressionId for the argument at `index`
     let argid = |index| {
@@ -353,7 +358,7 @@ mod tests {
     #[test]
     fn sqlite_contains_to_instr() {
         let translator = SqliteTranslator {
-            field_lookup: |_alias, _name| Ok((String::from("SCREEN"), FieldType::Character(32))),
+            field_lookup: |_alias, _name| Ok((Cow::from("SCREEN"), FieldType::Character(32))),
         };
         let input = "'Wizard '$(SCREEN)";
         let pt = crate::parse(input).expect("parses");
@@ -376,7 +381,7 @@ mod tests {
     #[test]
     fn sqlite_trim_query_len() {
         let translator = SqliteTranslator {
-            field_lookup: |_alias, _name| Ok((String::from("SCREEN"), FieldType::Character(5))),
+            field_lookup: |_alias, _name| Ok((Cow::from("SCREEN"), FieldType::Character(5))),
         };
         let input = "SCREEN = 'XYZ  X'";
         let pt = crate::parse(input).expect("parses");
@@ -403,7 +408,7 @@ mod tests {
     #[test]
     fn sqlite_sub_concat() {
         let translator = SqliteTranslator {
-            field_lookup: |_alias, _name| Ok((String::from("SCREEN"), FieldType::Character(32))),
+            field_lookup: |_alias, _name| Ok((Cow::from("SCREEN"), FieldType::Character(32))),
         };
         let input = "'ab  '-'cd'";
         let pt = crate::parse(input).expect("parses");
