@@ -35,6 +35,7 @@ fn old_eval() {
     };
     let custom_functions = |_: &str| None;
     for test in TESTS.iter() {
+        #[allow(clippy::unit_arg)]
         std::hint::black_box({
             let tree = parse(test).unwrap();
             evaluate(&tree, &value_lookup, &custom_functions).expect("evaluated");

@@ -136,7 +136,7 @@ where
                 )));
                 ok(
                     Expression::FunctionCall {
-                        name: "format".into(),
+                        name: "format",
                         args: dst_tree.push_args(
                             [
                                 fmt,

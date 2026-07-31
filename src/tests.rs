@@ -50,7 +50,7 @@ where
             let fmt = dst_tree.push_expr("YYYYMMDD".into());
             Ok((
                 Expression::FunctionCall {
-                    name: "cb_date_to_text".into(),
+                    name: "cb_date_to_text",
                     args: dst_tree.push_args([date, fmt].into_iter()),
                 },
                 FieldType::Character(8),

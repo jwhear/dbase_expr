@@ -136,6 +136,12 @@ impl<'field_lookup> SQLTree<'field_lookup> {
     }
 }
 
+impl<'field_lookup> Default for SQLTree<'field_lookup> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOp {
     Add,
@@ -456,7 +462,7 @@ pub trait TranslationContext<'field_lookup> {
         let lit_len = out_tree.push_expr(Expression::NumberLiteral(len.to_string()));
         let args = out_tree.push_args([r, lit_1, lit_len].into_iter());
         Expression::FunctionCall {
-            name: "SUBSTR".into(),
+            name: "SUBSTR",
             args,
         }
     }
@@ -472,14 +478,14 @@ pub trait TranslationContext<'field_lookup> {
         // First prep a LENGTH(r) call
         let args = out_tree.push_args([r].into_iter());
         let right_side_len = out_tree.push_expr(Expression::FunctionCall {
-            name: "LENGTH".into(),
-            args: args,
+            name: "LENGTH",
+            args,
         });
 
         let lit_1 = out_tree.push_expr(Expression::NumberLiteral("1".into()));
         let args = out_tree.push_args([l, lit_1, right_side_len].into_iter());
         Expression::FunctionCall {
-            name: "SUBSTR".into(),
+            name: "SUBSTR",
             args,
         }
     }

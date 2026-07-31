@@ -27,6 +27,7 @@ Keeping Score
 --------------
 ea6fe21: [115.55 µs 115.90 µs 116.23 µs]  Original version
 1cec594: [20.666 µs 20.694 µs 20.726 µs]  Rewrite to ExpressionTree, tests pass
+a28f474: [17.737 µs 17.751 µs 17.767 µs]  Make field lookup return a Cow instead of String
 
 */
 
@@ -37,6 +38,7 @@ where
     F: Fn(Option<&str>, &str) -> std::result::Result<(Cow<'field_lookup, str>, FieldType), String>,
 {
     for tree in tests {
+        #[allow(clippy::unit_arg)]
         std::hint::black_box({
             let (exp, _ft) = cx.translate(tree).expect("translated");
             let _as_sql = format!("{}", Printer::new(exp, PrinterConfig::default()));

@@ -758,7 +758,7 @@ mod tests {
         else {
             panic!("Expected a FunctionCall, got a {root:?}")
         };
-        let args = tree.get_args(&args);
+        let args = tree.get_args(args);
         assert_eq!(args.len(), 2);
         let first = tree.get_expr(args[0]).expect("first");
         let second = tree.get_expr(args[1]).expect("second");
@@ -792,7 +792,7 @@ mod tests {
         let Expression::Sequence(args, BinaryOp::Add) = root else {
             panic!("Expect a Sequence, got a {root:?}")
         };
-        let args = tree.get_args(&args);
+        let args = tree.get_args(args);
         assert_eq!(args.len(), 5); // a, b, c, (d+e), f
 
         assert_eq!(
