@@ -507,7 +507,9 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
         // STR(num, len, dec) => PRINTF("%{len}.{dec}f", num)
         F::STR => {
             match get_str_fn_args(args, src_tree, dst_tree, cx)? {
-                StrArgs::WithArgs(val_arg, fmt, len) => {
+                StrArgs::WithArgs {
+                    val_arg, fmt, len, ..
+                } => {
                     let fmt = dst_tree.push_expr(fmt.into());
                     let expression = dst_tree.push_fn_call("TO_CHAR", &[val_arg, fmt]);
                     //if the length of the evaluated expression is greater than the specified len, fill the len with asterisks instead of showing any value at all
@@ -860,7 +862,12 @@ pub fn translate_binary_op_right<'parse, 'field_lookup, T: TranslationContext>(
 }
 
 pub enum StrArgs {
-    WithArgs(ExpressionId, String, usize),
+    WithArgs {
+        val_arg: ExpressionId,
+        fmt: String,
+        len: usize,
+        dec: usize,
+    },
     WithoutArgs(ExpressionId),
 }
 
@@ -891,7 +898,7 @@ pub fn get_str_fn_args<'parse, 'field_lookup>(
         return Err(Error::IncorrectArgCount(format!("{name:?}"), 1));
     }
 
-    let val_arg_id = argid(0)?;
+    let val_arg = argid(0)?;
     let len_arg = dst_tree.get_expr_unchecked(dst_args[1].0);
 
     // `len` and dec` must be constants according to CB docs, so we can get them and convert to integers
@@ -905,11 +912,12 @@ pub fn get_str_fn_args<'parse, 'field_lookup>(
 
     // codebase treats a missing dec arg the same as a zero
     if args.len() == 2 {
-        return Ok(StrArgs::WithArgs(
-            val_arg_id,
-            format!("FM{:9<len$}0", ""),
+        return Ok(StrArgs::WithArgs {
+            val_arg,
+            fmt: format!("FM{:9<len$}0", ""),
             len,
-        ));
+            dec: 0,
+        });
     }
 
     let dec_arg = dst_tree.get_expr_unchecked(dst_args[2].0);
@@ -935,7 +943,12 @@ pub fn get_str_fn_args<'parse, 'field_lookup>(
         format!("FM{:9<len$}0", "")
     };
 
-    Ok(StrArgs::WithArgs(val_arg_id, fmt, len))
+    Ok(StrArgs::WithArgs {
+        val_arg,
+        fmt,
+        len,
+        dec,
+    })
 }
 
 pub fn translate_substr<'parse, 'field_lookup>(

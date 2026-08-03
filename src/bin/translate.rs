@@ -184,7 +184,7 @@ impl TranslationContext for Translator {
         in_tree: &'parse ParseTree,
         out_tree: &mut translate::SQLTree<'field_lookup, 'parse>,
     ) -> translate::ExpResult<'field_lookup, 'parse> {
-        translate::postgres::translate_expr(source, in_tree, out_tree, self)
+        translate::sqlite::translate_expr(source, in_tree, out_tree, self)
     }
 
     fn translate_fn_call<'field_lookup, 'parse>(
@@ -194,7 +194,7 @@ impl TranslationContext for Translator {
         in_tree: &'parse ParseTree,
         out_tree: &mut translate::SQLTree<'field_lookup, 'parse>,
     ) -> translate::ExpResult<'field_lookup, 'parse> {
-        translate::postgres::translate_fn_call(name, args, in_tree, out_tree, self)
+        translate::sqlite::translate_fn_call(name, args, in_tree, out_tree, self)
     }
 
     fn translate_binary_op<'field_lookup, 'parse>(
@@ -205,6 +205,6 @@ impl TranslationContext for Translator {
         in_tree: &'parse ParseTree,
         out_tree: &mut translate::SQLTree<'field_lookup, 'parse>,
     ) -> translate::ExpResult<'field_lookup, 'parse> {
-        translate::postgres::translate_binary_op(self, l, op, r, in_tree, out_tree)
+        translate::sqlite::translate_binary_op(l, op, r, in_tree, out_tree, self)
     }
 }

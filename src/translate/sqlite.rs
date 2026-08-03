@@ -38,7 +38,7 @@ where
         src_tree: &'parse ParseTree,
         dst_tree: &mut SQLTree<'field_lookup, 'parse>,
     ) -> ExpResult<'field_lookup, 'parse> {
-        default_translate(source, src_tree, dst_tree, self)
+        translate_expr(source, src_tree, dst_tree, self)
     }
 
     fn translate_fn_call<'field_lookup, 'parse>(
@@ -59,99 +59,7 @@ where
         src_tree: &'parse ParseTree,
         dst_tree: &mut SQLTree<'field_lookup, 'parse>,
     ) -> ExpResult<'field_lookup, 'parse> {
-        let (translated_l, ty) = self.translate_expr(l, src_tree, dst_tree)?;
-        match (op, ty) {
-            (
-                op @ (parser::BinaryOp::Eq | parser::BinaryOp::Ne),
-                ty @ (FieldType::Memo | FieldType::Character(_)),
-            ) => {
-                let translated_r = self.translate_expr(r, src_tree, dst_tree)?.0;
-                let modified_r = expr_between_right_side(
-                    match ty {
-                        FieldType::Memo => translated_r,
-                        FieldType::Character(len) => {
-                            let translated_r = dst_tree.push_expr(translated_r);
-                            self.string_comp_right(translated_r, len, dst_tree)
-                        }
-                        _ => unreachable!(),
-                    },
-                    dst_tree,
-                );
-                let binop = match op {
-                    parser::BinaryOp::Eq => TranslateBinaryOp::Between,
-                    parser::BinaryOp::Ne => TranslateBinaryOp::NotBetween,
-                    _ => unreachable!(),
-                };
-
-                ok(
-                    Expression::BinaryOperator(
-                        dst_tree.push_expr(translated_l),
-                        binop,
-                        dst_tree.push_expr(modified_r),
-                        Parenthesize::Yes,
-                    ),
-                    FieldType::Logical,
-                )
-            }
-            (parser::BinaryOp::Contain, FieldType::Character(_)) => {
-                let translated_r = self.translate_expr(r, src_tree, dst_tree)?.0;
-                let haystack = dst_tree.push_expr(translated_r);
-                let needle = dst_tree.push_expr(translated_l);
-                let instr = dst_tree.push_fn_call(
-                    "INSTR",
-                    // Note that in CodeBase the haystack is the right arg
-                    &[haystack, needle],
-                );
-                ok(
-                    Expression::BinaryOperator(
-                        instr,
-                        super::BinaryOp::Gt,
-                        exps::LIT_0,
-                        Parenthesize::Yes,
-                    ),
-                    FieldType::Logical,
-                )
-            }
-            // Sub on a character type also maps to CONCAT but with the
-            //  trailing spaces of the first argument "moved" to the end
-            //  of the result. We can map this as:
-            //
-            // format('%s%s%.*c', RTRIM(l), r, LENGTH(l) - LENGTH( RTRIM(l)), ' ')
-            //
-            (parser::BinaryOp::Sub, FieldType::Character(_) | FieldType::Memo) => {
-                let translated_l = dst_tree.push_expr(translated_l);
-                let translated_r = self.translate_expr(r, src_tree, dst_tree)?.0;
-                let translated_r = dst_tree.push_expr(translated_r);
-                let without_spaces = dst_tree.push_fn_call("RTRIM", &[translated_l]);
-                let length_without_spaces = dst_tree.push_fn_call("LENGTH", &[without_spaces]);
-                let length_with_spaces = dst_tree.push_fn_call("LENGTH", &[translated_l]);
-                let num_spaces = dst_tree.push_expr(Expression::BinaryOperator(
-                    length_with_spaces,
-                    super::BinaryOp::Sub,
-                    length_without_spaces,
-                    Parenthesize::No,
-                ));
-                let fmt =
-                    dst_tree.push_expr(Expression::SingleQuoteStringLiteral(Cow::from("%s%s%.*c")));
-                ok(
-                    Expression::FunctionCall {
-                        name: "format",
-                        args: dst_tree.push_args(
-                            [
-                                fmt,
-                                without_spaces,
-                                translated_r,
-                                num_spaces,
-                                exps::LIT_SPACE,
-                            ]
-                            .into_iter(),
-                        ),
-                    },
-                    FieldType::Memo,
-                )
-            }
-            _ => translate_binary_op_right(self, l, translated_l, ty, op, r, src_tree, dst_tree),
-        }
+        translate_binary_op(l, op, r, src_tree, dst_tree, self)
     }
 }
 
@@ -173,6 +81,15 @@ fn expr_between_right_side<'field_lookup, 'parse>(
         appended,
         Parenthesize::No,
     )
+}
+
+pub fn translate_expr<'field_lookup, 'parse>(
+    source: &'parse parser::Expression,
+    src_tree: &'parse ParseTree,
+    dst_tree: &mut SQLTree<'field_lookup, 'parse>,
+    cx: &'field_lookup impl TranslationContext,
+) -> ExpResult<'field_lookup, 'parse> {
+    default_translate(source, src_tree, dst_tree, cx)
 }
 
 pub fn translate_fn_call<'parse, 'field_lookup>(
@@ -260,6 +177,24 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
             )
         }
 
+        // SQLite doesn't have LPAD, so transform
+        //   PADL(x, n) -> SUBSTR(<lots of spaces> || x, -n, n)
+        F::PADL => {
+            let n: u32 = match dst_tree.get_expr_unchecked(argid(1)?) {
+                Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(1)),
+                _ => Err(wrong_type(1)),
+            }?;
+            let spaces = " ".repeat(n as usize);
+            let spaces = dst_tree.push_expr(spaces.into());
+            ok(
+                Expression::FunctionCall {
+                    name: "SUBSTR",
+                    args: dst_tree.push_args([spaces, argid(1)?].into_iter()),
+                },
+                FieldType::Character(n),
+            )
+        }
+
         F::MONTH => {
             let fmt = dst_tree.push_expr("%m".into());
             let strftime = dst_tree.push_fn_call("STRFTIME", &[fmt, argid(0)?]);
@@ -311,23 +246,36 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
             };
             ok(coalesce, FieldType::Date)
         }
+
+        // PRINTF('%{n}.{d}', x)
         F::STR => {
-            let len: i64 = match dst_tree.get_expr_unchecked(argid(1)?) {
-                Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(1)),
-                _ => Err(wrong_type(1)),
-            }?;
-            let dec: i64 = match dst_tree.get_expr_unchecked(argid(2)?) {
-                Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(2)),
-                _ => Err(wrong_type(2)),
-            }?;
-            let fmt = dst_tree.push_expr(format!("%{}.{}f", len, dec).into()); // e.g. "%.2f"
-            ok(
-                Expression::FunctionCall {
-                    name: "PRINTF",
-                    args: dst_tree.push_args([fmt, argid(0)?].into_iter()),
-                },
-                FieldType::Character(len as u32),
-            )
+            match postgres::get_str_fn_args(args, src_tree, dst_tree, cx)? {
+                postgres::StrArgs::WithArgs {
+                    val_arg, len, dec, ..
+                } => {
+                    let fmt = dst_tree.push_expr(format!("%{len}.{dec}f").into()); // e.g. "%.2f"
+                    let expression = dst_tree.push_fn_call("PRINTF", &[fmt, val_arg]);
+                    //if the length of the evaluated expression is greater than the specified len, fill the len with asterisks instead of showing any value at all
+                    let len_expr = dst_tree.push_fn_call("LENGTH", &[expression]);
+                    let rhs = dst_tree.push_expr((len as i64).into());
+                    let cond = dst_tree.push_expr(Expression::BinaryOperator(
+                        len_expr,
+                        super::BinaryOp::Le,
+                        rhs,
+                        Parenthesize::No,
+                    ));
+                    let asterisks = "*".repeat(len);
+                    let iif = Expression::Iif {
+                        cond,
+                        when_true: expression,
+                        when_false: dst_tree.push_expr(asterisks.into()),
+                    };
+                    ok(iif, FieldType::Character(len as u32))
+                }
+                postgres::StrArgs::WithoutArgs(val_arg) => {
+                    ok(Expression::Cast(val_arg, "text"), FieldType::Memo)
+                }
+            }
         }
         F::VAL => ok(
             Expression::Cast(argid(0)?, "REAL"),
@@ -347,6 +295,109 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
         }
 
         other => postgres::translate_fn_call(other, args, src_tree, dst_tree, cx),
+    }
+}
+
+pub fn translate_binary_op<'field_lookup, 'parse>(
+    l: &'parse parser::Expression,
+    op: &'parse parser::BinaryOp,
+    r: &'parse parser::Expression,
+    src_tree: &'parse ParseTree,
+    dst_tree: &mut SQLTree<'field_lookup, 'parse>,
+    cx: &'field_lookup impl TranslationContext,
+) -> ExpResult<'field_lookup, 'parse> {
+    let (translated_l, ty) = default_translate(l, src_tree, dst_tree, cx)?;
+    match (op, ty) {
+        (
+            op @ (parser::BinaryOp::Eq | parser::BinaryOp::Ne),
+            ty @ (FieldType::Memo | FieldType::Character(_)),
+        ) => {
+            let translated_r = default_translate(r, src_tree, dst_tree, cx)?.0;
+            let modified_r = expr_between_right_side(
+                match ty {
+                    FieldType::Memo => translated_r,
+                    FieldType::Character(len) => {
+                        let translated_r = dst_tree.push_expr(translated_r);
+                        cx.string_comp_right(translated_r, len, dst_tree)
+                    }
+                    _ => unreachable!(),
+                },
+                dst_tree,
+            );
+            let binop = match op {
+                parser::BinaryOp::Eq => TranslateBinaryOp::Between,
+                parser::BinaryOp::Ne => TranslateBinaryOp::NotBetween,
+                _ => unreachable!(),
+            };
+
+            ok(
+                Expression::BinaryOperator(
+                    dst_tree.push_expr(translated_l),
+                    binop,
+                    dst_tree.push_expr(modified_r),
+                    Parenthesize::Yes,
+                ),
+                FieldType::Logical,
+            )
+        }
+        (parser::BinaryOp::Contain, FieldType::Character(_)) => {
+            let translated_r = default_translate(r, src_tree, dst_tree, cx)?.0;
+            let haystack = dst_tree.push_expr(translated_r);
+            let needle = dst_tree.push_expr(translated_l);
+            let instr = dst_tree.push_fn_call(
+                "INSTR",
+                // Note that in CodeBase the haystack is the right arg
+                &[haystack, needle],
+            );
+            ok(
+                Expression::BinaryOperator(
+                    instr,
+                    super::BinaryOp::Gt,
+                    exps::LIT_0,
+                    Parenthesize::Yes,
+                ),
+                FieldType::Logical,
+            )
+        }
+        // Sub on a character type also maps to CONCAT but with the
+        //  trailing spaces of the first argument "moved" to the end
+        //  of the result. We can map this as:
+        //
+        // format('%s%s%.*c', RTRIM(l), r, LENGTH(l) - LENGTH( RTRIM(l)), ' ')
+        //
+        (parser::BinaryOp::Sub, FieldType::Character(_) | FieldType::Memo) => {
+            let translated_l = dst_tree.push_expr(translated_l);
+            let translated_r = cx.translate_expr(r, src_tree, dst_tree)?.0;
+            let translated_r = dst_tree.push_expr(translated_r);
+            let without_spaces = dst_tree.push_fn_call("RTRIM", &[translated_l]);
+            let length_without_spaces = dst_tree.push_fn_call("LENGTH", &[without_spaces]);
+            let length_with_spaces = dst_tree.push_fn_call("LENGTH", &[translated_l]);
+            let num_spaces = dst_tree.push_expr(Expression::BinaryOperator(
+                length_with_spaces,
+                super::BinaryOp::Sub,
+                length_without_spaces,
+                Parenthesize::No,
+            ));
+            let fmt =
+                dst_tree.push_expr(Expression::SingleQuoteStringLiteral(Cow::from("%s%s%.*c")));
+            ok(
+                Expression::FunctionCall {
+                    name: "format",
+                    args: dst_tree.push_args(
+                        [
+                            fmt,
+                            without_spaces,
+                            translated_r,
+                            num_spaces,
+                            exps::LIT_SPACE,
+                        ]
+                        .into_iter(),
+                    ),
+                },
+                FieldType::Memo,
+            )
+        }
+        _ => translate_binary_op_right(cx, l, translated_l, ty, op, r, src_tree, dst_tree),
     }
 }
 
