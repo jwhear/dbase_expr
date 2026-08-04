@@ -239,7 +239,7 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
         let null_if = dst_tree.push_fn_call("NULLIF", &[trim, exps::EMPTY_STR]);
         let to_date = dst_tree.push_fn_call("TO_DATE", &[null_if, format]);
         let coalesce = Expression::FunctionCall {
-            name: "COALESCE",
+            name: "COALESCE".into(),
             args: dst_tree.push_args([to_date, exps::COALESCE_DATE].into_iter()),
         };
         Ok((coalesce, FieldType::Date))
@@ -259,7 +259,7 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
                 _ => unreachable!(),
             };
             let expr = Expression::FunctionCall {
-                name,
+                name: name.into(),
                 args: dst_tree.push_args([argid(0)?].into_iter()),
             };
             ok(expr, ty)
@@ -267,7 +267,7 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
         // CHR(x) => CHR(x)
         F::CHR => ok(
             Expression::FunctionCall {
-                name: "CHR",
+                name: "CHR".into(),
                 args: dst_tree.push_args([argid(0)?].into_iter()),
             },
             FieldType::Character(1),
@@ -282,7 +282,7 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
         // DAY(x) => DATE_PART('DAY', x)
         F::DAY => ok(
             Expression::FunctionCall {
-                name: "DATE_PART",
+                name: "DATE_PART".into(),
                 args: dst_tree.push_args([exps::LIT_DAY, argid(0)?].into_iter()),
             },
             FieldType::Double,
@@ -305,7 +305,7 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
             });
             ok(
                 Expression::FunctionCall {
-                    name: "TO_CHAR",
+                    name: "TO_CHAR".into(),
                     args: dst_tree.push_args([argid(0)?, fmt].into_iter()),
                 },
                 FieldType::Character(8),
@@ -315,7 +315,7 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
             let fmt = dst_tree.push_expr("YYYYMMDD".into());
             ok(
                 Expression::FunctionCall {
-                    name: "TO_CHAR",
+                    name: "TO_CHAR".into(),
                     args: dst_tree.push_args([argid(0)?, fmt].into_iter()),
                 },
                 FieldType::Character(8),
@@ -449,7 +449,7 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
         // LEFT(x, n) => SUBSTR(x, 1, n)
         F::LEFT => ok(
             Expression::FunctionCall {
-                name: "SUBSTR",
+                name: "SUBSTR".into(),
                 args: dst_tree.push_args([argid(0)?, exps::LIT_1, argid(1)?].into_iter()),
             },
             FieldType::Memo,
@@ -458,7 +458,7 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
         // MONTH(x) => DATE_PART('MONTH', x)
         F::MONTH => ok(
             Expression::FunctionCall {
-                name: "DATE_PART",
+                name: "DATE_PART".into(),
                 args: dst_tree.push_args([exps::LIT_MONTH, argid(0)?].into_iter()),
             },
             FieldType::Double,
@@ -466,7 +466,7 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
 
         F::PADL => ok(
             Expression::FunctionCall {
-                name: "LPAD",
+                name: "LPAD".into(),
                 //NOTE: Postgres uses spaces as the fill char by default so we
                 //  omit the third argument
                 args: dst_tree.push_args([argid(0)?, argid(1)?].into_iter()),
@@ -495,7 +495,7 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
             };
             ok(
                 Expression::FunctionCall {
-                    name: "RIGHT",
+                    name: "RIGHT".into(),
                     args: dst_tree.push_args([x, argid(1)?].into_iter()),
                 },
                 out_ty,
@@ -541,7 +541,7 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
             let fmt = dst_tree.push_expr("HH24:MI:SS".into());
             ok(
                 Expression::FunctionCall {
-                    name: "TO_CHAR",
+                    name: "TO_CHAR".into(),
                     args: dst_tree.push_args([current_time, fmt].into_iter()),
                 },
                 FieldType::Character(8),
@@ -549,7 +549,7 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
         }
         F::UPPER => ok(
             Expression::FunctionCall {
-                name: "UPPER",
+                name: "UPPER".into(),
                 args: dst_tree.push_args([argid(0)?].into_iter()),
             },
             argtype(0)?,
@@ -575,7 +575,7 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
         // YEAR(x) => DATE_PART('YEAR', x)
         F::YEAR => ok(
             Expression::FunctionCall {
-                name: "DATE_PART",
+                name: "DATE_PART".into(),
                 args: dst_tree.push_args([exps::LIT_YEAR, argid(0)?].into_iter()),
             },
             FieldType::Double,
@@ -682,7 +682,7 @@ pub fn translate_binary_op_right<'parse, 'field_lookup, T: TranslationContext>(
             let repeated_spaces = dst_tree.push_fn_call("REPEAT", &[exps::LIT_SPACE, num_spaces]);
             ok(
                 Expression::FunctionCall {
-                    name: "CONCAT",
+                    name: "CONCAT".into(),
                     args: dst_tree.push_args([without_spaces, r, repeated_spaces].into_iter()),
                 },
                 FieldType::Memo,
@@ -849,7 +849,7 @@ pub fn translate_binary_op_right<'parse, 'field_lookup, T: TranslationContext>(
             let exponent = dst_tree.push_expr(exponent);
             ok(
                 Expression::FunctionCall {
-                    name: "POW",
+                    name: "POW".into(),
                     args: dst_tree.push_args([l, exponent].into_iter()),
                 },
                 ty,
@@ -1004,7 +1004,13 @@ pub fn translate_substr<'parse, 'field_lookup>(
     };
 
     let args = dst_tree.push_args(args.iter().map(|&(a, _)| a));
-    ok(Expression::FunctionCall { name: func, args }, ty)
+    ok(
+        Expression::FunctionCall {
+            name: func.into(),
+            args,
+        },
+        ty,
+    )
 }
 
 pub fn translate_args<'parse, 'field_lookup>(

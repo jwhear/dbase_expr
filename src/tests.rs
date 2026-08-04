@@ -54,7 +54,7 @@ impl TranslationContext for TestTranslator {
             let fmt = dst_tree.push_expr("YYYYMMDD".into());
             Ok((
                 Expression::FunctionCall {
-                    name: "cb_date_to_text",
+                    name: "cb_date_to_text".into(),
                     args: dst_tree.push_args([date, fmt].into_iter()),
                 },
                 FieldType::Character(8),

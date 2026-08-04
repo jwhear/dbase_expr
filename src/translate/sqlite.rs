@@ -113,7 +113,7 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
     match name {
         F::CHR => ok(
             Expression::FunctionCall {
-                name: "CHAR", // SQLite equivalent
+                name: "CHAR".into(), // SQLite equivalent
                 args: dst_tree.push_args([argid(0)?].into_iter()),
             },
             FieldType::Character(1),
@@ -130,7 +130,7 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
             );
             let date = dst_tree.push_fn_call("DATE", &[printf]);
             let coalesce = Expression::FunctionCall {
-                name: "COALESCE",
+                name: "COALESCE".into(),
                 args: dst_tree.push_args([date, exps::COALESCE_DATE].into_iter()),
             };
             ok(coalesce, FieldType::Date)
@@ -143,7 +143,7 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
             let localtime = dst_tree.push_expr("localtime".into());
             ok(
                 Expression::FunctionCall {
-                    name: "strftime",
+                    name: "strftime".into(),
                     args: dst_tree.push_args([fmt, now, localtime].into_iter()),
                 },
                 FieldType::Date,
@@ -155,7 +155,7 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
             let strftime = dst_tree.push_fn_call("STRFTIME", &[fmt, argid(0)?]);
             ok(
                 Expression::FunctionCall {
-                    name: "CAST",
+                    name: "CAST".into(),
                     args: dst_tree.push_args([strftime].into_iter()),
                 },
                 FieldType::Double,
@@ -173,7 +173,7 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
 
             ok(
                 Expression::FunctionCall {
-                    name: "STRFTIME",
+                    name: "STRFTIME".into(),
                     args: dst_tree.push_args([fmt, argid(0)?].into_iter()),
                 },
                 FieldType::Character(8),
@@ -184,7 +184,7 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
             let fmt = dst_tree.push_expr("%Y%m%d".into());
             ok(
                 Expression::FunctionCall {
-                    name: "STRFTIME",
+                    name: "STRFTIME".into(),
                     args: dst_tree.push_args([fmt, argid(0)?].into_iter()),
                 },
                 FieldType::Character(8),
@@ -210,7 +210,7 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
             let negative_n = dst_tree.push_expr(Expression::UnaryOperator(super::UnaryOp::Neg, n));
             ok(
                 Expression::FunctionCall {
-                    name: "SUBSTR",
+                    name: "SUBSTR".into(),
                     args: dst_tree.push_args([spaces_concat_x, negative_n, n].into_iter()),
                 },
                 FieldType::Character(lit_n),
@@ -222,7 +222,7 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
             let strftime = dst_tree.push_fn_call("STRFTIME", &[fmt, argid(0)?]);
             ok(
                 Expression::FunctionCall {
-                    name: "CAST",
+                    name: "CAST".into(),
                     args: dst_tree.push_args([strftime].into_iter()),
                 },
                 FieldType::Double,
@@ -242,7 +242,7 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
             let n = dst_tree.push_expr(n.into());
             ok(
                 Expression::FunctionCall {
-                    name: "SUBSTR",
+                    name: "SUBSTR".into(),
                     args: dst_tree.push_args([argid(0)?, n].into_iter()),
                 },
                 out_ty,
@@ -263,7 +263,7 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
             let extract_day = dst_tree.push_fn_call("SUBSTR", &[trim, lit_7, lit_2]);
             let date = dst_tree.push_fn_call("DATE", &[extract_year, extract_month, extract_day]);
             let coalesce = Expression::FunctionCall {
-                name: "COALESCE",
+                name: "COALESCE".into(),
                 args: dst_tree.push_args([date, exps::COALESCE_DATE].into_iter()),
             };
             ok(coalesce, FieldType::Date)
@@ -305,7 +305,7 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
             let localtime = dst_tree.push_expr("localtime".into());
             ok(
                 Expression::FunctionCall {
-                    name: "time",
+                    name: "time".into(),
                     args: dst_tree.push_args([now, localtime].into_iter()),
                 },
                 FieldType::Character(8),
@@ -321,7 +321,7 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
             let strftime = dst_tree.push_fn_call("STRFTIME", &[fmt, argid(0)?]);
             ok(
                 Expression::FunctionCall {
-                    name: "CAST",
+                    name: "CAST".into(),
                     args: dst_tree.push_args([strftime].into_iter()),
                 },
                 FieldType::Double,
@@ -416,7 +416,7 @@ pub fn translate_binary_op<'field_lookup, 'parse>(
                 dst_tree.push_expr(Expression::SingleQuoteStringLiteral(Cow::from("%s%s%.*c")));
             ok(
                 Expression::FunctionCall {
-                    name: "format",
+                    name: "format".into(),
                     args: dst_tree.push_args(
                         [
                             fmt,

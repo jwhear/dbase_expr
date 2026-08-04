@@ -139,6 +139,7 @@ impl<'field_lookup, 'parse> SQLTree<'field_lookup, 'parse> {
     /// Pushes an [Expression::FunctionCall] to the the tree, with the provided
     ///  `name` and `args`. Returns the resulting [ExpressionId]
     pub fn push_fn_call(&mut self, name: &'static str, args: &[ExpressionId]) -> ExpressionId {
+        let name = name.into();
         let args = self.push_args(args.iter().copied());
         self.push_expr(Expression::FunctionCall { name, args })
     }
@@ -239,7 +240,7 @@ pub enum Expression<'field_lookup, 'parse> {
         field_type: FieldType,
     },
     FunctionCall {
-        name: &'static str,
+        name: Cow<'static, str>,
         args: ArgList,
     },
     BinaryOperator(ExpressionId, BinaryOp, ExpressionId, Parenthesize),
@@ -266,7 +267,6 @@ pub enum Expression<'field_lookup, 'parse> {
     },
     // used for things like "CURRENT_DATE" which are functions but don't
     //  allow the parentheses.
-    //NOTE: review, could be &'static str
     BareFunctionCall(&'static str),
 }
 
@@ -502,7 +502,7 @@ pub trait TranslationContext {
         let lit_len = out_tree.push_expr(i64::from(len).into());
         let args = out_tree.push_args([r, exps::LIT_1, lit_len].into_iter());
         Expression::FunctionCall {
-            name: "SUBSTR",
+            name: "SUBSTR".into(),
             args,
         }
     }
@@ -518,14 +518,14 @@ pub trait TranslationContext {
         // First prep a LENGTH(r) call
         let args = out_tree.push_args([r].into_iter());
         let right_side_len = out_tree.push_expr(Expression::FunctionCall {
-            name: "LENGTH",
+            name: "LENGTH".into(),
             args,
         });
 
         let lit_1 = out_tree.push_expr(Expression::NumberLiteral("1".into()));
         let args = out_tree.push_args([l, lit_1, right_side_len].into_iter());
         Expression::FunctionCall {
-            name: "SUBSTR",
+            name: "SUBSTR".into(),
             args,
         }
     }
