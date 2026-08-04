@@ -3,6 +3,7 @@ use std::borrow::Cow;
 use crate::{
     codebase_functions::CodebaseFunction,
     parser,
+    to_sql::{Printer, PrinterConfig},
     translate::{
         self, Error, Expression, FieldType, SQLTree, TranslationContext,
         postgres::{translate_binary_op, translate_expr as default_translate, translate_fn_call},
@@ -256,7 +257,48 @@ fn str_test() {
             panic!("Expected format string, got {:?}", second)
         };
         assert_eq!(fmt, "FM9999999990");
+
+        let as_sql = format!("{}", Printer::new(tree, PrinterConfig::default()));
+        let padded_result = "LPAD(TO_CHAR(COALESCE(\"A\", 0),'FM9999999990'),10,' ')";
+        assert_eq!(
+            as_sql,
+            format!(
+                "(CASE WHEN LENGTH({padded_result})<=10 THEN {padded_result} ELSE '**********' END)"
+            )
+        );
     }
+
+    // test a few decimal places and a different length
+    let parse_tree = parser::parse("STR(B, 7, 4)").unwrap();
+    let (tree, _) = cx.translate(&parse_tree).unwrap();
+    let as_sql = format!("{}", Printer::new(tree, PrinterConfig::default()));
+    let padded_result = "LPAD(TO_CHAR(COALESCE(\"B\", 0),'FM90.0000'),7,' ')";
+    assert_eq!(
+        as_sql,
+        format!("(CASE WHEN LENGTH({padded_result})<=7 THEN {padded_result} ELSE '*******' END)")
+    );
+
+    // dec is capped at 15
+    let parse_tree = parser::parse("STR(C, 20, 18)").unwrap();
+    let (tree, _) = cx.translate(&parse_tree).unwrap();
+    let as_sql = format!("{}", Printer::new(tree, PrinterConfig::default()));
+    let padded_result = "LPAD(TO_CHAR(COALESCE(\"C\", 0),'FM9990.000000000000000'),20,' ')";
+    assert_eq!(
+        as_sql,
+        format!(
+            "(CASE WHEN LENGTH({padded_result})<=20 THEN {padded_result} ELSE '********************' END)"
+        )
+    );
+
+    // reduce dec is necessary to allow room for the dot (eg: 4,3 -> 4,2)
+    let parse_tree = parser::parse("STR(C, 4, 3)").unwrap();
+    let (tree, _) = cx.translate(&parse_tree).unwrap();
+    let as_sql = format!("{}", Printer::new(tree, PrinterConfig::default()));
+    let padded_result = "LPAD(TO_CHAR(COALESCE(\"C\", 0),'FM0.00'),4,' ')";
+    assert_eq!(
+        as_sql,
+        format!("(CASE WHEN LENGTH({padded_result})<=4 THEN {padded_result} ELSE '****' END)")
+    );
 }
 
 #[test]

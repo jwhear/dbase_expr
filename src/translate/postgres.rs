@@ -504,7 +504,8 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
 
         // STOD(x) => COALESCE(TO_DATE(NULLIF(TRIM(x),''),'YYYYMMDD'),'0001-01-01')
         F::STOD => date("YYYYMMDD", argid(0)?, dst_tree),
-        // STR(num, len, dec) => LPAD(TO_CHAR(num, "FM{varies}", len, ' ')
+        // STR(num[, len, dec]) => LPAD(TO_CHAR(num, {format_string}), len, ' ')
+        // Exception: if the result is longer than the allowed len, we fill in with asterisks
         F::STR => {
             let (val_arg, fmt, len, _) = get_str_fn_args(args, src_tree, dst_tree, cx)?;
             let fmt = dst_tree.push_expr(fmt.into());
