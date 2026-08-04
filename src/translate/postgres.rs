@@ -504,7 +504,7 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
 
         // STOD(x) => COALESCE(TO_DATE(NULLIF(TRIM(x),''),'YYYYMMDD'),'0001-01-01')
         F::STOD => date("YYYYMMDD", argid(0)?, dst_tree),
-        // STR(num, len, dec) => LPAD(TOCHAR(num, "FM{len-dec-1}.0"), len, ' ')
+        // STR(num, len, dec) => LPAD(TO_CHAR(num, "FM{varies}", len, ' ')
         F::STR => {
             let (val_arg, fmt, len, _) = get_str_fn_args(args, src_tree, dst_tree, cx)?;
             let fmt = dst_tree.push_expr(fmt.into());
@@ -916,11 +916,11 @@ pub fn get_str_fn_args<'parse, 'field_lookup>(
     }
 
     let fmt = if dec > 0 {
-        let x = len - dec - 2;
-        format!("FM{:9<x$}0.{:0<dec$}", "", "")
+        let num_nines = len - dec - 2; // make room for the decimals, the zero, and the dot
+        format!("FM{:9<num_nines$}0.{:0<dec$}", "", "")
     } else {
-        let x = len - dec - 1;
-        format!("FM{:9<x$}0", "")
+        let num_nines = len - 1; // make room for the zero (no decimals)
+        format!("FM{:9<num_nines$}0", "")
     };
 
     Ok((val_arg, fmt, len, dec))
