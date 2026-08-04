@@ -513,10 +513,8 @@ fn eval_function(
         },
 
         F::STR => match args {
-            [Value::Number(n, _)] => {
-                let fmt = format!("{:width$.prec$}", n, width = 10, prec = 0); // DBASE defaults: https://www.dbase.com/downloads/dBLLanguageReference2.6.pdf
-                Ok(Value::Str(fmt.trim_end().to_string()))
-            }
+            // DBASE defaults: https://www.dbase.com/downloads/dBLLanguageReference2.6.pdf
+            [Value::Number(n, _)] => evaluate_str(*n, 10.0, 0.0),
             [Value::Number(n, _), Value::Number(len, _)] => evaluate_str(*n, *len, 0.0),
             [
                 Value::Number(n, _),
@@ -989,6 +987,34 @@ mod tests {
         assert_eq!(eval(r#"stod("202606 1")"#), expected);
         assert_eq!(eval(r#"ctod("06/01/26")"#), expected);
         assert_eq!(eval(r#"ctod(" 6/ 1/26")"#), expected);
+    }
+
+    #[test]
+    fn str_defaults() {
+        assert_eq!(
+            eval(r#"STR(1)"#),
+            Ok(Value::FixedLenStr("         1".to_string(), 10, false))
+        );
+        assert_eq!(
+            eval(r#"STR(1, 10)"#),
+            Ok(Value::FixedLenStr("         1".to_string(), 10, false))
+        );
+        assert_eq!(
+            eval(r#"STR(1, 10, 0)"#),
+            Ok(Value::FixedLenStr("         1".to_string(), 10, false))
+        );
+        assert_eq!(
+            eval(r#"STR(1, 10, 1)"#),
+            Ok(Value::FixedLenStr("       1.0".to_string(), 10, false))
+        );
+        assert_eq!(
+            eval(r#"STR(1, 9, 0)"#),
+            Ok(Value::FixedLenStr("        1".to_string(), 9, false))
+        );
+        assert_eq!(
+            eval(r#"STR(1, 9, 1)"#),
+            Ok(Value::FixedLenStr("      1.0".to_string(), 9, false))
+        );
     }
 
     #[test]

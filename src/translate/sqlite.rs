@@ -271,33 +271,25 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
 
         // PRINTF('%{n}.{d}', x)
         F::STR => {
-            match postgres::get_str_fn_args(args, src_tree, dst_tree, cx)? {
-                postgres::StrArgs::WithArgs {
-                    val_arg, len, dec, ..
-                } => {
-                    let fmt = dst_tree.push_expr(format!("%{len}.{dec}f").into()); // e.g. "%.2f"
-                    let expression = dst_tree.push_fn_call("PRINTF", &[fmt, val_arg]);
-                    //if the length of the evaluated expression is greater than the specified len, fill the len with asterisks instead of showing any value at all
-                    let len_expr = dst_tree.push_fn_call("LENGTH", &[expression]);
-                    let rhs = dst_tree.push_expr((len as i64).into());
-                    let cond = dst_tree.push_expr(Expression::BinaryOperator(
-                        len_expr,
-                        super::BinaryOp::Le,
-                        rhs,
-                        Parenthesize::No,
-                    ));
-                    let asterisks = "*".repeat(len);
-                    let iif = Expression::Iif {
-                        cond,
-                        when_true: expression,
-                        when_false: dst_tree.push_expr(asterisks.into()),
-                    };
-                    ok(iif, FieldType::Character(len as u32))
-                }
-                postgres::StrArgs::WithoutArgs(val_arg) => {
-                    ok(Expression::Cast(val_arg, "text"), FieldType::Memo)
-                }
-            }
+            let (val_arg, _, len, dec) = postgres::get_str_fn_args(args, src_tree, dst_tree, cx)?;
+            let fmt = dst_tree.push_expr(format!("%{len}.{dec}f").into()); // e.g. "%.2f"
+            let expression = dst_tree.push_fn_call("PRINTF", &[fmt, val_arg]);
+            //if the length of the evaluated expression is greater than the specified len, fill the len with asterisks instead of showing any value at all
+            let len_expr = dst_tree.push_fn_call("LENGTH", &[expression]);
+            let rhs = dst_tree.push_expr((len as i64).into());
+            let cond = dst_tree.push_expr(Expression::BinaryOperator(
+                len_expr,
+                super::BinaryOp::Le,
+                rhs,
+                Parenthesize::No,
+            ));
+            let asterisks = "*".repeat(len);
+            let iif = Expression::Iif {
+                cond,
+                when_true: expression,
+                when_false: dst_tree.push_expr(asterisks.into()),
+            };
+            ok(iif, FieldType::Character(len as u32))
         }
         // TIME() -> time('now', 'localtime')
         F::TIME => {
