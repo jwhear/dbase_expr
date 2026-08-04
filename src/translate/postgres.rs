@@ -598,6 +598,7 @@ pub fn translate_binary_op<'parse, 'field_lookup, T: TranslationContext>(
 }
 
 /// The same as translate_binary_op but useful if you've already translated l and don't want to do it again
+#[allow(clippy::too_many_arguments)]
 pub fn translate_binary_op_right<'parse, 'field_lookup, T: TranslationContext>(
     cx: &'field_lookup T,
     ast_l: &'parse parser::Expression<'parse>,

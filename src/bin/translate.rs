@@ -20,7 +20,7 @@ struct Cli {
     ///   tbl, field, type, len, dec, <other fields ignored>
     fields: PathBuf,
 
-    ///
+    /// Which SQL backend to target
     #[arg(long, value_enum, default_value = "postgres")]
     target: Target,
 }
@@ -174,7 +174,7 @@ impl TranslationContext for Translator {
 
         self.field_info
             .get(&key)
-            .map(|ft| (Cow::from(field.clone()), ft.clone()))
+            .map(|ft| (Cow::from(field.clone()), *ft))
             .ok_or_else(|| format!("Unknown field: {table}->{field}"))
     }
 
