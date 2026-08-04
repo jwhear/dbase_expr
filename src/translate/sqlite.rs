@@ -136,6 +136,20 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
             ok(coalesce, FieldType::Date)
         }
 
+        // DATE() => STRFTIME('%Y%m%d', 'now', 'localtime')
+        F::DATE => {
+            let fmt = dst_tree.push_expr("%Y%m%d".into());
+            let now = dst_tree.push_expr("now".into());
+            let localtime = dst_tree.push_expr("localtime".into());
+            ok(
+                Expression::FunctionCall {
+                    name: "strftime",
+                    args: dst_tree.push_args([fmt, now, localtime].into_iter()),
+                },
+                FieldType::Date,
+            )
+        }
+
         F::DAY => {
             let fmt = dst_tree.push_expr("'%d'".into());
             let strftime = dst_tree.push_fn_call("STRFTIME", &[fmt, argid(0)?]);
@@ -180,18 +194,26 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
         // SQLite doesn't have LPAD, so transform
         //   PADL(x, n) -> SUBSTR(<lots of spaces> || x, -n, n)
         F::PADL => {
-            let n: u32 = match dst_tree.get_expr_unchecked(argid(1)?) {
+            let lit_n: u32 = match dst_tree.get_expr_unchecked(argid(1)?) {
                 Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(1)),
                 _ => Err(wrong_type(1)),
             }?;
-            let spaces = " ".repeat(n as usize);
+            let spaces = " ".repeat(lit_n as usize);
             let spaces = dst_tree.push_expr(spaces.into());
+            let spaces_concat_x = dst_tree.push_expr(Expression::BinaryOperator(
+                spaces,
+                TranslateBinaryOp::Concat,
+                argid(0)?,
+                Parenthesize::No,
+            ));
+            let n = argid(1)?;
+            let negative_n = dst_tree.push_expr(Expression::UnaryOperator(super::UnaryOp::Neg, n));
             ok(
                 Expression::FunctionCall {
                     name: "SUBSTR",
-                    args: dst_tree.push_args([spaces, argid(1)?].into_iter()),
+                    args: dst_tree.push_args([spaces_concat_x, negative_n, n].into_iter()),
                 },
-                FieldType::Character(n),
+                FieldType::Character(lit_n),
             )
         }
 
