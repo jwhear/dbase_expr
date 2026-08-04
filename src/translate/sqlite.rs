@@ -299,6 +299,18 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
                 }
             }
         }
+        // TIME() -> time('now', 'localtime')
+        F::TIME => {
+            let now = dst_tree.push_expr("now".into());
+            let localtime = dst_tree.push_expr("localtime".into());
+            ok(
+                Expression::FunctionCall {
+                    name: "time",
+                    args: dst_tree.push_args([now, localtime].into_iter()),
+                },
+                FieldType::Character(8),
+            )
+        }
         F::VAL => ok(
             Expression::Cast(argid(0)?, "REAL"),
             FieldType::Numeric { len: 0, dec: 0 },

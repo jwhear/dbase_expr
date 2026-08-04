@@ -535,6 +535,18 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
             }
         }
         F::SUBSTR => translate_substr("SUBSTR", args, src_tree, dst_tree, cx),
+        // TIME() => TO_CHAR(CURRENT_TIME, 'HH24:MI:SS')
+        F::TIME => {
+            let current_time = dst_tree.push_expr(Expression::BareFunctionCall("CURRENT_TIME"));
+            let fmt = dst_tree.push_expr("HH24:MI:SS".into());
+            ok(
+                Expression::FunctionCall {
+                    name: "TO_CHAR",
+                    args: dst_tree.push_args([current_time, fmt].into_iter()),
+                },
+                FieldType::Character(8),
+            )
+        }
         F::UPPER => ok(
             Expression::FunctionCall {
                 name: "UPPER",

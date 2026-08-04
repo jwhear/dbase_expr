@@ -191,6 +191,7 @@ fn expr_tests() {
         "1. + 2 = 3.00",
         ".1 + 0.2 = 000.3",
         "USER() + \"Hello world\"",
+        "TIME()",
     ];
 
     let value_lookup = |_alias: Option<&str>, field_name: &str| -> Option<evaluate::Value> {
@@ -268,6 +269,8 @@ fn to_sql_tests<T: TranslationContext>(cx: &T) {
         "a + b + c + a + b",
         // Custom function translation
         "USER() + \"Hello world\"",
+        // TIME()
+        "TIME() < '13:00:00'",
     ];
 
     for test in tests.iter() {
