@@ -295,30 +295,44 @@ pub trait TranslationContext {
 
     /// Truncate the right side of a string comparison to a fixed length.
     fn string_comp_right(&self, r: ExprRef, len: u32) -> ExprRef {
-        expr_ref(Expression::FunctionCall {
-            name: "SUBSTR".into(),
-            args: vec![
-                r,
-                expr_ref(Expression::NumberLiteral("1".into())),
-                expr_ref(Expression::NumberLiteral(len.to_string())),
-            ],
-        })
+        let already_short_enough = matches!(
+            &*r.borrow(),
+            Expression::SingleQuoteStringLiteral(s) if s.len() <= len as usize
+        );
+
+        if already_short_enough {
+            return r;
+        }
+
+        substr_to(r, number_literal(len))
     }
 
     /// The left side of the string comparison should be truncated to the length of the right side (basically a startswith compare)
     fn string_comp_left(&self, l: ExprRef, r: ExprRef) -> ExprRef {
-        let right_side_len_expression = expr_ref(Expression::FunctionCall {
-            name: "LENGTH".into(),
-            args: vec![r],
-        });
-        expr_ref(Expression::FunctionCall {
-            name: "SUBSTR".into(),
-            args: vec![
-                l,
-                expr_ref(Expression::NumberLiteral("1".into())),
-                right_side_len_expression,
-            ],
-        })
+        let known_r_len = match &*r.borrow() {
+            Expression::SingleQuoteStringLiteral(s) => Some(s.len()),
+            _ => None,
+        };
+
+        let Some(r_len) = known_r_len else {
+            //substr to the len of the right side (unknown so we use an expression)
+            let len_expr = expr_ref(Expression::FunctionCall {
+                name: "LENGTH".into(),
+                args: vec![r],
+            });
+            return substr_to(l, len_expr);
+        };
+
+        let already_short_enough = matches!(
+            &*l.borrow(),
+            Expression::Field { field_type: FieldType::Character(len), .. } if *len as usize <= r_len
+        );
+
+        if already_short_enough {
+            return l;
+        }
+
+        substr_to(l, number_literal(r_len))
     }
 }
 
@@ -332,6 +346,21 @@ fn escape_single_quotes(s: &str) -> String {
         res.push(c);
     }
     res
+}
+
+fn substr_to(expr: ExprRef, len_expr: ExprRef) -> ExprRef {
+    expr_ref(Expression::FunctionCall {
+        name: "SUBSTR".into(),
+        args: vec![
+            expr,
+            expr_ref(Expression::NumberLiteral("1".into())),
+            len_expr,
+        ],
+    })
+}
+
+fn number_literal(n: impl ToString) -> ExprRef {
+    expr_ref(Expression::NumberLiteral(n.to_string()))
 }
 
 #[cfg(test)]
