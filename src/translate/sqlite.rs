@@ -271,7 +271,7 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
 
         // PRINTF('%{n}.{d}', x)
         F::STR => {
-            let (val_arg, _, len, dec) = postgres::get_str_fn_args(args, src_tree, dst_tree, cx)?;
+            let (val_arg, len, dec) = postgres::get_str_fn_args(args, src_tree, dst_tree, cx)?;
             let fmt = dst_tree.push_expr(format!("%{len}.{dec}f").into()); // e.g. "%.2f"
             let expression = dst_tree.push_fn_call("PRINTF", &[fmt, val_arg]);
             //if the length of the evaluated expression is greater than the specified len, fill the len with asterisks instead of showing any value at all

@@ -507,7 +507,14 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
         // STR(num[, len, dec]) => LPAD(TO_CHAR(num, {format_string}), len, ' ')
         // Exception: if the result is longer than the allowed len, we fill in with asterisks
         F::STR => {
-            let (val_arg, fmt, len, _) = get_str_fn_args(args, src_tree, dst_tree, cx)?;
+            let (val_arg, len, dec) = get_str_fn_args(args, src_tree, dst_tree, cx)?;
+            let fmt = if dec > 0 {
+                let num_nines = len - dec - 2; // make room for the decimals, the zero, and the dot
+                format!("FM{:9<num_nines$}0.{:0<dec$}", "", "")
+            } else {
+                let num_nines = len - 1; // make room for the zero (no decimals)
+                format!("FM{:9<num_nines$}0", "")
+            };
             let fmt = dst_tree.push_expr(fmt.into());
             let to_char = dst_tree.push_fn_call("TO_CHAR", &[val_arg, fmt]);
             let len_literal = dst_tree.push_expr(Expression::NumberLiteral(len.to_string().into()));
@@ -874,7 +881,7 @@ pub fn get_str_fn_args<'parse, 'field_lookup>(
     src_tree: &'parse crate::parser::ParseTree<'parse>,
     dst_tree: &mut SQLTree<'field_lookup, 'parse>,
     cx: &'field_lookup impl TranslationContext,
-) -> std::result::Result<(ExpressionId, String, usize, usize), Error> {
+) -> std::result::Result<(ExpressionId, usize, usize), Error> {
     let dst_args = translate_args(args, src_tree, dst_tree, cx)?;
     let name = F::STR;
 
@@ -916,15 +923,7 @@ pub fn get_str_fn_args<'parse, 'field_lookup>(
         dec = len.saturating_sub(2); //to allow space for the '.', something like 2,1 doesn't make sense since there would be no space for the leading 0 so codebase just removes the dec
     }
 
-    let fmt = if dec > 0 {
-        let num_nines = len - dec - 2; // make room for the decimals, the zero, and the dot
-        format!("FM{:9<num_nines$}0.{:0<dec$}", "", "")
-    } else {
-        let num_nines = len - 1; // make room for the zero (no decimals)
-        format!("FM{:9<num_nines$}0", "")
-    };
-
-    Ok((val_arg, fmt, len, dec))
+    Ok((val_arg, len, dec))
 }
 
 pub fn translate_substr<'parse, 'field_lookup>(
