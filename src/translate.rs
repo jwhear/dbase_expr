@@ -297,7 +297,7 @@ pub trait TranslationContext {
     fn string_comp_right(&self, r: ExprRef, len: u32) -> ExprRef {
         let already_short_enough = matches!(
             &*r.borrow(),
-            Expression::SingleQuoteStringLiteral(s) if s.len() <= len as usize
+            Expression::SingleQuoteStringLiteral(s) if s.chars().count() <= len as usize
         );
 
         if already_short_enough {
@@ -310,7 +310,7 @@ pub trait TranslationContext {
     /// The left side of the string comparison should be truncated to the length of the right side (basically a startswith compare)
     fn string_comp_left(&self, l: ExprRef, r: ExprRef) -> ExprRef {
         let known_r_len = match &*r.borrow() {
-            Expression::SingleQuoteStringLiteral(s) => Some(s.len()),
+            Expression::SingleQuoteStringLiteral(s) => Some(s.chars().count()),
             _ => None,
         };
 
