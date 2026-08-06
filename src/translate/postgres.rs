@@ -775,9 +775,7 @@ pub fn translate_binary_op_right<'parse, 'field_lookup, T: TranslationContext>(
             let r_tr = translate_expr(r, src_tree, dst_tree, cx)?.0;
             let r_tr = dst_tree.push_expr(r_tr);
             let left = cx.string_comp_left(l_tr, r_tr, dst_tree);
-            let left = dst_tree.push_expr(left);
             let right = cx.string_comp_right(r_tr, len, dst_tree);
-            let right = dst_tree.push_expr(right);
             tr_binop(left, op.try_into().unwrap(), right, FieldType::Logical)
         }
         // Similar logic with a memo
@@ -792,12 +790,7 @@ pub fn translate_binary_op_right<'parse, 'field_lookup, T: TranslationContext>(
             let right = translate_expr(r, src_tree, dst_tree, cx)?.0;
             let right = dst_tree.push_expr(right);
             let left = cx.string_comp_left(left, right, dst_tree);
-            tr_binop(
-                dst_tree.push_expr(left),
-                op.try_into().unwrap(),
-                right,
-                FieldType::Logical,
-            )
+            tr_binop(left, op.try_into().unwrap(), right, FieldType::Logical)
         }
         (parser::BinaryOp::Eq, FieldType::Memo | FieldType::Character(_)) if is_trim(ast_l) => {
             binop(l, BinaryOp::Eq, r, FieldType::Logical)
@@ -812,7 +805,6 @@ pub fn translate_binary_op_right<'parse, 'field_lookup, T: TranslationContext>(
             let right = translate_expr(r, src_tree, dst_tree, cx)?.0;
             let right = dst_tree.push_expr(right);
             let trimmed_r = cx.string_comp_right(right, len, dst_tree);
-            let trimmed_r = dst_tree.push_expr(trimmed_r);
             let left = dst_tree.push_expr(l);
             tr_binop(left, BinaryOp::StartsWith, trimmed_r, FieldType::Logical)
         }
@@ -829,7 +821,7 @@ pub fn translate_binary_op_right<'parse, 'field_lookup, T: TranslationContext>(
             let starts_with = tr_binop(
                 dst_tree.push_expr(l),
                 BinaryOp::StartsWith,
-                dst_tree.push_expr(trimmed_r),
+                trimmed_r,
                 FieldType::Logical,
             );
             let expr = Expression::UnaryOperator(UnaryOp::Not, dst_tree.push_expr(starts_with?.0));

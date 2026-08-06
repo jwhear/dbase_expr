@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use crate::{
     codebase_functions::CodebaseFunction as F,
-    parser::{self, ParseTree},
+    parser::{self, ExpressionId, ParseTree},
     translate::{
         BinaryOp as TranslateBinaryOp, Error, ExpResult, Expression, FieldType, Parenthesize,
         SQLTree, TranslationContext, exps, ok,
@@ -64,10 +64,9 @@ where
 }
 
 fn expr_between_right_side<'field_lookup, 'parse>(
-    expression: Expression<'field_lookup, 'parse>,
+    expression: ExpressionId,
     dst_tree: &mut SQLTree<'field_lookup, 'parse>,
 ) -> Expression<'field_lookup, 'parse> {
-    let expression = dst_tree.push_expr(expression);
     let char = dst_tree.push_expr(Expression::BareFunctionCall("char(0xFFFF)"));
     let appended = dst_tree.push_expr(Expression::BinaryOperator(
         expression,
@@ -341,7 +340,7 @@ pub fn translate_binary_op<'field_lookup, 'parse>(
             let translated_r = default_translate(r, src_tree, dst_tree, cx)?.0;
             let modified_r = expr_between_right_side(
                 match ty {
-                    FieldType::Memo => translated_r,
+                    FieldType::Memo => dst_tree.push_expr(translated_r),
                     FieldType::Character(len) => {
                         let translated_r = dst_tree.push_expr(translated_r);
                         cx.string_comp_right(translated_r, len, dst_tree)

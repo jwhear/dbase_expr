@@ -494,40 +494,53 @@ pub trait TranslationContext {
 
     /// Truncate the right side of a string comparison to a fixed length.
     fn string_comp_right<'field_lookup, 'parse>(
-        &'field_lookup self,
+        &self,
         r: ExpressionId,
         len: u32,
-        out_tree: &mut SQLTree<'field_lookup, 'parse>,
-    ) -> Expression<'field_lookup, 'parse> {
-        let lit_len = out_tree.push_expr(i64::from(len).into());
-        let args = out_tree.push_args([r, exps::LIT_1, lit_len].into_iter());
-        Expression::FunctionCall {
-            name: "SUBSTR".into(),
-            args,
+        dst_tree: &mut SQLTree,
+    ) -> ExpressionId {
+        let already_short_enough = matches!(
+            dst_tree.get_expr_unchecked(r),
+            Expression::SingleQuoteStringLiteral(s) if s.chars().count() <= len as usize
+        );
+
+        if already_short_enough {
+            return r;
         }
+
+        let len = dst_tree.push_expr(Expression::NumberLiteral(len.to_string().into()));
+        substr_to(r, len, dst_tree)
     }
 
     /// The left side of the string comparison should be truncated to the length of the right side (basically a startswith compare)
-    /// The output will look like `SUBSTR(l, 1, LENGTH(r))`
     fn string_comp_left<'field_lookup, 'parse>(
-        &'field_lookup self,
+        &self,
         l: ExpressionId,
         r: ExpressionId,
-        out_tree: &mut SQLTree<'field_lookup, 'parse>,
-    ) -> Expression<'field_lookup, 'parse> {
-        // First prep a LENGTH(r) call
-        let args = out_tree.push_args([r].into_iter());
-        let right_side_len = out_tree.push_expr(Expression::FunctionCall {
-            name: "LENGTH".into(),
-            args,
-        });
+        dst_tree: &mut SQLTree,
+    ) -> ExpressionId {
+        let known_r_len = match dst_tree.get_expr_unchecked(r) {
+            Expression::SingleQuoteStringLiteral(s) => Some(s.chars().count()),
+            _ => None,
+        };
 
-        let lit_1 = out_tree.push_expr(Expression::NumberLiteral("1".into()));
-        let args = out_tree.push_args([l, lit_1, right_side_len].into_iter());
-        Expression::FunctionCall {
-            name: "SUBSTR".into(),
-            args,
+        let Some(r_len) = known_r_len else {
+            //substr to the len of the right side (unknown so we use an expression)
+            let len_expr = dst_tree.push_fn_call("LENGTH".into(), &[r]);
+            return substr_to(l, len_expr, dst_tree);
+        };
+
+        let already_short_enough = matches!(
+            dst_tree.get_expr_unchecked(l),
+            Expression::Field { field_type: FieldType::Character(len), .. } if *len as usize <= r_len
+        );
+
+        if already_short_enough {
+            return l;
         }
+
+        let r_len = dst_tree.push_expr(Expression::NumberLiteral(r_len.to_string().into()));
+        substr_to(l, r_len, dst_tree)
     }
 }
 
@@ -553,6 +566,14 @@ fn escape_single_quotes(s: &str) -> Cow<'_, str> {
             res.into()
         }
     }
+}
+
+fn substr_to<'field_lookup, 'parse>(
+    expr: ExpressionId,
+    len_expr: ExpressionId,
+    dst_tree: &mut SQLTree,
+) -> ExpressionId {
+    dst_tree.push_fn_call("SUBSTR".into(), &[expr, exps::LIT_1, len_expr])
 }
 
 #[cfg(test)]
