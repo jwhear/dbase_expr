@@ -504,35 +504,37 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
 
         // STOD(x) => COALESCE(TO_DATE(NULLIF(TRIM(x),''),'YYYYMMDD'),'0001-01-01')
         F::STOD => date("YYYYMMDD", argid(0)?, dst_tree),
-        // STR(num, len, dec) => PRINTF("%{len}.{dec}f", num)
+        // STR(num[, len, dec]) => LPAD(TO_CHAR(num, {format_string}), len, ' ')
+        // Exception: if the result is longer than the allowed len, we fill in with asterisks
         F::STR => {
-            match get_str_fn_args(args, src_tree, dst_tree, cx)? {
-                StrArgs::WithArgs {
-                    val_arg, fmt, len, ..
-                } => {
-                    let fmt = dst_tree.push_expr(fmt.into());
-                    let expression = dst_tree.push_fn_call("TO_CHAR", &[val_arg, fmt]);
-                    //if the length of the evaluated expression is greater than the specified len, fill the len with asterisks instead of showing any value at all
-                    let len_expr = dst_tree.push_fn_call("LENGTH", &[expression]);
-                    let rhs = dst_tree.push_expr((len as i64).into());
-                    let cond = dst_tree.push_expr(Expression::BinaryOperator(
-                        len_expr,
-                        BinaryOp::Le,
-                        rhs,
-                        Parenthesize::No,
-                    ));
-                    let asterisks = "*".repeat(len);
-                    let iif = Expression::Iif {
-                        cond,
-                        when_true: expression,
-                        when_false: dst_tree.push_expr(asterisks.into()),
-                    };
-                    ok(iif, FieldType::Character(len as u32))
-                }
-                StrArgs::WithoutArgs(val_arg) => {
-                    ok(Expression::Cast(val_arg, "text"), FieldType::Memo)
-                }
-            }
+            let (val_arg, len, dec) = get_str_fn_args(args, src_tree, dst_tree, cx)?;
+            let fmt = if dec > 0 {
+                let num_nines = len - dec - 2; // make room for the decimals, the zero, and the dot
+                format!("FM{:9<num_nines$}0.{:0<dec$}", "", "")
+            } else {
+                let num_nines = len - 1; // make room for the zero (no decimals)
+                format!("FM{:9<num_nines$}0", "")
+            };
+            let fmt = dst_tree.push_expr(fmt.into());
+            let to_char = dst_tree.push_fn_call("TO_CHAR", &[val_arg, fmt]);
+            let len_literal = dst_tree.push_expr(Expression::NumberLiteral(len.to_string().into()));
+            let pad_char = dst_tree.push_expr(Expression::SingleQuoteStringLiteral(" ".into()));
+            let expression = dst_tree.push_fn_call("LPAD", &[to_char, len_literal, pad_char]);
+            //if the length of the evaluated expression is greater than the specified len, fill the len with asterisks instead of showing any value at all
+            let len_expr = dst_tree.push_fn_call("LENGTH", &[expression]);
+            let cond = dst_tree.push_expr(Expression::BinaryOperator(
+                len_expr,
+                BinaryOp::Le,
+                len_literal,
+                Parenthesize::No,
+            ));
+            let asterisks = "*".repeat(len);
+            let iif = Expression::Iif {
+                cond,
+                when_true: expression,
+                when_false: dst_tree.push_expr(asterisks.into()),
+            };
+            ok(iif, FieldType::Character(len as u32))
         }
         F::SUBSTR => translate_substr("SUBSTR", args, src_tree, dst_tree, cx),
         // TIME() => TO_CHAR(CURRENT_TIME, 'HH24:MI:SS')
@@ -874,22 +876,12 @@ pub fn translate_binary_op_right<'parse, 'field_lookup, T: TranslationContext>(
     }
 }
 
-pub enum StrArgs {
-    WithArgs {
-        val_arg: ExpressionId,
-        fmt: String,
-        len: usize,
-        dec: usize,
-    },
-    WithoutArgs(ExpressionId),
-}
-
 pub fn get_str_fn_args<'parse, 'field_lookup>(
     args: &'parse [parser::ExpressionId],
     src_tree: &'parse crate::parser::ParseTree<'parse>,
     dst_tree: &mut SQLTree<'field_lookup, 'parse>,
     cx: &'field_lookup impl TranslationContext,
-) -> std::result::Result<StrArgs, Error> {
+) -> std::result::Result<(ExpressionId, usize, usize), Error> {
     let dst_args = translate_args(args, src_tree, dst_tree, cx)?;
     let name = F::STR;
 
@@ -901,67 +893,37 @@ pub fn get_str_fn_args<'parse, 'field_lookup>(
             .ok_or(Error::IncorrectArgCount(format!("{name:?}"), index))
     };
 
-    if args.len() == 1 {
-        return Ok(StrArgs::WithoutArgs(argid(0)?));
-    }
-
-    let wrong_type = |index| wrong_type(index, &F::STR, args);
-
-    if args.len() < 2 {
-        return Err(Error::IncorrectArgCount(format!("{name:?}"), 1));
-    }
-
     let val_arg = argid(0)?;
-    let len_arg = dst_tree.get_expr_unchecked(dst_args[1].0);
 
     // `len` and dec` must be constants according to CB docs, so we can get them and convert to integers
-    let len: i64 = match len_arg {
-        Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(1)),
-        _ => Err(wrong_type(1)),
-    }?;
-    let len: usize = len
-        .try_into()
-        .map_err(|_| Error::Other("STR length must be a positive integer".into()))?;
+    let const_to_int = |index: usize, default: usize| -> Result<usize, Error> {
+        let arg = match argid(index) {
+            Ok(v) => dst_tree.get_expr_unchecked(v),
+            Err(Error::IncorrectArgCount(..)) => return Ok(default),
+            Err(e) => return Err(e),
+        };
 
-    // codebase treats a missing dec arg the same as a zero
-    if args.len() == 2 {
-        return Ok(StrArgs::WithArgs {
-            val_arg,
-            fmt: format!("FM{:9<len$}0", ""),
-            len,
-            dec: 0,
-        });
-    }
+        let val: i64 = match arg {
+            Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(1, &F::STR, args)),
+            _ => Err(wrong_type(1, &F::STR, args)),
+        }?;
+        let val: usize = val
+            .try_into()
+            .map_err(|_| Error::Other("STR length must be a positive integer".into()))?;
+        Ok(val)
+    };
 
-    let dec_arg = dst_tree.get_expr_unchecked(dst_args[2].0);
-    let dec: i64 = match dec_arg {
-        Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(2)),
-        _ => Err(wrong_type(2)),
-    }?;
-    let dec: usize = dec
-        .try_into()
-        .map_err(|_| Error::Other("STR dec must be a positive integer".into()))?;
+    // DBASE defaults: https://www.dbase.com/downloads/dBLLanguageReference2.6.pdf
+    let len = const_to_int(1, 10)?;
+    let mut dec = const_to_int(2, 0)?;
 
-    //clamp dec to 15 (codebase max)
-    let mut dec: usize = dec.min(15);
-
+    // clamp dec to 15 (codebase max)
+    dec = dec.min(15);
     if len <= dec + 1 {
         dec = len.saturating_sub(2); //to allow space for the '.', something like 2,1 doesn't make sense since there would be no space for the leading 0 so codebase just removes the dec
     }
 
-    let fmt = if dec > 0 {
-        let x = len - dec - 1;
-        format!("FM{:9<x$}0.{:0<dec$}", "", "")
-    } else {
-        format!("FM{:9<len$}0", "")
-    };
-
-    Ok(StrArgs::WithArgs {
-        val_arg,
-        fmt,
-        len,
-        dec,
-    })
+    Ok((val_arg, len, dec))
 }
 
 pub fn translate_substr<'parse, 'field_lookup>(

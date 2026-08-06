@@ -3,6 +3,7 @@ use std::borrow::Cow;
 use crate::{
     codebase_functions::CodebaseFunction,
     parser,
+    to_sql::{Printer, PrinterConfig},
     translate::{
         self, Error, Expression, FieldType, SQLTree, TranslationContext,
         postgres::{translate_binary_op, translate_expr as default_translate, translate_fn_call},
@@ -158,6 +159,145 @@ fn substr_test() {
     assert_eq!(
         *tree.get_expr(args[2]).expect("third arg"),
         Expression::NumberLiteral(Cow::from("3"))
+    );
+}
+
+#[test]
+fn str_test() {
+    let cx = TestTranslator;
+    for variation in ["STR(A, 10, 0)", "STR(A, 10)", "STR(A)"] {
+        let parse_tree = parser::parse(variation).unwrap();
+        let (tree, field_type) = cx.translate(&parse_tree).unwrap();
+        let root = tree.get_root().expect("a root node");
+        assert_eq!(field_type, FieldType::Character(10));
+
+        let Expression::Iif {
+            cond,
+            when_true,
+            when_false,
+        } = root
+        else {
+            panic!("Expected Iif condition, got {root:?}")
+        };
+
+        // length check
+        let cond = tree.get_expr_unchecked(*cond);
+        let Expression::BinaryOperator(l, op, r, _) = cond else {
+            panic!("Expected format string, got {:?}", cond)
+        };
+        let l = tree.get_expr_unchecked(*l);
+        let Expression::FunctionCall {
+            name: func_name,
+            args,
+        } = l
+        else {
+            panic!("Expected FunctionCall, got {:?}", l)
+        };
+        assert_eq!(func_name, "LENGTH");
+        assert_eq!(args.len(), 1);
+        assert_eq!(op, &translate::BinaryOp::Le);
+        let r = tree.get_expr_unchecked(*r);
+        let Expression::NumberLiteral(len) = r else {
+            panic!("Expected number literal, got {:?}", r)
+        };
+        assert_eq!(len, "10");
+
+        // asterisks when the number is too big for the length
+        let when_false = tree.get_expr_unchecked(*when_false);
+        let Expression::SingleQuoteStringLiteral(asterisks) = when_false else {
+            panic!("Expected format string, got {:?}", when_false)
+        };
+        assert_eq!(asterisks, "**********");
+
+        // padding string to correct length
+        let when_true = tree.get_expr_unchecked(*when_true);
+        let Expression::FunctionCall {
+            name: func_name,
+            args,
+        } = when_true
+        else {
+            panic!("Expected FunctionCall, got {:?}", when_true)
+        };
+        assert_eq!(func_name, "LPAD");
+        let args = tree.get_args(args);
+        assert_eq!(args.len(), 3);
+
+        let len = tree.get_expr_unchecked(args[1]);
+        let Expression::NumberLiteral(len) = len else {
+            panic!("Expected number literal, got {:?}", len)
+        };
+        assert_eq!(len, "10");
+
+        let pad_char = tree.get_expr_unchecked(args[2]);
+        let Expression::SingleQuoteStringLiteral(pad_char) = pad_char else {
+            panic!("Expected string literal, got {:?}", pad_char)
+        };
+        assert_eq!(pad_char, " ");
+
+        // converting the number to characters
+        let to_char = tree.get_expr_unchecked(args[0]);
+        let Expression::FunctionCall {
+            name: func_name,
+            args,
+        } = to_char
+        else {
+            panic!("Expected FunctionCall, got {:?}", when_true)
+        };
+        assert_eq!(func_name, "TO_CHAR");
+        let args = tree.get_args(args);
+        assert_eq!(args.len(), 2);
+        let first = tree.get_expr_unchecked(args[0]);
+        let Expression::Field { name, field_type } = first else {
+            panic!("Expected Field, got {:?}", first)
+        };
+        assert_eq!(name, "A");
+        assert_eq!(field_type, &FieldType::Integer);
+        let second = tree.get_expr_unchecked(args[1]);
+        let Expression::SingleQuoteStringLiteral(fmt) = second else {
+            panic!("Expected format string, got {:?}", second)
+        };
+        assert_eq!(fmt, "FM9999999990");
+
+        let as_sql = format!("{}", Printer::new(tree, PrinterConfig::default()));
+        let padded_result = "LPAD(TO_CHAR(COALESCE(\"A\", 0),'FM9999999990'),10,' ')";
+        assert_eq!(
+            as_sql,
+            format!(
+                "(CASE WHEN LENGTH({padded_result})<=10 THEN {padded_result} ELSE '**********' END)"
+            )
+        );
+    }
+
+    // test a few decimal places and a different length
+    let parse_tree = parser::parse("STR(B, 7, 4)").unwrap();
+    let (tree, _) = cx.translate(&parse_tree).unwrap();
+    let as_sql = format!("{}", Printer::new(tree, PrinterConfig::default()));
+    let padded_result = "LPAD(TO_CHAR(COALESCE(\"B\", 0),'FM90.0000'),7,' ')";
+    assert_eq!(
+        as_sql,
+        format!("(CASE WHEN LENGTH({padded_result})<=7 THEN {padded_result} ELSE '*******' END)")
+    );
+
+    // dec is capped at 15
+    let parse_tree = parser::parse("STR(C, 20, 18)").unwrap();
+    let (tree, _) = cx.translate(&parse_tree).unwrap();
+    let as_sql = format!("{}", Printer::new(tree, PrinterConfig::default()));
+    let padded_result = "LPAD(TO_CHAR(COALESCE(\"C\", 0),'FM9990.000000000000000'),20,' ')";
+    assert_eq!(
+        as_sql,
+        format!(
+            "(CASE WHEN LENGTH({padded_result})<=20 THEN {padded_result} ELSE '********************' END)"
+        )
+    );
+
+    // reduce dec is necessary to allow room for the dot (eg: 4,3 -> 4,2)
+    let parse_tree = parser::parse("STR(C, 4, 3)").unwrap();
+    let (tree, _) = cx.translate(&parse_tree).unwrap();
+    let as_sql = format!("{}", Printer::new(tree, PrinterConfig::default()));
+    let padded_result = "LPAD(TO_CHAR(COALESCE(\"C\", 0),'FM0.00'),4,' ')";
+    assert_eq!(
+        as_sql,
+        format!("(CASE WHEN LENGTH({padded_result})<=4 THEN {padded_result} ELSE '****' END)")
     );
 }
 
