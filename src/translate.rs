@@ -493,12 +493,7 @@ pub trait TranslationContext {
     ) -> ExpResult<'field_lookup, 'parse>;
 
     /// Truncate the right side of a string comparison to a fixed length.
-    fn string_comp_right<'field_lookup, 'parse>(
-        &self,
-        r: ExpressionId,
-        len: u32,
-        dst_tree: &mut SQLTree,
-    ) -> ExpressionId {
+    fn string_comp_right(&self, r: ExpressionId, len: u32, dst_tree: &mut SQLTree) -> ExpressionId {
         let already_short_enough = matches!(
             dst_tree.get_expr_unchecked(r),
             Expression::SingleQuoteStringLiteral(s) if s.chars().count() <= len as usize
@@ -513,7 +508,7 @@ pub trait TranslationContext {
     }
 
     /// The left side of the string comparison should be truncated to the length of the right side (basically a startswith compare)
-    fn string_comp_left<'field_lookup, 'parse>(
+    fn string_comp_left(
         &self,
         l: ExpressionId,
         r: ExpressionId,
@@ -526,7 +521,7 @@ pub trait TranslationContext {
 
         let Some(r_len) = known_r_len else {
             //substr to the len of the right side (unknown so we use an expression)
-            let len_expr = dst_tree.push_fn_call("LENGTH".into(), &[r]);
+            let len_expr = dst_tree.push_fn_call("LENGTH", &[r]);
             return substr_to(l, len_expr, dst_tree);
         };
 
@@ -568,12 +563,8 @@ fn escape_single_quotes(s: &str) -> Cow<'_, str> {
     }
 }
 
-fn substr_to<'field_lookup, 'parse>(
-    expr: ExpressionId,
-    len_expr: ExpressionId,
-    dst_tree: &mut SQLTree,
-) -> ExpressionId {
-    dst_tree.push_fn_call("SUBSTR".into(), &[expr, exps::LIT_1, len_expr])
+fn substr_to(expr: ExpressionId, len_expr: ExpressionId, dst_tree: &mut SQLTree) -> ExpressionId {
+    dst_tree.push_fn_call("SUBSTR", &[expr, exps::LIT_1, len_expr])
 }
 
 #[cfg(test)]
