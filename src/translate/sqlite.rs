@@ -98,29 +98,37 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
     dst_tree: &mut SQLTree<'field_lookup, 'parse>,
     cx: &'field_lookup impl TranslationContext,
 ) -> ExpResult<'field_lookup, 'parse> {
-    let dst_args = translate_args(args, src_tree, dst_tree, cx)?;
-    // Gets the ExpressionId for the argument at `index`
-    let argid = |index| {
-        dst_args
+    // Lazily translates the specified argument, stores it in the tree, and
+    //  returns the ExpressionId
+    let mut arg = |index| {
+        let arg = args
             .get(index)
-            .map(|&(a, _)| a)
-            .ok_or(Error::IncorrectArgCount(format!("{name:?}"), index))
+            .ok_or_else(|| Error::IncorrectArgCount(format!("{name:?}"), index))?;
+        let arg = src_tree.get_expr_unchecked(*arg);
+        let (exp, ft) = translate_expr(arg, src_tree, dst_tree, cx)?;
+        let id = dst_tree.push_expr(exp);
+        Ok((id, ft))
     };
+    let mut argid = |index| arg(index).map(|(id, _ft)| id);
     let wrong_type = |index| wrong_type(index, name, args);
 
     //these are only the ones that are different from Postgres, everything else falls through to postgres
     match name {
-        F::CHR => ok(
-            Expression::FunctionCall {
-                name: "CHAR".into(), // SQLite equivalent
-                args: dst_tree.push_args([argid(0)?].into_iter()),
-            },
-            FieldType::Character(1),
-        ),
+        F::CHR => {
+            let x = argid(0)?;
+            ok(
+                Expression::FunctionCall {
+                    name: "CHAR".into(), // SQLite equivalent
+                    args: dst_tree.push_args([x].into_iter()),
+                },
+                FieldType::Character(1),
+            )
+        }
 
+        //COALESCE(DATE(NULLIF(TRIM(x),''),'0001-01-01')
         F::CTOD => {
-            //COALESCE(DATE(NULLIF(TRIM(x),''),'0001-01-01')
-            let trim = dst_tree.push_fn_call("TRIM", &[argid(0)?]);
+            let x = argid(0)?;
+            let trim = dst_tree.push_fn_call("TRIM", &[x]);
             let null_if = dst_tree.push_fn_call("NULLIF", &[trim, exps::EMPTY_STR]);
             // Convert format -> 'YYYY-MM-DD' using SUBSTR
             let printf = dst_tree.push_fn_call(
@@ -150,12 +158,14 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
         }
 
         F::DAY => {
+            let x = argid(0)?;
             let fmt = dst_tree.push_expr("%d".into());
-            let strftime = dst_tree.push_fn_call("STRFTIME", &[fmt, argid(0)?]);
+            let strftime = dst_tree.push_fn_call("STRFTIME", &[fmt, x]);
             ok(Expression::Cast(strftime, "REAL"), FieldType::Double)
         }
 
         F::DTOC => {
+            let x = argid(0)?;
             let fmt = if args.len() == 2 {
                 // Equivalent to DTOS
                 "%Y%m%d"
@@ -167,18 +177,19 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
             ok(
                 Expression::FunctionCall {
                     name: "STRFTIME".into(),
-                    args: dst_tree.push_args([fmt, argid(0)?].into_iter()),
+                    args: dst_tree.push_args([fmt, x].into_iter()),
                 },
                 FieldType::Character(8),
             )
         }
 
         F::DTOS => {
+            let x = argid(0)?;
             let fmt = dst_tree.push_expr("%Y%m%d".into());
             ok(
                 Expression::FunctionCall {
                     name: "STRFTIME".into(),
-                    args: dst_tree.push_args([fmt, argid(0)?].into_iter()),
+                    args: dst_tree.push_args([fmt, x].into_iter()),
                 },
                 FieldType::Character(8),
             )
@@ -187,13 +198,14 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
         // SQLite doesn't have LPAD, so transform
         //   PADL(x, n) -> SUBSTR(PRINTF('%<n>s', x), -n)
         F::PADL => {
-            let lit_n: u32 = match dst_tree.get_expr_unchecked(argid(1)?) {
+            let x = argid(0)?;
+            let n = argid(1)?;
+            let lit_n: u32 = match dst_tree.get_expr_unchecked(n) {
                 Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(1)),
                 _ => Err(wrong_type(1)),
             }?;
             let fmt = dst_tree.push_expr(format!("%{lit_n}s").into());
-            let printf = dst_tree.push_fn_call("PRINTF", &[fmt, argid(0)?]);
-            let n = argid(1)?;
+            let printf = dst_tree.push_fn_call("PRINTF", &[fmt, x]);
             let negative_n = dst_tree.push_expr(Expression::UnaryOperator(super::UnaryOp::Neg, n));
             ok(
                 Expression::FunctionCall {
@@ -205,17 +217,20 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
         }
 
         F::MONTH => {
+            let x = argid(0)?;
             let fmt = dst_tree.push_expr("%m".into());
-            let strftime = dst_tree.push_fn_call("STRFTIME", &[fmt, argid(0)?]);
+            let strftime = dst_tree.push_fn_call("STRFTIME", &[fmt, x]);
             ok(Expression::Cast(strftime, "REAL"), FieldType::Double)
         }
 
         F::RIGHT => {
-            let n: u32 = match dst_tree.get_expr_unchecked(argid(1)?) {
+            let (x, x_ty) = arg(0)?;
+            let (n, _) = arg(1)?;
+            let n: u32 = match dst_tree.get_expr_unchecked(n) {
                 Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(1)),
                 _ => Err(wrong_type(1)),
             }?;
-            let out_ty = match dst_args[0].1 {
+            let out_ty = match x_ty {
                 FieldType::Character(len) => FieldType::Character(len - n),
                 _ => FieldType::Memo,
             };
@@ -224,7 +239,7 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
             ok(
                 Expression::FunctionCall {
                     name: "SUBSTR".into(),
-                    args: dst_tree.push_args([argid(0)?, n].into_iter()),
+                    args: dst_tree.push_args([x, n].into_iter()),
                 },
                 out_ty,
             )
@@ -232,7 +247,8 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
         F::STOD => {
             //               | extract_year    | | extract_month   | | extract_day     |
             // COALESCE(DATE(SUBSTR(TRIM(x),1,4),SUBSTR(TRIM(x),5,2),SUBSTR(TRIM(x),7,2)),'0001-01-01')
-            let trim = dst_tree.push_fn_call("TRIM", &[argid(0)?]);
+            let x = argid(0)?;
+            let trim = dst_tree.push_fn_call("TRIM", &[x]);
             // Convert format -> 'YYYY-MM-DD' using SUBSTR
             //TODO this is actually converting to YYYYMMDD!
             let lit_2 = dst_tree.push_expr(2.into());
@@ -290,8 +306,9 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
         ),
 
         F::YEAR => {
+            let x = argid(0)?;
             let fmt = dst_tree.push_expr("%Y".into());
-            let strftime = dst_tree.push_fn_call("STRFTIME", &[fmt, argid(0)?]);
+            let strftime = dst_tree.push_fn_call("STRFTIME", &[fmt, x]);
             ok(Expression::Cast(strftime, "REAL"), FieldType::Double)
         }
 
