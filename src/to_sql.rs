@@ -45,6 +45,13 @@ impl Clone for Box<dyn PrinterContext> {
     }
 }
 
+struct Quoted<'a>(&'a str);
+impl<'a> Display for Quoted<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        write!(f, "\"{}\"", self.0)
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct PostgresPrinterContext;
 
@@ -55,7 +62,7 @@ impl PrinterContext for PostgresPrinterContext {
         name: &str,
         field_type: &FieldType,
     ) -> std::fmt::Result {
-        let quoted = format!("\"{name}\"");
+        let quoted = Quoted(name);
         match field_type {
             FieldType::Character(width) => {
                 write!(out, "RPAD(COALESCE({quoted}, ''), {width}, ' ')")
@@ -75,7 +82,7 @@ impl PrinterContext for PostgresPrinterContext {
                 write!(out, "COALESCE({quoted}, FALSE)")
             }
             FieldType::Memo => write!(out, "COALESCE({quoted}, '')"),
-            _ => out.write_str(&quoted),
+            _ => quoted.fmt(out),
         }
     }
     fn box_clone(&self) -> Box<dyn PrinterContext> {
@@ -95,7 +102,7 @@ impl PrinterContext for SqlitePrinterContext {
         name: &str,
         field_type: &FieldType,
     ) -> std::fmt::Result {
-        let quoted = format!("\"{name}\"");
+        let quoted = Quoted(name);
         match field_type {
             FieldType::Character(width) => {
                 if self.pad_strings {
@@ -105,11 +112,11 @@ impl PrinterContext for SqlitePrinterContext {
                         "COALESCE({quoted}, '') || SUBSTR('{spaces}', 1, CASE WHEN {width} - LENGTH(COALESCE({quoted}, '')) > 0 THEN {width} - LENGTH(COALESCE({quoted}, '')) ELSE 0 END)",
                     )
                 } else {
-                    out.write_str(&quoted)
+                    quoted.fmt(out)
                 }
             }
             FieldType::Date => write!(out, "COALESCE({quoted}, DATE('{COALESCE_DATE_DEFAULT}'))",),
-            _ => out.write_str(&quoted),
+            _ => quoted.fmt(out),
         }
     }
     fn box_clone(&self) -> Box<dyn PrinterContext> {
@@ -127,7 +134,7 @@ impl PrinterContext for MssqlPrinterContext {
         name: &str,
         field_type: &FieldType,
     ) -> std::fmt::Result {
-        let quoted = format!("\"{name}\"");
+        let quoted = Quoted(name);
         match field_type {
             FieldType::Character(width) => {
                 write!(
@@ -147,7 +154,7 @@ impl PrinterContext for MssqlPrinterContext {
             }
             FieldType::Logical => write!(out, "COALESCE({quoted}, FALSE)"),
             FieldType::Memo => write!(out, "COALESCE({quoted}, '')"),
-            _ => out.write_str(&quoted),
+            _ => quoted.fmt(out),
         }
     }
     fn box_clone(&self) -> Box<dyn PrinterContext> {
