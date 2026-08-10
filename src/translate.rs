@@ -60,6 +60,7 @@ pub mod exps {
         (LIT_FALSE, Expression::BoolLiteral(false)),
         (LIT_TRUE, Expression::BoolLiteral(true)),
         (LIT_SPACE, Expression::SingleQuoteStringLiteral(" ".into())),
+        (LIT_DASH, Expression::SingleQuoteStringLiteral("-".into())),
     );
 }
 

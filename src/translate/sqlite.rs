@@ -230,11 +230,15 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
             )
         }
         F::STOD => {
-            //               | extract_year    | | extract_month   | | extract_day     |
-            // COALESCE(DATE(SUBSTR(TRIM(x),1,4),SUBSTR(TRIM(x),5,2),SUBSTR(TRIM(x),7,2)),'0001-01-01')
+            // Convert YYYYMMDD -> 'YYYY-MM-DD'
+            // COALESCE(DATE(
+            //   SUBSTR(TRIM(x),1,4)   // extract year
+            //   || '-' ||
+            //   SUBSTR(TRIM(x),5,2)   // extract month
+            //   || '-' ||
+            //   SUBSTR(TRIM(x),7,2)
+            // ),'0001-01-01')
             let trim = dst_tree.push_fn_call("TRIM", &[argid(0)?]);
-            // Convert format -> 'YYYY-MM-DD' using SUBSTR
-            //TODO this is actually converting to YYYYMMDD!
             let lit_2 = dst_tree.push_expr(2.into());
             let lit_4 = dst_tree.push_expr(4.into());
             let lit_5 = dst_tree.push_expr(5.into());
@@ -242,7 +246,22 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
             let extract_year = dst_tree.push_fn_call("SUBSTR", &[trim, exps::LIT_1, lit_4]);
             let extract_month = dst_tree.push_fn_call("SUBSTR", &[trim, lit_5, lit_2]);
             let extract_day = dst_tree.push_fn_call("SUBSTR", &[trim, lit_7, lit_2]);
-            let date = dst_tree.push_fn_call("DATE", &[extract_year, extract_month, extract_day]);
+            let concat_parts = dst_tree.push_args(
+                [
+                    extract_year,
+                    exps::LIT_DASH,
+                    extract_month,
+                    exps::LIT_DASH,
+                    extract_day,
+                ]
+                .into_iter(),
+            );
+            // concatenate the bits together with dashes
+            let date_str = dst_tree.push_expr(Expression::BinaryOperatorSequence(
+                TranslateBinaryOp::Concat,
+                concat_parts,
+            ));
+            let date = dst_tree.push_fn_call("DATE", &[date_str]);
             let coalesce = Expression::FunctionCall {
                 name: "COALESCE".into(),
                 args: dst_tree.push_args([date, exps::COALESCE_DATE].into_iter()),
@@ -477,6 +496,30 @@ mod tests {
         // format('%s%s%.*c', RTRIM(l), r, LENGTH(l) - LENGTH( RTRIM(l)), ' ')
         assert_eq!(
             r#"format('%s%s%.*c',RTRIM('ab  '),'cd',LENGTH('ab  ')-LENGTH(RTRIM('ab  ')),' ')"#,
+            sql
+        );
+    }
+
+    #[test]
+    fn sqlite_stod() {
+        let translator = SqliteTranslator {
+            field_lookup: |_alias, _name| panic!("This shouldn't be used"),
+        };
+        let input = "STOD('20260810')";
+        let pt = crate::parse(input).expect("parses");
+        let (res, _) = translator.translate(&pt).expect("translates");
+
+        use crate::to_sql::{Printer, PrinterConfig, SqlitePrinterContext};
+        let p = Printer::new(
+            res,
+            PrinterConfig {
+                context: Box::new(SqlitePrinterContext { pad_strings: false }),
+            },
+        );
+
+        let sql = format!("{p}");
+        assert_eq!(
+            r#"COALESCE(DATE((SUBSTR(TRIM('20260810'),1,4) || '-' || SUBSTR(TRIM('20260810'),5,2) || '-' || SUBSTR(TRIM('20260810'),7,2))),'0001-01-01')"#,
             sql
         );
     }
