@@ -29,6 +29,7 @@ pub enum TokenType {
     False,
     StringSingleQuote,
     StringDoubleQuote,
+    StringBracketQuote,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -282,7 +283,9 @@ impl<'input> Lexer<'input> {
     pub fn contents(&self, token: &Token) -> &'input [u8] {
         let s = self.source_of(token);
         match token.ty {
-            TokenType::StringSingleQuote | TokenType::StringDoubleQuote => &s[1..s.len() - 1],
+            TokenType::StringSingleQuote
+            | TokenType::StringDoubleQuote
+            | TokenType::StringBracketQuote => &s[1..s.len() - 1],
             _ => s,
         }
     }
@@ -383,6 +386,17 @@ impl<'input> Lexer<'input> {
                 } else {
                     tok!(StringSingleQuote)
                 }
+            }
+            // Bracket quoted string
+            term if term == b'[' => {
+                self.consume_while(|b| b != b']');
+                if self.is_empty() {
+                    return Err(Error::UnterminatedStringLiteral(start));
+                }
+
+                // consume closing ]
+                self.current += 1;
+                tok!(StringBracketQuote)
             }
 
             // Identifiers start with a-Z or underscore
@@ -666,5 +680,12 @@ mod tests {
 
         let source = u64::from_le_bytes(*b"@3-+/`&)");
         assert_eq!(source, lowercase_u64(source));
+    }
+
+    #[test]
+    fn test_bracket_strings() {
+        let source = r#"[ ' " ]"#;
+        let mut lexer = Lexer::new(source.as_bytes());
+        assert_toks!(lexer, StringBracketQuote);
     }
 }

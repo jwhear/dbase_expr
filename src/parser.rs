@@ -479,6 +479,7 @@ fn is_literal(token: &Token) -> bool {
         TokenType::Number
             | TokenType::StringSingleQuote
             | TokenType::StringDoubleQuote
+            | TokenType::StringBracketQuote
             | TokenType::True
             | TokenType::False
     )
@@ -492,9 +493,9 @@ fn parse_literal<'input>(
         TokenType::True => Ok(Expression::BoolLiteral(true)),
         TokenType::False => Ok(Expression::BoolLiteral(false)),
         TokenType::Number => Ok(Expression::NumberLiteral(lexer.contents(token))),
-        TokenType::StringSingleQuote | TokenType::StringDoubleQuote => {
-            Ok(Expression::StringLiteral(lexer.contents(token)))
-        }
+        TokenType::StringSingleQuote
+        | TokenType::StringDoubleQuote
+        | TokenType::StringBracketQuote => Ok(Expression::StringLiteral(lexer.contents(token))),
         _ => Err(Error::Other(format!(
             "Unexpected token in parse_literal: {:?}",
             token.ty
@@ -929,5 +930,28 @@ mod tests {
             panic!("Expectected a function call");
         };
         assert!(args.is_empty());
+    }
+
+    #[test]
+    fn string_literals() {
+        let tree = parse(r#"'single' + "double" + [bracket]"#).expect("a valid parse");
+        let root = tree.get_root().expect("a root node");
+        let Expression::Sequence(args, BinaryOp::Add) = root else {
+            panic!("expected a sequence");
+        };
+        let args = tree.get_args(args);
+        assert_eq!(args.len(), 3);
+        assert_eq!(
+            *tree.get_expr_unchecked(args[0]),
+            Expression::StringLiteral(b"single")
+        );
+        assert_eq!(
+            *tree.get_expr_unchecked(args[1]),
+            Expression::StringLiteral(b"double")
+        );
+        assert_eq!(
+            *tree.get_expr_unchecked(args[2]),
+            Expression::StringLiteral(b"bracket")
+        );
     }
 }
