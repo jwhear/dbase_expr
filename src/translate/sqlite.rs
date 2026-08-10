@@ -150,15 +150,9 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
         }
 
         F::DAY => {
-            let fmt = dst_tree.push_expr("'%d'".into());
+            let fmt = dst_tree.push_expr("%d".into());
             let strftime = dst_tree.push_fn_call("STRFTIME", &[fmt, argid(0)?]);
-            ok(
-                Expression::FunctionCall {
-                    name: "CAST".into(),
-                    args: dst_tree.push_args([strftime].into_iter()),
-                },
-                FieldType::Double,
-            )
+            ok(Expression::Cast(strftime, "REAL"), FieldType::Double)
         }
 
         F::DTOC => {
@@ -219,13 +213,7 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
         F::MONTH => {
             let fmt = dst_tree.push_expr("%m".into());
             let strftime = dst_tree.push_fn_call("STRFTIME", &[fmt, argid(0)?]);
-            ok(
-                Expression::FunctionCall {
-                    name: "CAST".into(),
-                    args: dst_tree.push_args([strftime].into_iter()),
-                },
-                FieldType::Double,
-            )
+            ok(Expression::Cast(strftime, "REAL"), FieldType::Double)
         }
 
         F::RIGHT => {
@@ -310,13 +298,7 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
         F::YEAR => {
             let fmt = dst_tree.push_expr("%Y".into());
             let strftime = dst_tree.push_fn_call("STRFTIME", &[fmt, argid(0)?]);
-            ok(
-                Expression::FunctionCall {
-                    name: "CAST".into(),
-                    args: dst_tree.push_args([strftime].into_iter()),
-                },
-                FieldType::Double,
-            )
+            ok(Expression::Cast(strftime, "REAL"), FieldType::Double)
         }
 
         other => postgres::translate_fn_call(other, args, src_tree, dst_tree, cx),

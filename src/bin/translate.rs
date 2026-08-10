@@ -37,6 +37,7 @@ pub fn main() {
     let mut t = Translator {
         field_info,
         current_table: "".into(),
+        target: cli.target,
     };
 
     let cx = match cli.target {
@@ -150,6 +151,7 @@ fn read_field_info_from_csv<R: std::io::Read>(
 struct Translator {
     field_info: HashMap<FieldKey, FieldType>,
     current_table: String,
+    target: Target,
 }
 
 impl TranslationContext for Translator {
@@ -184,7 +186,12 @@ impl TranslationContext for Translator {
         in_tree: &'parse ParseTree,
         out_tree: &mut translate::SQLTree<'field_lookup, 'parse>,
     ) -> translate::ExpResult<'field_lookup, 'parse> {
-        translate::sqlite::translate_expr(source, in_tree, out_tree, self)
+        match self.target {
+            Target::Postgres => {
+                translate::postgres::translate_expr(source, in_tree, out_tree, self)
+            }
+            Target::Sqlite => translate::sqlite::translate_expr(source, in_tree, out_tree, self),
+        }
     }
 
     fn translate_fn_call<'field_lookup, 'parse>(
@@ -194,7 +201,14 @@ impl TranslationContext for Translator {
         in_tree: &'parse ParseTree,
         out_tree: &mut translate::SQLTree<'field_lookup, 'parse>,
     ) -> translate::ExpResult<'field_lookup, 'parse> {
-        translate::sqlite::translate_fn_call(name, args, in_tree, out_tree, self)
+        match self.target {
+            Target::Postgres => {
+                translate::postgres::translate_fn_call(name, args, in_tree, out_tree, self)
+            }
+            Target::Sqlite => {
+                translate::sqlite::translate_fn_call(name, args, in_tree, out_tree, self)
+            }
+        }
     }
 
     fn translate_binary_op<'field_lookup, 'parse>(
@@ -205,6 +219,13 @@ impl TranslationContext for Translator {
         in_tree: &'parse ParseTree,
         out_tree: &mut translate::SQLTree<'field_lookup, 'parse>,
     ) -> translate::ExpResult<'field_lookup, 'parse> {
-        translate::sqlite::translate_binary_op(l, op, r, in_tree, out_tree, self)
+        match self.target {
+            Target::Postgres => {
+                translate::postgres::translate_binary_op(self, l, op, r, in_tree, out_tree)
+            }
+            Target::Sqlite => {
+                translate::sqlite::translate_binary_op(l, op, r, in_tree, out_tree, self)
+            }
+        }
     }
 }

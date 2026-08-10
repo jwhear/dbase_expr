@@ -886,8 +886,8 @@ pub fn get_str_fn_args<'parse, 'field_lookup>(
         };
 
         let val: i64 = match arg {
-            Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(1, &F::STR, args)),
-            _ => Err(wrong_type(1, &F::STR, args)),
+            Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(index, &F::STR, args)),
+            _ => Err(wrong_type(index, &F::STR, args)),
         }?;
         let val: usize = val
             .try_into()
