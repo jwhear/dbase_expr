@@ -231,13 +231,13 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
         }
         F::STOD => {
             // Convert YYYYMMDD -> 'YYYY-MM-DD'
-            // COALESCE(DATE(
+            // COALESCE(
             //   SUBSTR(TRIM(x),1,4)   // extract year
             //   || '-' ||
             //   SUBSTR(TRIM(x),5,2)   // extract month
             //   || '-' ||
             //   SUBSTR(TRIM(x),7,2)
-            // ),'0001-01-01')
+            // ,'0001-01-01')
             let trim = dst_tree.push_fn_call("TRIM", &[argid(0)?]);
             let lit_2 = dst_tree.push_expr(2.into());
             let lit_4 = dst_tree.push_expr(4.into());
