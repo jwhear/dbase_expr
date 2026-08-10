@@ -261,10 +261,9 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
                 TranslateBinaryOp::Concat,
                 concat_parts,
             ));
-            let date = dst_tree.push_fn_call("DATE", &[date_str]);
             let coalesce = Expression::FunctionCall {
                 name: "COALESCE".into(),
-                args: dst_tree.push_args([date, exps::COALESCE_DATE].into_iter()),
+                args: dst_tree.push_args([date_str, exps::COALESCE_DATE].into_iter()),
             };
             ok(coalesce, FieldType::Date)
         }
@@ -519,7 +518,7 @@ mod tests {
 
         let sql = format!("{p}");
         assert_eq!(
-            r#"COALESCE(DATE((SUBSTR(TRIM('20260810'),1,4) || '-' || SUBSTR(TRIM('20260810'),5,2) || '-' || SUBSTR(TRIM('20260810'),7,2))),'0001-01-01')"#,
+            r#"COALESCE((SUBSTR(TRIM('20260810'),1,4) || '-' || SUBSTR(TRIM('20260810'),5,2) || '-' || SUBSTR(TRIM('20260810'),7,2)),'0001-01-01')"#,
             sql
         );
     }
