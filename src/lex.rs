@@ -388,7 +388,7 @@ impl<'input> Lexer<'input> {
                 }
             }
             // Bracket quoted string
-            term if term == b'[' => {
+            b'[' => {
                 self.consume_while(|b| b != b']');
                 if self.is_empty() {
                     return Err(Error::UnterminatedStringLiteral(start));
