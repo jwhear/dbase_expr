@@ -7,7 +7,6 @@ default-run = "dbase_expr"
 [dependencies]
 arbitrary = "1.4.1"
 chrono = "0.4.41"
-regex = "1.11.1"
 serde = { version = "1.0.219", features = ["derive"], optional = true }
 strum = "0.27.2"
 strum_macros = "0.27.2"
