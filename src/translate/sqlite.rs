@@ -185,26 +185,20 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
         }
 
         // SQLite doesn't have LPAD, so transform
-        //   PADL(x, n) -> SUBSTR(<lots of spaces> || x, -n, n)
+        //   PADL(x, n) -> SUBSTR(PRINTF('%<n>s', x), -n)
         F::PADL => {
             let lit_n: u32 = match dst_tree.get_expr_unchecked(argid(1)?) {
                 Expression::NumberLiteral(v) => v.parse().map_err(|_| wrong_type(1)),
                 _ => Err(wrong_type(1)),
             }?;
-            let spaces = " ".repeat(lit_n as usize);
-            let spaces = dst_tree.push_expr(spaces.into());
-            let spaces_concat_x = dst_tree.push_expr(Expression::BinaryOperator(
-                spaces,
-                TranslateBinaryOp::Concat,
-                argid(0)?,
-                Parenthesize::No,
-            ));
+            let fmt = dst_tree.push_expr(format!("%{lit_n}s").into());
+            let printf = dst_tree.push_fn_call("PRINTF", &[fmt, argid(0)?]);
             let n = argid(1)?;
             let negative_n = dst_tree.push_expr(Expression::UnaryOperator(super::UnaryOp::Neg, n));
             ok(
                 Expression::FunctionCall {
                     name: "SUBSTR".into(),
-                    args: dst_tree.push_args([spaces_concat_x, negative_n, n].into_iter()),
+                    args: dst_tree.push_args([printf, negative_n].into_iter()),
                 },
                 FieldType::Character(lit_n),
             )
