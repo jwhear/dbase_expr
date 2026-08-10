@@ -124,10 +124,27 @@ impl<'field_lookup, 'parse> SQLTree<'field_lookup, 'parse> {
         self.inner.get_args(list)
     }
 
-    /// See [ExpressionTree::push_expr]
+    /// See [ExpressionTree::push_expr].
+    ///
+    /// Note that this implementation also performs a cache check: if `expr`
+    ///  already exists in this tree, the existing ID is returned.
     #[inline]
     pub fn push_expr(&mut self, expr: Expression<'field_lookup, 'parse>) -> ExpressionId {
-        self.inner.push_expr(expr)
+        // We can ensure prevent unnecessarily large trees by maintaining a cache
+        //  of expressions that we've already seen: if an expression is already in
+        //  the tree we can just return its ID.
+        // I experimented with HashMap but it took the benchmark from
+        //  ~17microsecs to ~27. However: most trees are pretty small and linear
+        //  scans are fast, so we can use inner.expressions itself as our cache!
+        // In my benchmark, this adds about ~1microsec but makes translation
+        //  simpler as that code no longer has to worry about whether an argument
+        //  has already been translated or not.
+        self.inner
+            .expressions
+            .iter()
+            .position(|e| e == &expr)
+            .map(|index| index.into())
+            .unwrap_or_else(|| self.inner.push_expr(expr))
     }
 
     /// See [ExpressionTree::push_args]
