@@ -63,16 +63,6 @@ where
     }
 }
 
-/// Translates a parsed dBase expression to a SQL expression.
-pub fn translate<'field_lookup, 'parse, C: TranslationContext>(
-    tree: &'parse crate::parser::ParseTree<'parse>,
-    cx: &'field_lookup C,
-) -> ExpResult<'field_lookup, 'parse> {
-    let root = tree.get_root().ok_or(Error::EmptyTree)?;
-    let mut dst_tree = SQLTree::new();
-    translate_expr(root, tree, &mut dst_tree, cx)
-}
-
 /// Translates a particular dBase expression to a SQL expression.
 pub fn translate_expr<'field_lookup, 'parse, C: TranslationContext>(
     source: &'parse E<'parse>,
@@ -907,6 +897,10 @@ pub fn get_str_fn_args<'parse, 'field_lookup>(
 
     // DBASE defaults: https://www.dbase.com/downloads/dBLLanguageReference2.6.pdf
     let len = const_to_int(1, 10)?;
+    if len == 0 {
+        return Err(Error::Other("STR length must not be zero".into()));
+    }
+
     let mut dec = const_to_int(2, 0)?;
 
     // clamp dec to 15 (codebase max)
