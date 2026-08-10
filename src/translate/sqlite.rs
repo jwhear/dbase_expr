@@ -7,7 +7,8 @@ use crate::{
         BinaryOp as TranslateBinaryOp, Error, ExpResult, Expression, FieldType, Parenthesize,
         SQLTree, TranslationContext, exps, ok,
         postgres::{
-            self, translate_binary_op_right, translate_expr as default_translate, wrong_type,
+            self, translate_args, translate_binary_op_right, translate_expr as default_translate,
+            wrong_type,
         },
     },
 };
