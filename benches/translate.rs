@@ -67,10 +67,11 @@ fn criterion_benchmark(c: &mut Criterion) {
 
     // Uncomment to see the translated tests
     /*
-    for (tree, root) in tests.iter() {
-        let (exp, _ft) = cx.translate(&root, &tree).expect("translated");
-        let as_sql = format!("{}", Printer::new(exp, PrinterConfig::default()));
-        println!("translated to: {as_sql}",);
+    for tree in tests.iter() {
+        let (sql_tree, _ft) = cx.translate(&tree).expect("translated");
+        let expression_count = sql_tree.inner.expressions.len();
+        let as_sql = format!("{}", Printer::new(sql_tree, PrinterConfig::default()));
+        println!("translated to: {as_sql}; {expression_count} expressions in tree",);
     }
     */
 

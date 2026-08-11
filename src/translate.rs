@@ -140,11 +140,19 @@ impl<'field_lookup, 'parse> SQLTree<'field_lookup, 'parse> {
         // In my benchmark, this adds about ~1microsec but makes translation
         //  simpler as that code no longer has to worry about whether an argument
         //  has already been translated or not.
+
         self.inner
             .expressions
             .iter()
-            .position(|e| e == &expr)
-            .map(|index| index.into())
+            // We're going to iterate in reverse in a sec, let's make sure we
+            //  have the actual index
+            .enumerate()
+            // Iterate in reverse: the looked-for expression is more likely to
+            //  be recent (near the end)
+            .rev()
+            .find(|(_id, e)| *e == &expr)
+            .map(|(id, _)| id.into())
+            // If we didn't find it, push it
             .unwrap_or_else(|| self.inner.push_expr(expr))
     }
 
