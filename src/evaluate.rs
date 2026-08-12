@@ -4,9 +4,8 @@ use std::fmt::Debug;
 use chrono::Datelike;
 use chrono::NaiveDate;
 
-use crate::parser::{BinaryOp, Expression, UnaryOp};
-
 use crate::codebase_functions::CodebaseFunction as F;
+use crate::parser::{BinaryOp, Expression, ParseTree, UnaryOp};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Error {
@@ -19,6 +18,7 @@ pub enum Error {
     DateSubtractionOverflow,
     IncompatibleBinaryOp(BinaryOp, String),
     UnknownFunction(String),
+    EmptyTree,
     Other(String),
 }
 
@@ -95,9 +95,20 @@ impl Debug for Value {
 pub type FieldValueGetter<'a> = &'a dyn Fn(Option<&str>, &str) -> Option<Value>;
 pub type CustomFunctions<'a> = &'a dyn Fn(&str) -> Option<Result<Value, String>>;
 
+/// Evaluate a [ParseTree].
 pub fn evaluate(
+    tree: &ParseTree,
+    get: FieldValueGetter,
+    custom_functions: CustomFunctions,
+) -> Result<Value, Error> {
+    let root = tree.get_root().ok_or(Error::EmptyTree)?;
+    evaluate_expr(root, tree, get, custom_functions)
+}
+
+/// Evaluate a particular [Expression] within a [ParseTree].
+pub fn evaluate_expr(
     expr: &Expression,
-    tree: &crate::parser::ParseTree,
+    tree: &ParseTree,
     get: FieldValueGetter,
     custom_functions: CustomFunctions,
 ) -> Result<Value, Error> {
@@ -189,10 +200,10 @@ pub fn evaluate(
 
                     // Evaluate the whole expression and push it to the stack
                     let first_expr = tree.get_expr_unchecked(arg_exprs[0]);
-                    let mut accum = evaluate(first_expr, tree, get, custom_functions)?;
+                    let mut accum = evaluate_expr(first_expr, tree, get, custom_functions)?;
                     for &expr_id in &arg_exprs[1..] {
                         let expr = tree.get_expr_unchecked(expr_id);
-                        let e = evaluate(expr, tree, get, custom_functions)?;
+                        let e = evaluate_expr(expr, tree, get, custom_functions)?;
                         accum = eval_binary_op(op, accum, e)?;
                     }
                     results.push(accum);
@@ -502,10 +513,8 @@ fn eval_function(
         },
 
         F::STR => match args {
-            [Value::Number(n, _)] => {
-                let fmt = format!("{:width$.prec$}", n, width = 10, prec = 0); // DBASE defaults: https://www.dbase.com/downloads/dBLLanguageReference2.6.pdf
-                Ok(Value::Str(fmt.trim_end().to_string()))
-            }
+            // DBASE defaults: https://www.dbase.com/downloads/dBLLanguageReference2.6.pdf
+            [Value::Number(n, _)] => evaluate_str(*n, 10.0, 0.0),
             [Value::Number(n, _), Value::Number(len, _)] => evaluate_str(*n, *len, 0.0),
             [
                 Value::Number(n, _),
@@ -867,7 +876,7 @@ mod tests {
         let value_lookup = |_: Option<&str>, _: &str| -> Option<Value> { None };
         let custom_functions = |_: &str| None;
         match crate::parser::parse(expr) {
-            Ok((tree, expr)) => evaluate(&expr, &tree, &value_lookup, &custom_functions),
+            Ok(tree) => evaluate(&tree, &value_lookup, &custom_functions),
             Err(e) => Err(Error::Other(format!("{e}"))),
         }
     }
@@ -978,6 +987,34 @@ mod tests {
         assert_eq!(eval(r#"stod("202606 1")"#), expected);
         assert_eq!(eval(r#"ctod("06/01/26")"#), expected);
         assert_eq!(eval(r#"ctod(" 6/ 1/26")"#), expected);
+    }
+
+    #[test]
+    fn str_defaults() {
+        assert_eq!(
+            eval(r#"STR(1)"#),
+            Ok(Value::FixedLenStr("         1".to_string(), 10, false))
+        );
+        assert_eq!(
+            eval(r#"STR(1, 10)"#),
+            Ok(Value::FixedLenStr("         1".to_string(), 10, false))
+        );
+        assert_eq!(
+            eval(r#"STR(1, 10, 0)"#),
+            Ok(Value::FixedLenStr("         1".to_string(), 10, false))
+        );
+        assert_eq!(
+            eval(r#"STR(1, 10, 1)"#),
+            Ok(Value::FixedLenStr("       1.0".to_string(), 10, false))
+        );
+        assert_eq!(
+            eval(r#"STR(1, 9, 0)"#),
+            Ok(Value::FixedLenStr("        1".to_string(), 9, false))
+        );
+        assert_eq!(
+            eval(r#"STR(1, 9, 1)"#),
+            Ok(Value::FixedLenStr("      1.0".to_string(), 9, false))
+        );
     }
 
     #[test]

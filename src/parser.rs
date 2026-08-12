@@ -1,4 +1,5 @@
 use crate::codebase_functions::CodebaseFunction;
+pub use crate::expression_tree::{ArgList, ExpressionId};
 use crate::lex::{Error as LexerError, Lexer, Token, TokenType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,135 +81,21 @@ pub enum Expression<'input> {
     Sequence(ArgList, BinaryOp),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ExpressionId(usize);
-
-/// No Codebase function takes an unlimited number of arguments.
-/// The biggest is DATETIME which takes up to six.
-/// But Sequence (an optimization) effectively takes an an unlimited number.
-/// Note: when parsing a list we can utilize a single scratch Vec like so:
-///   stack frame 1:
-///     parse call expression
-///     loop and recurse to parse arguments
-///     stack frame 2:
-///       parse arguments
-///       push_args(drain from scratch buf)
-///       scratch buf is now "reset" to where it was before we recursed
-///     parse more arguments...
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ArgList {
-    start: usize,
-    len: usize,
-}
-
-impl ArgList {
-    pub fn len(&self) -> usize {
-        self.len
-    }
-
-    #[allow(dead_code)]
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-}
-
-/// Instead of generating a tree of references or smart pointers (Rc), we'll
-///  pack all expressions into a flat array and have them refer to each other by
-///  an id (which is simply an index into that array).
-///
-/// Argument lists require a bit of special handling because we don't want
-///  FunctionCall and ConcatOp to actually carry a Vec and own the subexpressions.
-/// To handle these, all arguments get parsed as Expressions and stored in
-///  [expressions], then their ids are stored in [arg_lists]. A particular argument
-///  list is contiguous within [arg_lists]. For example, when this expression is
-///  parsed:
-///     fn_a(fn_b(1), 2)
-///
-/// This will get parsed into an expressions list:
-///        id=0,                              id=1,     id=2,                              id=3
-///  [Number(1), FunctionCall(fn_b, ArgList(0, 1)), Number(2), FunctionCall(fn_a, ArgList(1, 2))]
-///
-/// The two ArgLists reference spans of arg_lists:
-///  [ExpressionId(0), ExpressionId(1), Expression(2)]
-///
-/// So fn_a's ArgList (1,2) is the span at arg_lists[1..1+2], that is, ExpressionIds 1 and 2.
-/// These in turn map to FunctionCall(fn_b) and Number(2), which are indeed its two arguments.
-pub struct ParseTree<'input> {
-    /// All expressions are stored in a flat list. References are via ExpressionId.
-    expressions: Vec<Expression<'input>>,
-    /// All argument lists are stored packed contiguously
-    arg_lists: Vec<ExpressionId>,
-}
+pub type ParseTree<'input> = crate::expression_tree::ExpressionTree<Expression<'input>>;
 
 impl<'input> std::fmt::Debug for ParseTree<'input> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "ParseTree {{\n  expression: {:?},\n  arg_lists: {:?}}}",
-            self.expressions, self.arg_lists
+            "ParseTree {{\n  expression: {:?},\n  arg_lists: {:?}}}\n  root_id: {:?}",
+            self.expressions,
+            self.arg_lists,
+            self.get_root_id(),
         )
     }
 }
 
 impl<'input> ParseTree<'input> {
-    pub fn new() -> Self {
-        Self {
-            expressions: Vec::with_capacity(32),
-            arg_lists: Vec::with_capacity(64),
-        }
-    }
-
-    /// Create a ParseTree using previously allocated Vecs.
-    pub fn new_from_vecs(
-        expressions: Vec<Expression<'input>>,
-        arg_lists: Vec<ExpressionId>,
-    ) -> Self {
-        Self {
-            expressions,
-            arg_lists,
-        }
-    }
-
-    /// Clears the internal vectors, resetting this tree to a clean state. The
-    ///  internal allocations and capacities are unaffected, making this an
-    ///  efficient way to reuse the memory.
-    pub fn clear(&mut self) {
-        self.expressions.clear();
-        self.arg_lists.clear();
-    }
-
-    /// Add [expr] to this tree, returning the ExpressionId
-    pub fn push_expr(&mut self, expr: Expression<'input>) -> ExpressionId {
-        let id = ExpressionId(self.expressions.len());
-        self.expressions.push(expr);
-        id
-    }
-
-    pub fn push_args(&mut self, ids: impl ExactSizeIterator<Item = ExpressionId>) -> ArgList {
-        let start = self.arg_lists.len();
-        let len = ids.len();
-        self.arg_lists.extend(ids);
-        ArgList { start, len }
-    }
-
-    /// Get the expression with [id]. This panics if [id] doesn't reference an
-    ///  expression pushed to this tree.
-    #[inline]
-    pub fn get_expr_unchecked(&self, id: ExpressionId) -> &Expression<'input> {
-        &self.expressions[id.0]
-    }
-
-    #[inline]
-    pub fn get_expr(&self, id: ExpressionId) -> Option<&Expression<'input>> {
-        self.expressions.get(id.0)
-    }
-
-    /// Get the ExpressionIds representing a particular argument list
-    #[inline]
-    pub fn get_args(&self, list: &ArgList) -> &[ExpressionId] {
-        &self.arg_lists[list.start..list.start + list.len]
-    }
-
     pub fn print_tree(
         &self,
         e: &Expression,
@@ -308,23 +195,13 @@ impl<'input> ParseTree<'input> {
             }
         }
     }
-
-    pub fn is_empty(&self) -> bool {
-        self.expressions.is_empty()
-    }
 }
 
-impl<'input> Default for ParseTree<'input> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-pub struct TreePrinter<'input>(pub ParseTree<'input>, pub Expression<'input>);
+pub struct TreePrinter<'input>(pub ParseTree<'input>, pub ExpressionId);
 
 impl<'input> std::fmt::Display for TreePrinter<'input> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.print_tree(&self.1, f)
+        self.0.print_tree(self.0.get_expr_unchecked(self.1), f)
     }
 }
 
@@ -367,36 +244,34 @@ impl std::fmt::Display for Error {
     }
 }
 
-pub fn parse<'input>(input: &'input str) -> Result<(ParseTree<'input>, Expression<'input>), Error> {
+/// Parse the `input` into a ParseTree. The tree references slices of `'input`,
+///  so is constrained to its lifetime.
+pub fn parse<'input>(input: &'input str) -> Result<ParseTree<'input>, Error> {
     parse_with_depth(input, Depth::default())
 }
+
+/// Like [parse] but with explicit control over how deep to go. Use if the
+///  default for [Depth] are insufficient for your use case.
 pub fn parse_with_depth<'input>(
     input: &'input str,
     depth: Depth,
-) -> Result<(ParseTree<'input>, Expression<'input>), Error> {
-    let mut lexer = Lexer::new(input.as_bytes());
-    let mut arg_scratch = Vec::with_capacity(100);
-    let mut pt = ParseTree::new();
-
-    let root = parse_binary_op(&mut lexer, &mut pt, &mut arg_scratch, 0, depth)?;
-
-    // Make sure we've completely parsed the input
-    if let Ok(Some(tok)) = lexer.next_token()
-        // Codebase stops parsing when it hits an unmatch right paren; this would
-        // normally be a bug, but when it is the last char it's acceptable.
-        && !(tok.ty == TokenType::ParenRight && lexer.is_empty())
-    {
-        Err(Error::UnexpectedToken(tok))
-    } else {
-        Ok((pt, root))
-    }
+) -> Result<ParseTree<'input>, Error> {
+    let mut tree = ParseTree::new();
+    let _root_id = parse_into_tree(input, &mut tree, depth)?;
+    Ok(tree)
 }
 
+/// You can save on allocations by reusing the inner memory of [ParseTree].
+/// Calling this method will [clear](ParseTree::clear) the tree first,
+///  wiping out any existing data.
 pub fn parse_into_tree<'input>(
     input: &'input str,
     tree: &mut ParseTree<'input>,
     depth: Depth,
 ) -> Result<ExpressionId, Error> {
+    // Start from a clean slate (but retain the allocated memory)
+    tree.clear();
+
     let mut lexer = Lexer::new(input.as_bytes());
     let mut arg_scratch = Vec::with_capacity(100);
     let root = parse_binary_op(&mut lexer, tree, &mut arg_scratch, 0, depth)?;
@@ -414,6 +289,13 @@ pub fn parse_into_tree<'input>(
     }
 }
 
+/// Controls how deep a parse is permitted to go. Because the parser uses
+///  recursive descent, a sufficiently large and well-crafted input can blow
+///  out the stack. To avoid that, use a [Depth] that is shallower than your
+///  stack and such inputs will instead fail with a [Error::RecursionLimitReached]
+///  instead.
+///
+/// The default depth limit is 1000.
 pub struct Depth {
     limit: usize,
     current: usize,
@@ -597,6 +479,7 @@ fn is_literal(token: &Token) -> bool {
         TokenType::Number
             | TokenType::StringSingleQuote
             | TokenType::StringDoubleQuote
+            | TokenType::StringBracketQuote
             | TokenType::True
             | TokenType::False
     )
@@ -610,9 +493,9 @@ fn parse_literal<'input>(
         TokenType::True => Ok(Expression::BoolLiteral(true)),
         TokenType::False => Ok(Expression::BoolLiteral(false)),
         TokenType::Number => Ok(Expression::NumberLiteral(lexer.contents(token))),
-        TokenType::StringSingleQuote | TokenType::StringDoubleQuote => {
-            Ok(Expression::StringLiteral(lexer.contents(token)))
-        }
+        TokenType::StringSingleQuote
+        | TokenType::StringDoubleQuote
+        | TokenType::StringBracketQuote => Ok(Expression::StringLiteral(lexer.contents(token))),
         _ => Err(Error::Other(format!(
             "Unexpected token in parse_literal: {:?}",
             token.ty
@@ -755,13 +638,14 @@ mod tests {
 
     #[test]
     fn basic1() {
-        let (tree, root) = parse(r#"(1 + -2.0) <> 3"#).expect("a valid parse");
+        let tree = parse(r#"(1 + -2.0) <> 3"#).expect("a valid parse");
+        let root = tree.get_root().expect("a root node");
         let Expression::BinaryOperator(lhs, BinaryOp::Ne, rhs) = root else {
             panic!("Expected a Ne, got a {root:?}")
         };
 
-        let lhs = tree.get_expr(lhs).expect("lhs");
-        let rhs = tree.get_expr(rhs).expect("rhs");
+        let lhs = tree.get_expr(*lhs).expect("lhs");
+        let rhs = tree.get_expr(*rhs).expect("rhs");
 
         assert_eq!(*rhs, Expression::NumberLiteral(b"3"));
 
@@ -783,13 +667,14 @@ mod tests {
 
     #[test]
     fn basic2() {
-        let (tree, root) = parse(r#"'Hello' + (" " + "World")"#).expect("a valid parse");
+        let tree = parse(r#"'Hello' + (" " + "World")"#).expect("a valid parse");
+        let root = tree.get_root().expect("a root node");
         let Expression::BinaryOperator(lhs, BinaryOp::Add, rhs) = root else {
             panic!("Expected a Add, got a {root:?}")
         };
 
-        let lhs = tree.get_expr(lhs).expect("lhs");
-        let rhs = tree.get_expr(rhs).expect("rhs");
+        let lhs = tree.get_expr(*lhs).expect("lhs");
+        let rhs = tree.get_expr(*rhs).expect("rhs");
 
         assert_eq!(*lhs, Expression::StringLiteral(b"Hello"));
 
@@ -805,12 +690,13 @@ mod tests {
 
     #[test]
     fn basic3() {
-        let (tree, root) = parse(r#"'Hello ' + (F_NAME + CUST->L_NAME)"#).expect("a valid parse");
+        let tree = parse(r#"'Hello ' + (F_NAME + CUST->L_NAME)"#).expect("a valid parse");
+        let root = tree.get_root().expect("a root node");
         let Expression::BinaryOperator(lhs, BinaryOp::Add, rhs) = root else {
             panic!("Expected a Add, got a {root:?}")
         };
-        let lhs = tree.get_expr(lhs).expect("lhs");
-        let rhs = tree.get_expr(rhs).expect("rhs");
+        let lhs = tree.get_expr(*lhs).expect("lhs");
+        let rhs = tree.get_expr(*rhs).expect("rhs");
 
         assert_eq!(*lhs, Expression::StringLiteral(b"Hello "));
 
@@ -838,12 +724,13 @@ mod tests {
 
     #[test]
     fn logical() {
-        let (tree, root) = parse(r#"(.t. = .NOT..f.) .OR. .t."#).expect("a valid parse");
+        let tree = parse(r#"(.t. = .NOT..f.) .OR. .t."#).expect("a valid parse");
+        let root = tree.get_root().expect("a root node");
         let Expression::BinaryOperator(lhs, BinaryOp::Or, rhs) = root else {
             panic!("Expected an OR, got a {root:?}");
         };
-        let lhs = tree.get_expr(lhs).expect("lhs");
-        let rhs = tree.get_expr(rhs).expect("rhs");
+        let lhs = tree.get_expr(*lhs).expect("lhs");
+        let rhs = tree.get_expr(*rhs).expect("rhs");
 
         assert_eq!(*rhs, Expression::BoolLiteral(true));
 
@@ -863,7 +750,8 @@ mod tests {
 
     #[test]
     fn fn_calls() {
-        let (tree, root) = parse(r#"CTOD(TRIM("a date?"), TEST)"#).expect("a valid parse");
+        let tree = parse(r#"CTOD(TRIM("a date?"), TEST)"#).expect("a valid parse");
+        let root = tree.get_root().expect("a root node");
         let Expression::FunctionCall {
             name: CodebaseFunction::CTOD,
             args,
@@ -871,7 +759,7 @@ mod tests {
         else {
             panic!("Expected a FunctionCall, got a {root:?}")
         };
-        let args = tree.get_args(&args);
+        let args = tree.get_args(args);
         assert_eq!(args.len(), 2);
         let first = tree.get_expr(args[0]).expect("first");
         let second = tree.get_expr(args[1]).expect("second");
@@ -900,11 +788,12 @@ mod tests {
 
     #[test]
     fn sequence() {
-        let (tree, root) = parse(r#"a+b+c+d*e+f"#).expect("a valid parse");
+        let tree = parse(r#"a+b+c+d*e+f"#).expect("a valid parse");
+        let root = tree.get_root().expect("a root node");
         let Expression::Sequence(args, BinaryOp::Add) = root else {
             panic!("Expect a Sequence, got a {root:?}")
         };
-        let args = tree.get_args(&args);
+        let args = tree.get_args(args);
         assert_eq!(args.len(), 5); // a, b, c, (d+e), f
 
         assert_eq!(
@@ -970,7 +859,8 @@ mod tests {
 
     #[test]
     fn numeric() {
-        let (_, root) = parse(r#"123.45"#).expect("a valid parse");
+        let tree = parse(r#"123.45"#).expect("a valid parse");
+        let root = tree.get_root().expect("a root node");
         let Expression::NumberLiteral(value) = root else {
             panic!("Expected a NumberLiteral, got a {root:?}");
         };
@@ -981,7 +871,8 @@ mod tests {
 
     #[test]
     fn identifier_beginning_with_number() {
-        let (_, root) = parse(r#"1ST_FIELD"#).expect("a valid parse");
+        let tree = parse(r#"1ST_FIELD"#).expect("a valid parse");
+        let root = tree.get_root().expect("a root node");
         let Expression::Field { name, .. } = root else {
             panic!("Expected a Field, got a {root:?}");
         };
@@ -992,7 +883,7 @@ mod tests {
     #[test]
     fn trailing_comma() {
         // regression test: trailing commas are allowed in codebase
-        let (_, _) = parse(r#"SUBSTR(SUBSTR("blahblabh", 3,)+"                        ",1,25)"#)
+        let _ = parse(r#"SUBSTR(SUBSTR("blahblabh", 3,)+"                        ",1,25)"#)
             .expect("a valid parse");
         // multiple commas should be an UnexpectedToken error
         let res = parse(r#"SUBSTR("blahblabh", 3,,)"#);
@@ -1017,7 +908,7 @@ mod tests {
 
     #[test]
     fn final_trailing_right_paren() {
-        let (_, _) = parse(r#".t.)"#).expect("a valid parse");
+        let _ = parse(r#".t.)"#).expect("a valid parse");
         let res = parse(r#".t.))"#);
         let Err(Error::UnexpectedToken(_)) = res else {
             panic!("Expected an UnexpectedToken")
@@ -1026,17 +917,41 @@ mod tests {
 
     #[test]
     fn codebase_time_fn() {
-        let (tree, root) = parse("Time() <= '13:00'").expect("a valid parse");
+        let tree = parse("Time() <= '13:00'").expect("a valid parse");
+        let root = tree.get_root().expect("a root node");
         let Expression::BinaryOperator(l, BinaryOp::Le, _) = root else {
             panic!("Expected a LE comparison");
         };
         let Expression::FunctionCall {
             name: CodebaseFunction::TIME,
             args,
-        } = tree.get_expr_unchecked(l)
+        } = tree.get_expr_unchecked(*l)
         else {
             panic!("Expectected a function call");
         };
         assert!(args.is_empty());
+    }
+
+    #[test]
+    fn string_literals() {
+        let tree = parse(r#"'single' + "double" + [bracket]"#).expect("a valid parse");
+        let root = tree.get_root().expect("a root node");
+        let Expression::Sequence(args, BinaryOp::Add) = root else {
+            panic!("expected a sequence");
+        };
+        let args = tree.get_args(args);
+        assert_eq!(args.len(), 3);
+        assert_eq!(
+            *tree.get_expr_unchecked(args[0]),
+            Expression::StringLiteral(b"single")
+        );
+        assert_eq!(
+            *tree.get_expr_unchecked(args[1]),
+            Expression::StringLiteral(b"double")
+        );
+        assert_eq!(
+            *tree.get_expr_unchecked(args[2]),
+            Expression::StringLiteral(b"bracket")
+        );
     }
 }

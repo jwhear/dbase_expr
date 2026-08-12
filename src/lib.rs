@@ -4,7 +4,7 @@
 //! Translation is accomplished by parsing dBase expressions to a parse tree
 //!  (the term "ast" is used for convenience though not strictly correct),
 //!  transformed to a SQL parse tree, then serialized to a SQL string.
-//! Each of these steps is implemented by the modules [grammar] and [ast],
+//! Each of these steps is implemented by the modules [parser],
 //!  [translate], and [to_sql].
 //!
 //! Additionally, the [evaluate] module implements evaluation of expressions:
@@ -19,10 +19,11 @@
 //! ## Translation
 //! To translate a dBase expression to PostgreSQL:
 //! ```
+//! # use std::borrow::Cow;
 //! # use dbase_expr::translate::FieldType;
 //! # fn main() -> Result<(), String> {
 //! use dbase_expr::{parser::parse, translate::{TranslationContext, postgres}, to_sql::{Printer, PrinterConfig}};
-//! let (tree, root) = parse(r#"(DATE() + 1) - STOD("20240731")"#)
+//! let tree = parse(r#"(DATE() + 1) - STOD("20240731")"#)
 //!     .map_err(|e| format!("{e}"))?;
 //! let translator = postgres::Translator {
 //!    field_lookup: |opt_table_alias, field_name| {
@@ -35,10 +36,10 @@
 //!       // Return a Ok((<normalized field name>, <field_type>))
 //!       //  or
 //!       // Err(<string describing the problem>)
-//!       Ok((String::from("FOO"), FieldType::Logical))
+//!       Ok((Cow::from("FOO"), FieldType::Logical))
 //!    }
 //! };
-//! let (sql_tree, result_type) = translator.translate(&root, &tree)
+//! let (sql_tree, result_type) = translator.translate(&tree)
 //!    .map_err(|e| format!("{e}"))?;
 //! let printer = Printer::new(sql_tree, PrinterConfig::default());
 //! let sql = format!("{printer}");
@@ -50,7 +51,7 @@
 //!  the [TranslationContext] and [PrinterConfig] need to be adjusted for
 //!  different SQL backends.
 //!
-//! For a fuller example, with nice error handling, see
+//! For a fuller example, with nice error handling, see main.rs
 //!
 //! ## Backends
 //! Different SQL databases having varying types, functions, and even syntax.
@@ -59,6 +60,7 @@
 
 pub mod codebase_functions;
 pub mod evaluate;
+pub mod expression_tree;
 //pub mod fuzz_helper; // Not fully adapted: custom functions now return translate::Expression, evalute expects parser::Expression
 pub mod lex;
 pub mod parser;

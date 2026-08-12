@@ -29,6 +29,7 @@ pub enum TokenType {
     False,
     StringSingleQuote,
     StringDoubleQuote,
+    StringBracketQuote,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -59,7 +60,7 @@ impl std::fmt::Display for Error {
     }
 }
 
-/// Assumes that [word] is eight ASCII characters packed into a u64 and
+/// Assumes that `word` is eight ASCII characters packed into a u64 and
 ///  returns the lowercased equivalent.
 #[inline]
 pub fn lowercase_u64(word: u64) -> u64 {
@@ -276,13 +277,15 @@ impl<'input> Lexer<'input> {
         &self.source[token.start..token.end]
     }
 
-    /// Like [source_of] but omits the opening and closing quotes of string
-    ///  literal tokens.
+    /// Like [source_of](Self::source_of) but omits the opening and closing quotes
+    ///  of string literal tokens.
     #[inline]
     pub fn contents(&self, token: &Token) -> &'input [u8] {
         let s = self.source_of(token);
         match token.ty {
-            TokenType::StringSingleQuote | TokenType::StringDoubleQuote => &s[1..s.len() - 1],
+            TokenType::StringSingleQuote
+            | TokenType::StringDoubleQuote
+            | TokenType::StringBracketQuote => &s[1..s.len() - 1],
             _ => s,
         }
     }
@@ -383,6 +386,17 @@ impl<'input> Lexer<'input> {
                 } else {
                     tok!(StringSingleQuote)
                 }
+            }
+            // Bracket quoted string
+            b'[' => {
+                self.consume_while(|b| b != b']');
+                if self.is_empty() {
+                    return Err(Error::UnterminatedStringLiteral(start));
+                }
+
+                // consume closing ]
+                self.current += 1;
+                tok!(StringBracketQuote)
             }
 
             // Identifiers start with a-Z or underscore
@@ -666,5 +680,12 @@ mod tests {
 
         let source = u64::from_le_bytes(*b"@3-+/`&)");
         assert_eq!(source, lowercase_u64(source));
+    }
+
+    #[test]
+    fn test_bracket_strings() {
+        let source = r#"[ ' " ]"#;
+        let mut lexer = Lexer::new(source.as_bytes());
+        assert_toks!(lexer, StringBracketQuote);
     }
 }

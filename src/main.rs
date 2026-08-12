@@ -1,12 +1,14 @@
+use std::borrow::Cow;
+
 use chrono::NaiveDate;
 use dbase_expr::{
     codebase_functions::CodebaseFunction,
     parser::parse,
     to_sql::PrinterConfig,
     translate::{
-        Error, ExprRef, Expression, FieldType, TranslationContext, expr_ref,
+        Expression, FieldType, SQLTree, TranslationContext,
         postgres::Translator,
-        postgres::{translate as default_translate, translate_binary_op, translate_fn_call},
+        postgres::{translate_binary_op, translate_expr as default_translate, translate_fn_call},
     },
     *,
 };
@@ -30,90 +32,94 @@ fn main() {
     };
 
     let translation_cx = Translator {
-        field_lookup: |alias: Option<&str>, field: &str| -> Result<(String, FieldType), String> {
+        field_lookup: |alias: Option<&str>,
+                       field: &str|
+         -> Result<(Cow<'_, str>, FieldType), String> {
             let field = field.to_string().to_uppercase();
             let field_type = get_type(alias, &field);
-            Ok((field, field_type))
+            Ok((Cow::from(field), field_type))
         },
     };
     to_sql_tests(&translation_cx);
 
     // Overriding the DTOS function
     println!("Running to_sql tests with function overriding...");
-    pub struct CustomTranslator<F>
+    pub struct CustomTranslator<'f, F>
     where
-        F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
+        F: Fn(Option<&str>, &str) -> std::result::Result<(Cow<'f, str>, FieldType), String>,
     {
         field_lookup: F,
     }
-    impl<F> TranslationContext for CustomTranslator<F>
+    impl<'f, F> TranslationContext for CustomTranslator<'f, F>
     where
-        F: Fn(Option<&str>, &str) -> std::result::Result<(String, FieldType), String>,
+        F: Fn(Option<&str>, &str) -> std::result::Result<(Cow<'f, str>, FieldType), String>,
     {
-        fn lookup_field(
-            &self,
+        fn lookup_field<'field_lookup>(
+            &'field_lookup self,
             alias: Option<&str>,
             field: &str,
-        ) -> std::result::Result<(String, FieldType), String> {
+        ) -> std::result::Result<(Cow<'field_lookup, str>, FieldType), String> {
             (self.field_lookup)(alias, field)
         }
 
-        fn translate(
-            &self,
-            source: &parser::Expression,
-            tree: &parser::ParseTree,
-        ) -> translate::Result {
-            default_translate(source, tree, self)
+        fn translate_expr<'field_lookup, 'parse>(
+            &'field_lookup self,
+            source: &'parse parser::Expression,
+            src_tree: &'parse parser::ParseTree,
+            dst_tree: &mut SQLTree<'field_lookup, 'parse>,
+        ) -> translate::ExpResult<'field_lookup, 'parse> {
+            default_translate(source, src_tree, dst_tree, self)
         }
 
-        fn translate_fn_call(
-            &self,
-            name: &CodebaseFunction,
-            args: &[parser::ExpressionId],
-            tree: &parser::ParseTree,
-        ) -> std::result::Result<(ExprRef, FieldType), Error> {
-            let arg = |index: usize| {
-                args.get(index)
-                    .map(|a| tree.get_expr_unchecked(*a))
-                    .map(|a| default_translate(a, tree, self))
-                    .ok_or(Error::IncorrectArgCount(format!("{:?}", name), index))
-            };
+        fn translate_fn_call<'field_lookup, 'parse>(
+            &'field_lookup self,
+            name: &'parse CodebaseFunction,
+            args: &'parse [parser::ExpressionId],
+            src_tree: &'parse parser::ParseTree,
+            dst_tree: &mut SQLTree<'field_lookup, 'parse>,
+        ) -> translate::ExpResult<'field_lookup, 'parse> {
+            let dst_args = translate::postgres::translate_args(args, src_tree, dst_tree, self)?;
 
             if let CodebaseFunction::Unknown(unknown) = name
                 && unknown.eq_ignore_ascii_case("USER")
             {
                 Ok((
-                    expr_ref(Expression::SingleQuoteStringLiteral("my user".to_owned())),
+                    Expression::SingleQuoteStringLiteral(Cow::from("my user")),
                     FieldType::Memo,
                 ))
             } else if name == &CodebaseFunction::DTOS {
+                let date = dst_args[0].0;
+                let fmt = dst_tree.push_expr("YYYYMMDD".into());
                 Ok((
-                    expr_ref(Expression::FunctionCall {
+                    (Expression::FunctionCall {
                         name: "cb_date_to_text".into(),
-                        args: vec![arg(0)??.0, expr_ref("YYYYMMDD".into())],
+                        args: dst_tree.push_args([date, fmt].into_iter()),
                     }),
                     FieldType::Character(8),
                 ))
             } else {
-                translate_fn_call(name, args, tree, self)
+                translate_fn_call(name, args, src_tree, dst_tree, self)
             }
         }
 
-        fn translate_binary_op(
-            &self,
-            l: &parser::Expression,
-            op: &parser::BinaryOp,
-            r: &parser::Expression,
-            tree: &parser::ParseTree,
-        ) -> translate::Result {
-            translate_binary_op(self, l, op, r, tree)
+        fn translate_binary_op<'field_lookup, 'parse>(
+            &'field_lookup self,
+            l: &'parse parser::Expression,
+            op: &'parse parser::BinaryOp,
+            r: &'parse parser::Expression,
+            src_tree: &'parse parser::ParseTree,
+            dst_tree: &mut SQLTree<'field_lookup, 'parse>,
+        ) -> translate::ExpResult<'field_lookup, 'parse> {
+            translate_binary_op(self, l, op, r, src_tree, dst_tree)
         }
     }
     let cx = CustomTranslator {
-        field_lookup: |alias: Option<&str>, field: &str| -> Result<(String, FieldType), String> {
+        field_lookup: |alias: Option<&str>,
+                       field: &str|
+         -> Result<(Cow<'_, str>, FieldType), String> {
             let field = field.to_string().to_uppercase();
             let field_type = get_type(alias, &field);
-            Ok((field, field_type))
+            Ok((Cow::from(field), field_type))
         },
     };
     to_sql_tests(&cx);
@@ -214,9 +220,9 @@ fn expr_tests() {
     for test in tests.iter() {
         //println!("{test}");
         match parse(test) {
-            Ok((tree, root)) => {
+            Ok(tree) => {
                 //println!("{t:?}");
-                match evaluate::evaluate(&root, &tree, &value_lookup, &custom_functions) {
+                match evaluate::evaluate(&tree, &value_lookup, &custom_functions) {
                     Ok(_tree) => {}
                     //println!("{test} => {tree:?}\n"),
                     Err(e) => {
@@ -269,11 +275,15 @@ fn to_sql_tests<T: TranslationContext>(cx: &T) {
 
     for test in tests.iter() {
         match parse(test) {
-            Ok((tree, root)) => match cx.translate(&root, &tree) {
-                Ok(tree) => println!(
-                    "{test}\n=>\n{}\n",
-                    Printer::new(tree.0, PrinterConfig::default())
-                ),
+            Ok(tree) => match cx.translate(&tree) {
+                Ok(tree) => {
+                    let exps = tree.0.inner.expressions.len();
+                    let arglists = tree.0.inner.arg_lists.len();
+                    println!(
+                        "{test}\n=>\n{}\n  (exps: {exps}, arglists: {arglists})\n",
+                        Printer::new(tree.0, PrinterConfig::default())
+                    )
+                }
                 Err(e) => eprintln!("Error translating tree: {e:?}\n:{test}\n"),
             },
 

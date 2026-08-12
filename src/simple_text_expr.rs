@@ -5,7 +5,7 @@ pub fn is_simple_text_expr(expr: &str) -> bool {
     parse_simple_text_expr_core(expr, |_| {}).is_ok()
 }
 
-/// If [expr] is a simple text expression, return the concatenation of all
+/// If `expr` is a simple text expression, return the concatenation of all
 ///  substrings.
 /// ```ignore
 /// assert_eq!(
