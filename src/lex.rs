@@ -330,7 +330,6 @@ impl<'input> Lexer<'input> {
             b',' => tok!(Comma),
             b'/' => tok!(ForwardSlash),
             b'$' => tok!(Dollar),
-            b'=' => tok!(Equals),
             b'^' => tok!(DoubleAsterisk),
             b'#' => tok!(NotEquals),
 
@@ -368,6 +367,17 @@ impl<'input> Lexer<'input> {
                     tok!(GTE)
                 } else {
                     tok!(GT)
+                }
+            }
+            // Codebase actually allows LTE and GTE to be written "backwards",
+            //  e.g. `12 =< 13` or `12 => 13`
+            b'=' => {
+                if self.consume1(b'>') {
+                    tok!(GTE)
+                } else if self.consume1(b'<') {
+                    tok!(LTE)
+                } else {
+                    tok!(Equals)
                 }
             }
 
@@ -687,5 +697,13 @@ mod tests {
         let source = r#"[ ' " ]"#;
         let mut lexer = Lexer::new(source.as_bytes());
         assert_toks!(lexer, StringBracketQuote);
+    }
+
+    #[test]
+    fn backwards_operators() {
+        let mut lexer = Lexer::new("12 =< 13".as_bytes());
+        assert_toks!(lexer, Number, LTE, Number);
+        let mut lexer = Lexer::new("12 => 13".as_bytes());
+        assert_toks!(lexer, Number, GTE, Number);
     }
 }
