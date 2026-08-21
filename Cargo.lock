@@ -305,7 +305,6 @@ dependencies = [
  "clap",
  "criterion",
  "csv",
- "regex",
  "serde",
  "strum",
  "strum_macros",
