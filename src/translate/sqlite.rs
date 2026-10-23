@@ -121,16 +121,18 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
         F::CTOD => {
             //COALESCE(DATE(NULLIF(TRIM(x),''),'0001-01-01')
             let trim = dst_tree.push_fn_call("TRIM", &[argid(0)?]);
-            let null_if = dst_tree.push_fn_call("NULLIF", &[trim, exps::EMPTY_STR]);
+            let empty_str = exps::empty_str(dst_tree);
+            let null_if = dst_tree.push_fn_call("NULLIF", &[trim, empty_str]);
             // Convert format -> 'YYYY-MM-DD' using SUBSTR
             let printf = dst_tree.push_fn_call(
                 "printf",
                 &[null_if], // assumes date in ISO 8601 or needs pre-processing
             );
             let date = dst_tree.push_fn_call("DATE", &[printf]);
+            let coalesce_date = exps::coalesce_date(dst_tree);
             let coalesce = Expression::FunctionCall {
                 name: "COALESCE".into(),
-                args: dst_tree.push_args([date, exps::COALESCE_DATE].into_iter()),
+                args: dst_tree.push_args([date, coalesce_date].into_iter()),
             };
             ok(coalesce, FieldType::Date)
         }
@@ -243,27 +245,23 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
             let lit_4 = dst_tree.push_expr(4.into());
             let lit_5 = dst_tree.push_expr(5.into());
             let lit_7 = dst_tree.push_expr(7.into());
-            let extract_year = dst_tree.push_fn_call("SUBSTR", &[trim, exps::LIT_1, lit_4]);
+            let lit_1 = exps::lit_1(dst_tree);
+            let extract_year = dst_tree.push_fn_call("SUBSTR", &[trim, lit_1, lit_4]);
             let extract_month = dst_tree.push_fn_call("SUBSTR", &[trim, lit_5, lit_2]);
             let extract_day = dst_tree.push_fn_call("SUBSTR", &[trim, lit_7, lit_2]);
+            let lit_dash = exps::lit_dash(dst_tree);
             let concat_parts = dst_tree.push_args(
-                [
-                    extract_year,
-                    exps::LIT_DASH,
-                    extract_month,
-                    exps::LIT_DASH,
-                    extract_day,
-                ]
-                .into_iter(),
+                [extract_year, lit_dash, extract_month, lit_dash, extract_day].into_iter(),
             );
             // concatenate the bits together with dashes
             let date_str = dst_tree.push_expr(Expression::BinaryOperatorSequence(
                 TranslateBinaryOp::Concat,
                 concat_parts,
             ));
+            let coalesce_date = exps::coalesce_date(dst_tree);
             let coalesce = Expression::FunctionCall {
                 name: "COALESCE".into(),
-                args: dst_tree.push_args([date_str, exps::COALESCE_DATE].into_iter()),
+                args: dst_tree.push_args([date_str, coalesce_date].into_iter()),
             };
             ok(coalesce, FieldType::Date)
         }
@@ -368,13 +366,9 @@ pub fn translate_binary_op<'field_lookup, 'parse>(
                 // Note that in CodeBase the haystack is the right arg
                 &[haystack, needle],
             );
+            let lit_0 = exps::lit_0(dst_tree);
             ok(
-                Expression::BinaryOperator(
-                    instr,
-                    super::BinaryOp::Gt,
-                    exps::LIT_0,
-                    Parenthesize::Yes,
-                ),
+                Expression::BinaryOperator(instr, super::BinaryOp::Gt, lit_0, Parenthesize::Yes),
                 FieldType::Logical,
             )
         }
@@ -399,18 +393,12 @@ pub fn translate_binary_op<'field_lookup, 'parse>(
             ));
             let fmt =
                 dst_tree.push_expr(Expression::SingleQuoteStringLiteral(Cow::from("%s%s%.*c")));
+            let lit_space = exps::lit_space(dst_tree);
             ok(
                 Expression::FunctionCall {
                     name: "format".into(),
                     args: dst_tree.push_args(
-                        [
-                            fmt,
-                            without_spaces,
-                            translated_r,
-                            num_spaces,
-                            exps::LIT_SPACE,
-                        ]
-                        .into_iter(),
+                        [fmt, without_spaces, translated_r, num_spaces, lit_space].into_iter(),
                     ),
                 },
                 FieldType::Memo,

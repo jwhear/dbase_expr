@@ -226,11 +226,13 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
         //this translates blank strings into the coalesce date so that it can be properly compared
         let format = dst_tree.push_expr(format.into());
         let trim = dst_tree.push_fn_call("TRIM", &[value]);
-        let null_if = dst_tree.push_fn_call("NULLIF", &[trim, exps::EMPTY_STR]);
+        let empty_str = exps::empty_str(dst_tree);
+        let null_if = dst_tree.push_fn_call("NULLIF", &[trim, empty_str]);
         let to_date = dst_tree.push_fn_call("TO_DATE", &[null_if, format]);
+        let coalesce_date = exps::coalesce_date(dst_tree);
         let coalesce = Expression::FunctionCall {
             name: "COALESCE".into(),
-            args: dst_tree.push_args([to_date, exps::COALESCE_DATE].into_iter()),
+            args: dst_tree.push_args([to_date, coalesce_date].into_iter()),
         };
         Ok((coalesce, FieldType::Date))
     }
@@ -270,13 +272,16 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
             FieldType::Date,
         ),
         // DAY(x) => DATE_PART('DAY', x)
-        F::DAY => ok(
-            Expression::FunctionCall {
-                name: "DATE_PART".into(),
-                args: dst_tree.push_args([exps::LIT_DAY, argid(0)?].into_iter()),
-            },
-            FieldType::Double,
-        ),
+        F::DAY => {
+            let part = exps::lit_day(dst_tree);
+            ok(
+                Expression::FunctionCall {
+                    name: "DATE_PART".into(),
+                    args: dst_tree.push_args([part, argid(0)?].into_iter()),
+                },
+                FieldType::Double,
+            )
+        }
         // DELETED() => __deleted
         F::DELETED => {
             let (name, field_type) = cx
@@ -317,13 +322,9 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
             let expression = match argtype(0)? {
                 FieldType::Logical => {
                     // COALESCE(x, false) = false
-                    let coalesce = dst_tree.push_fn_call("COALESCE", &[argid(0)?, exps::LIT_FALSE]);
-                    Expression::BinaryOperator(
-                        coalesce,
-                        BinaryOp::Eq,
-                        dst_tree.push_expr(Expression::BoolLiteral(false)),
-                        Parenthesize::No,
-                    )
+                    let lit_false = exps::lit_false(dst_tree);
+                    let coalesce = dst_tree.push_fn_call("COALESCE", &[argid(0)?, lit_false]);
+                    Expression::BinaryOperator(coalesce, BinaryOp::Eq, lit_false, Parenthesize::No)
                 }
                 FieldType::Integer
                 | FieldType::Currency
@@ -331,40 +332,31 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
                 | FieldType::Float
                 | FieldType::Numeric { .. } => {
                     // COALESCE(x, 0) = 0
-                    let coalesce = dst_tree.push_fn_call("COALESCE", &[argid(0)?, exps::LIT_0]);
-                    Expression::BinaryOperator(
-                        coalesce,
-                        BinaryOp::Eq,
-                        exps::LIT_0,
-                        Parenthesize::No,
-                    )
+                    let lit_0 = exps::lit_0(dst_tree);
+                    let coalesce = dst_tree.push_fn_call("COALESCE", &[argid(0)?, lit_0]);
+                    Expression::BinaryOperator(coalesce, BinaryOp::Eq, lit_0, Parenthesize::No)
                 }
                 FieldType::Character(_) | FieldType::Memo => {
                     let trim = dst_tree.push_fn_call("TRIM", &[argid(0)?]);
                     Expression::BinaryOperator(
                         trim,
                         BinaryOp::Eq,
-                        exps::EMPTY_STR,
+                        exps::empty_str(dst_tree),
                         Parenthesize::No,
                     )
                 }
                 FieldType::Date | FieldType::DateTime => Expression::BinaryOperator(
                     argid(0)?,
                     BinaryOp::Eq,
-                    exps::COALESCE_DATE,
+                    exps::coalesce_date(dst_tree),
                     Parenthesize::No,
                 ),
                 FieldType::MemoBinary | FieldType::CharacterBinary(_) | FieldType::General => {
                     // COALESCE(LENGTH(x), 0) = 0
                     let length_call = dst_tree.push_fn_call("length", &[argid(0)?]);
-                    let coalesce_call =
-                        dst_tree.push_fn_call("COALESCE", &[length_call, exps::LIT_0]);
-                    Expression::BinaryOperator(
-                        coalesce_call,
-                        BinaryOp::Eq,
-                        exps::LIT_0,
-                        Parenthesize::No,
-                    )
+                    let lit_0 = exps::lit_0(dst_tree);
+                    let coalesce_call = dst_tree.push_fn_call("COALESCE", &[length_call, lit_0]);
+                    Expression::BinaryOperator(coalesce_call, BinaryOp::Eq, lit_0, Parenthesize::No)
                 }
             };
             ok(expression, FieldType::Logical)
@@ -422,7 +414,7 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
                         // Go around with another branch
                         inner_args = src_tree.get_args(args);
                     }
-                    _ => panic!("IIF should always have three arguments"),
+                    _ => return Err(Error::IncorrectArgCount("IIF".to_string(), 3)),
                 }
             };
             let (r#else, _) = cx.translate_expr(r#else, src_tree, dst_tree)?;
@@ -437,22 +429,28 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
             )
         }
         // LEFT(x, n) => SUBSTR(x, 1, n)
-        F::LEFT => ok(
-            Expression::FunctionCall {
-                name: "SUBSTR".into(),
-                args: dst_tree.push_args([argid(0)?, exps::LIT_1, argid(1)?].into_iter()),
-            },
-            FieldType::Memo,
-        ),
+        F::LEFT => {
+            let lit_1 = exps::lit_1(dst_tree);
+            ok(
+                Expression::FunctionCall {
+                    name: "SUBSTR".into(),
+                    args: dst_tree.push_args([argid(0)?, lit_1, argid(1)?].into_iter()),
+                },
+                FieldType::Memo,
+            )
+        }
 
         // MONTH(x) => DATE_PART('MONTH', x)
-        F::MONTH => ok(
-            Expression::FunctionCall {
-                name: "DATE_PART".into(),
-                args: dst_tree.push_args([exps::LIT_MONTH, argid(0)?].into_iter()),
-            },
-            FieldType::Double,
-        ),
+        F::MONTH => {
+            let part = exps::lit_month(dst_tree);
+            ok(
+                Expression::FunctionCall {
+                    name: "DATE_PART".into(),
+                    args: dst_tree.push_args([part, argid(0)?].into_iter()),
+                },
+                FieldType::Double,
+            )
+        }
 
         F::PADL => ok(
             Expression::FunctionCall {
@@ -553,7 +551,7 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
             let cond = dst_tree.push_fn_call("pg_input_is_valid", &[argid(0)?, numeric]);
             let when_true = dst_tree.push_expr(Expression::Cast(argid(0)?, "numeric"));
             // codebase inteprets any non-numeric string as a 0
-            let when_false = exps::LIT_0;
+            let when_false = exps::lit_0(dst_tree);
             ok(
                 Expression::Iif {
                     cond,
@@ -565,13 +563,16 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
         }
 
         // YEAR(x) => DATE_PART('YEAR', x)
-        F::YEAR => ok(
-            Expression::FunctionCall {
-                name: "DATE_PART".into(),
-                args: dst_tree.push_args([exps::LIT_YEAR, argid(0)?].into_iter()),
-            },
-            FieldType::Double,
-        ),
+        F::YEAR => {
+            let part = exps::lit_year(dst_tree);
+            ok(
+                Expression::FunctionCall {
+                    name: "DATE_PART".into(),
+                    args: dst_tree.push_args([part, argid(0)?].into_iter()),
+                },
+                FieldType::Double,
+            )
+        }
 
         F::Unknown(unknown) => Err(Error::UnsupportedFunction(unknown.clone())),
     }
@@ -671,7 +672,8 @@ pub fn translate_binary_op_right<'parse, 'field_lookup, T: TranslationContext>(
                 length_without_spaces,
                 Parenthesize::No,
             ));
-            let repeated_spaces = dst_tree.push_fn_call("REPEAT", &[exps::LIT_SPACE, num_spaces]);
+            let lit_space = exps::lit_space(dst_tree);
+            let repeated_spaces = dst_tree.push_fn_call("REPEAT", &[lit_space, num_spaces]);
             ok(
                 Expression::FunctionCall {
                     name: "CONCAT".into(),
@@ -935,7 +937,7 @@ pub fn translate_substr<'parse, 'field_lookup>(
     if parsed_index == 0 {
         //SUBSTR in codebase treats 0 and 1 exactly the same, replace
         // the 0 with a 1
-        args[1] = (exps::LIT_1, FieldType::Integer);
+        args[1] = (exps::lit_1(dst_tree), FieldType::Integer);
     }
 
     // Optional length argument--if present we want the result type to be a

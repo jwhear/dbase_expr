@@ -2,7 +2,7 @@ use std::{borrow::Cow, fmt::Formatter};
 
 use crate::{
     codebase_functions::CodebaseFunction,
-    expression_tree::{ArgList, ExpressionId, ExpressionTree, Index},
+    expression_tree::{ArgList, ExpressionId, ExpressionTree},
     parser::{self, ParseTree},
 };
 
@@ -12,61 +12,48 @@ pub mod sqlite;
 
 pub const COALESCE_DATE_DEFAULT: &str = "0001-01-01";
 
-/// This module defines a number of commonly used tree elements
-///  (e.g. literal false) and defines a function to inject them as a "prelude"
-///  in a tree.
+/// This module defines helpers for commonly used tree elements (e.g. literal
+///  false). Because [SQLTree::push_expr] reuses existing expressions, each
+///  element is only added to a tree once no matter how often it is requested.
 pub mod exps {
-    use super::{COALESCE_DATE_DEFAULT, Expression, ExpressionId, ExpressionTree, Index};
+    use super::{COALESCE_DATE_DEFAULT, Expression, ExpressionId, SQLTree};
 
-    // I used a macro here to ensure that the constants and the order of push_expr
-    //  is guaranteed to be consistent.
-    macro_rules! inject_prelude_gen {
+    macro_rules! exps_gen {
         ( $( ($name:ident, $expr:expr) ),* $(,)? ) => {
-            inject_prelude_gen!(@count 0; $( ($name, $expr) ),*);
-
-            pub fn inject_prelude(tree: &mut ExpressionTree<Expression>) -> usize {
-                $( tree.push_expr($expr); )*
-                tree.expressions.len()
-            }
+            $(
+                #[inline]
+                pub fn $name(tree: &mut SQLTree) -> ExpressionId {
+                    tree.push_expr($expr)
+                }
+            )*
         };
-
-        // Peel off one (name, expr) pair, emit its const, recurse with idx+1
-        (@count $idx:expr; ($name:ident, $expr:expr) $(, ($rest_name:ident, $rest_expr:expr))* ) => {
-            pub const $name: ExpressionId = ExpressionId(Index($idx));
-            inject_prelude_gen!(@count ($idx + 1); $( ($rest_name, $rest_expr) ),*);
-        };
-
-        // Base case: nothing left
-        (@count $idx:expr; ) => {};
     }
 
-    inject_prelude_gen!(
-        (LIT_0, Expression::NumberLiteral("0".into())),
-        (LIT_1, Expression::NumberLiteral("1".into())),
-        (EMPTY_STR, Expression::SingleQuoteStringLiteral("".into())),
+    exps_gen!(
+        (lit_0, Expression::NumberLiteral("0".into())),
+        (lit_1, Expression::NumberLiteral("1".into())),
+        (empty_str, Expression::SingleQuoteStringLiteral("".into())),
         (
-            COALESCE_DATE,
+            coalesce_date,
             Expression::SingleQuoteStringLiteral(COALESCE_DATE_DEFAULT.into())
         ),
         (
-            LIT_YEAR,
+            lit_year,
             Expression::SingleQuoteStringLiteral("YEAR".into())
         ),
         (
-            LIT_MONTH,
+            lit_month,
             Expression::SingleQuoteStringLiteral("MONTH".into())
         ),
-        (LIT_DAY, Expression::SingleQuoteStringLiteral("DAY".into())),
-        (LIT_FALSE, Expression::BoolLiteral(false)),
-        (LIT_TRUE, Expression::BoolLiteral(true)),
-        (LIT_SPACE, Expression::SingleQuoteStringLiteral(" ".into())),
-        (LIT_DASH, Expression::SingleQuoteStringLiteral("-".into())),
+        (lit_day, Expression::SingleQuoteStringLiteral("DAY".into())),
+        (lit_false, Expression::BoolLiteral(false)),
+        (lit_space, Expression::SingleQuoteStringLiteral(" ".into())),
+        (lit_dash, Expression::SingleQuoteStringLiteral("-".into())),
     );
 }
 
 pub struct SQLTree<'field_lookup, 'parse> {
     pub inner: ExpressionTree<Expression<'field_lookup, 'parse>>,
-    pub prelude_length: usize,
 }
 
 impl<'field_lookup, 'parse> SQLTree<'field_lookup, 'parse> {
@@ -83,28 +70,19 @@ impl<'field_lookup, 'parse> SQLTree<'field_lookup, 'parse> {
         expressions: Vec<Expression<'field_lookup, 'parse>>,
         arg_lists: Vec<ExpressionId>,
     ) -> Self {
-        let mut inner = ExpressionTree::new_from_vecs(expressions, arg_lists);
-        let prelude_length = exps::inject_prelude(&mut inner);
         Self {
-            inner,
-            prelude_length,
+            inner: ExpressionTree::new_from_vecs(expressions, arg_lists),
         }
     }
 
     #[inline]
     pub fn is_empty(&self) -> bool {
-        // We ignore the prelude for the purposes of is_empty
-        self.inner.expressions.len() <= self.prelude_length
+        self.inner.expressions.is_empty()
     }
 
     #[inline]
     pub fn get_root(&self) -> Option<&Expression<'field_lookup, 'parse>> {
-        // We ignore the prelude for the purposes of get_root
-        if self.is_empty() {
-            None
-        } else {
-            self.inner.get_root()
-        }
+        self.inner.get_root()
     }
 
     /// See [ExpressionTree::get_expr_unchecked]
@@ -590,7 +568,8 @@ fn escape_single_quotes(s: &str) -> Cow<'_, str> {
 }
 
 fn substr_to(expr: ExpressionId, len_expr: ExpressionId, dst_tree: &mut SQLTree) -> ExpressionId {
-    dst_tree.push_fn_call("SUBSTR", &[expr, exps::LIT_1, len_expr])
+    let lit_1 = exps::lit_1(dst_tree);
+    dst_tree.push_fn_call("SUBSTR", &[expr, lit_1, len_expr])
 }
 
 #[cfg(test)]
