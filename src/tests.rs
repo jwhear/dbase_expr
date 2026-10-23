@@ -460,3 +460,15 @@ fn substr_replace_0_with_1_test() {
         Expression::NumberLiteral(Cow::from("3"))
     );
 }
+
+#[test]
+fn parenthesized_number_translate() {
+    let cx = TestTranslator;
+    let parse_tree = parser::parse("(1)").unwrap();
+    let (tree, _field_type) = cx.translate(&parse_tree).unwrap();
+    let root = tree.get_root().expect("a root node");
+    let Expression::NumberLiteral(num) = root else {
+        panic!("Expected NumberLiteral, got {root:?}");
+    };
+    assert_eq!(num, "1");
+}
