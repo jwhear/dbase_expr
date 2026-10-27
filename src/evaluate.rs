@@ -377,29 +377,32 @@ fn eval_function(
             )),
         },
 
-        F::DTOC | F::DTOS => match args {
-            [Value::Date(d)] => {
-                let (fmt, len) = if name == &F::DTOC {
-                    ("%m/%d/%y", 10)
-                } else {
-                    ("%Y%m%d", 8)
-                };
-                let text = match d {
-                    Some(date) => date.format(fmt).to_string(),
-                    None => " ".repeat(len),
-                };
-                let len = if name == &F::DTOC { 10 } else { 8 };
-                Ok(Value::FixedLenStr(text, len, false))
+        F::DTOC | F::DTOS => {
+            // DTOC(x, 1) is equivalent to DTOS(x)
+            let is_dtos = name == &F::DTOS || args.len() == 2;
+            match args {
+                [Value::Date(d)] | [Value::Date(d), _] => {
+                    let (fmt, len) = if is_dtos {
+                        ("%Y%m%d", 8)
+                    } else {
+                        ("%m/%d/%y", 10)
+                    };
+                    let text = match d {
+                        Some(date) => date.format(fmt).to_string(),
+                        None => " ".repeat(len),
+                    };
+                    Ok(Value::FixedLenStr(text, len, false))
+                }
+                [Value::Null] | [Value::Null, _] => {
+                    let len: usize = if is_dtos { 8 } else { 10 };
+                    Ok(Value::FixedLenStr("".to_string(), len, false))
+                }
+                _ => Err(Error::InvalidArguments(
+                    name.clone(),
+                    "DTOC expects a date argument".to_string(),
+                )),
             }
-            [Value::Null] => {
-                let len: usize = if name == &F::DTOC { 10 } else { 8 };
-                Ok(Value::FixedLenStr("".to_string(), len, false))
-            }
-            _ => Err(Error::InvalidArguments(
-                name.clone(),
-                "DTOC expects a date argument".to_string(),
-            )),
-        },
+        }
 
         F::DAY | F::MONTH | F::YEAR => match args {
             [Value::Date(d)] => match d {
