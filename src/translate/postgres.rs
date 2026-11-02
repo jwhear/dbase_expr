@@ -245,9 +245,11 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
                 _ => FieldType::Memo,
             };
             let name = match name {
-                F::ALLTRIM | F::TRIM => "TRIM",
+                F::ALLTRIM => "TRIM",
                 F::LTRIM => "LTRIM",
-                F::RTRIM => "RTRIM",
+                //NOTE: Codebase defines TRIM as only removing from the _end_
+                //  of the expression
+                F::RTRIM | F::TRIM => "RTRIM",
                 _ => unreachable!(),
             };
             let expr = Expression::FunctionCall {
