@@ -525,9 +525,10 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
             ok(iif, FieldType::Character(len as u32))
         }
         F::SUBSTR => translate_substr("SUBSTR", args, src_tree, dst_tree, cx),
-        // TIME() => TO_CHAR(CURRENT_TIME, 'HH24:MI:SS')
+        // TIME() => TO_CHAR(LOCALTIME, 'HH24:MI:SS')
+        // Not CURRENT_TIME: that's TIME WITH TIME ZONE, which TO_CHAR doesn't accept.
         F::TIME => {
-            let current_time = dst_tree.push_expr(Expression::BareFunctionCall("CURRENT_TIME"));
+            let current_time = dst_tree.push_expr(Expression::BareFunctionCall("LOCALTIME"));
             let fmt = dst_tree.push_expr("HH24:MI:SS".into());
             ok(
                 Expression::FunctionCall {
