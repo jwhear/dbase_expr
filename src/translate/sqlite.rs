@@ -82,12 +82,97 @@ fn expr_between_right_side<'field_lookup, 'parse>(
     )
 }
 
+/// Date arithmetic. SQLite stores dates as 'YYYY-MM-DD' text and won't do
+///  arithmetic on them, so go through julianday:
+///
+///   date - date => CAST(JULIANDAY(l) - JULIANDAY(r) AS INTEGER)   (days between)
+///   date +/- n  => DATE(JULIANDAY(l) +/- n)
+///
+/// Like the Postgres translation, a non-integer n is rounded to whole days.
+fn date_arith<'field_lookup, 'parse>(
+    l: ExpressionId,
+    op: TranslateBinaryOp,
+    r: ExpressionId,
+    r_ty: FieldType,
+    dst_tree: &mut SQLTree<'field_lookup, 'parse>,
+) -> (Expression<'field_lookup, 'parse>, FieldType) {
+    let julian_l = dst_tree.push_fn_call("JULIANDAY", &[l]);
+    if op == TranslateBinaryOp::Sub && matches!(r_ty, FieldType::Date | FieldType::DateTime) {
+        let julian_r = dst_tree.push_fn_call("JULIANDAY", &[r]);
+        let diff = dst_tree.push_expr(Expression::BinaryOperator(
+            julian_l,
+            TranslateBinaryOp::Sub,
+            julian_r,
+            Parenthesize::No,
+        ));
+        return (
+            Expression::Cast(diff, "INTEGER"),
+            FieldType::Numeric { len: 99, dec: 0 },
+        );
+    }
+    let is_integer = r_ty == FieldType::Integer
+        || matches!(dst_tree.get_expr_unchecked(r), Expression::NumberLiteral(s) if !s.contains('.'));
+    let n = if is_integer {
+        r
+    } else {
+        dst_tree.push_fn_call("ROUND", &[r])
+    };
+    let sum = dst_tree.push_expr(Expression::BinaryOperator(
+        julian_l,
+        op,
+        n,
+        Parenthesize::Yes,
+    ));
+    (
+        Expression::FunctionCall {
+            name: "DATE".into(),
+            args: dst_tree.push_args([sum].into_iter()),
+        },
+        FieldType::Date,
+    )
+}
+
 pub fn translate_expr<'field_lookup, 'parse>(
     source: &'parse parser::Expression,
     src_tree: &'parse ParseTree,
     dst_tree: &mut SQLTree<'field_lookup, 'parse>,
     cx: &'field_lookup impl TranslationContext,
 ) -> ExpResult<'field_lookup, 'parse> {
+    // Chains like `BDAY + 3 + 1` parse as a Sequence rather than nested binary
+    //  operators. If the chain starts with a date, fold it left so each step
+    //  gets the date arithmetic treatment; otherwise use the default handling.
+    if let parser::Expression::Sequence(
+        operands,
+        op @ (parser::BinaryOp::Add | parser::BinaryOp::Sub),
+    ) = source
+    {
+        let operands = src_tree.get_args(operands);
+        let first = src_tree.get_expr_unchecked(operands[0]);
+        let (first_expr, first_ty) = cx.translate_expr(first, src_tree, dst_tree)?;
+        if first_ty == FieldType::Date {
+            let op = match op {
+                parser::BinaryOp::Add => TranslateBinaryOp::Add,
+                _ => TranslateBinaryOp::Sub,
+            };
+            let (mut acc, mut acc_ty) = (first_expr, first_ty);
+            for operand in &operands[1..] {
+                let l = dst_tree.push_expr(acc);
+                let (r, r_ty) =
+                    cx.translate_expr(src_tree.get_expr_unchecked(*operand), src_tree, dst_tree)?;
+                let r = dst_tree.push_expr(r);
+                (acc, acc_ty) = if acc_ty == FieldType::Date {
+                    date_arith(l, op, r, r_ty, dst_tree)
+                } else {
+                    // e.g. (date - date) - n is plain numeric arithmetic
+                    (
+                        Expression::BinaryOperator(l, op, r, Parenthesize::Yes),
+                        acc_ty,
+                    )
+                };
+            }
+            return ok(acc, acc_ty);
+        }
+    }
     default_translate(source, src_tree, dst_tree, cx)
 }
 
@@ -118,17 +203,68 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
             FieldType::Character(1),
         ),
 
+        // SQLite's DATE() only understands ISO 8601, so the 'MM/DD/YY' input is
+        //  rearranged by position. Like Codebase, the parts may be space-padded
+        //  (' 8/ 1/26'), and two-digit years 00-68 are 20xx, 69-99 are 19xx.
+        //
+        //   r = REPLACE(RTRIM(x), ' ', '0')
+        //   COALESCE(DATE(CASE WHEN LENGTH(r) = 8 THEN
+        //       (CASE WHEN SUBSTR(r,7,2) < '69' THEN '20' ELSE '19' END)
+        //       || SUBSTR(r,7,2) || '-' || SUBSTR(r,1,2) || '-' || SUBSTR(r,4,2)
+        //     ELSE NULL END), '0001-01-01')
+        //
+        // Blank or malformed input gives NULL from DATE() and so '0001-01-01'.
         F::CTOD => {
-            //COALESCE(DATE(NULLIF(TRIM(x),''),'0001-01-01')
-            let trim = dst_tree.push_fn_call("TRIM", &[argid(0)?]);
-            let empty_str = exps::empty_str(dst_tree);
-            let null_if = dst_tree.push_fn_call("NULLIF", &[trim, empty_str]);
-            // Convert format -> 'YYYY-MM-DD' using SUBSTR
-            let printf = dst_tree.push_fn_call(
-                "printf",
-                &[null_if], // assumes date in ISO 8601 or needs pre-processing
-            );
-            let date = dst_tree.push_fn_call("DATE", &[printf]);
+            let rtrim = dst_tree.push_fn_call("RTRIM", &[argid(0)?]);
+            let space = exps::lit_space(dst_tree);
+            let zero = dst_tree.push_expr("0".into());
+            let r = dst_tree.push_fn_call("REPLACE", &[rtrim, space, zero]);
+
+            let lit_1 = exps::lit_1(dst_tree);
+            let lit_2 = dst_tree.push_expr(2.into());
+            let lit_4 = dst_tree.push_expr(4.into());
+            let lit_7 = dst_tree.push_expr(7.into());
+            let month = dst_tree.push_fn_call("SUBSTR", &[r, lit_1, lit_2]);
+            let day = dst_tree.push_fn_call("SUBSTR", &[r, lit_4, lit_2]);
+            let yy = dst_tree.push_fn_call("SUBSTR", &[r, lit_7, lit_2]);
+
+            let pivot = dst_tree.push_expr("69".into());
+            let is_2000s = dst_tree.push_expr(Expression::BinaryOperator(
+                yy,
+                TranslateBinaryOp::Lt,
+                pivot,
+                Parenthesize::No,
+            ));
+            let lit_20 = dst_tree.push_expr("20".into());
+            let lit_19 = dst_tree.push_expr("19".into());
+            let century = dst_tree.push_expr(Expression::Iif {
+                cond: is_2000s,
+                when_true: lit_20,
+                when_false: lit_19,
+            });
+            let dash = exps::lit_dash(dst_tree);
+            let parts = dst_tree.push_args([century, yy, dash, month, dash, day].into_iter());
+            let iso = dst_tree.push_expr(Expression::BinaryOperatorSequence(
+                TranslateBinaryOp::Concat,
+                parts,
+            ));
+
+            let len = dst_tree.push_fn_call("LENGTH", &[r]);
+            let lit_8 = dst_tree.push_expr(8.into());
+            let is_len_8 = dst_tree.push_expr(Expression::BinaryOperator(
+                len,
+                TranslateBinaryOp::Eq,
+                lit_8,
+                Parenthesize::No,
+            ));
+            let null = dst_tree.push_expr(Expression::BareFunctionCall("NULL"));
+            let guarded = dst_tree.push_expr(Expression::Iif {
+                cond: is_len_8,
+                when_true: iso,
+                when_false: null,
+            });
+
+            let date = dst_tree.push_fn_call("DATE", &[guarded]);
             let coalesce_date = exps::coalesce_date(dst_tree);
             let coalesce = Expression::FunctionCall {
                 name: "COALESCE".into(),
@@ -137,15 +273,15 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
             ok(coalesce, FieldType::Date)
         }
 
-        // DATE() => STRFTIME('%Y%m%d', 'now', 'localtime')
+        // DATE() => DATE('now', 'localtime')
+        //  Must be 'YYYY-MM-DD' to compare with date fields.
         F::DATE => {
-            let fmt = dst_tree.push_expr("%Y%m%d".into());
             let now = dst_tree.push_expr("now".into());
             let localtime = dst_tree.push_expr("localtime".into());
             ok(
                 Expression::FunctionCall {
-                    name: "strftime".into(),
-                    args: dst_tree.push_args([fmt, now, localtime].into_iter()),
+                    name: "DATE".into(),
+                    args: dst_tree.push_args([now, localtime].into_iter()),
                 },
                 FieldType::Date,
             )
@@ -157,20 +293,36 @@ pub fn translate_fn_call<'parse, 'field_lookup>(
             ok(Expression::Cast(strftime, "REAL"), FieldType::Double)
         }
 
+        // DTOC(x)    => STRFTIME('%m/%d/', x) || SUBSTR(STRFTIME('%Y', x), 3, 2)
+        // DTOC(x, 1) => STRFTIME('%Y%m%d', x)
+        //  SQLite's STRFTIME has no '%y' (two-digit year), so slice it out of '%Y'.
         F::DTOC => {
-            let fmt = if args.len() == 2 {
+            let x = argid(0)?;
+            if args.len() == 2 {
                 // Equivalent to DTOS
-                "%Y%m%d"
-            } else {
-                "%m/%d/%y"
-            };
-            let fmt = dst_tree.push_expr(fmt.into());
-
+                let fmt = dst_tree.push_expr("%Y%m%d".into());
+                return ok(
+                    Expression::FunctionCall {
+                        name: "STRFTIME".into(),
+                        args: dst_tree.push_args([fmt, x].into_iter()),
+                    },
+                    FieldType::Character(8),
+                );
+            }
+            let md_fmt = dst_tree.push_expr("%m/%d/".into());
+            let month_day = dst_tree.push_fn_call("STRFTIME", &[md_fmt, x]);
+            let year_fmt = dst_tree.push_expr("%Y".into());
+            let year = dst_tree.push_fn_call("STRFTIME", &[year_fmt, x]);
+            let lit_2 = dst_tree.push_expr(2.into());
+            let lit_3 = dst_tree.push_expr(3.into());
+            let yy = dst_tree.push_fn_call("SUBSTR", &[year, lit_3, lit_2]);
             ok(
-                Expression::FunctionCall {
-                    name: "STRFTIME".into(),
-                    args: dst_tree.push_args([fmt, argid(0)?].into_iter()),
-                },
+                Expression::BinaryOperator(
+                    month_day,
+                    TranslateBinaryOp::Concat,
+                    yy,
+                    Parenthesize::Yes,
+                ),
                 FieldType::Character(8),
             )
         }
@@ -357,6 +509,17 @@ pub fn translate_binary_op<'field_lookup, 'parse>(
                 FieldType::Logical,
             )
         }
+        (op @ (parser::BinaryOp::Add | parser::BinaryOp::Sub), FieldType::Date) => {
+            let l = dst_tree.push_expr(translated_l);
+            let (r, r_ty) = cx.translate_expr(r, src_tree, dst_tree)?;
+            let r = dst_tree.push_expr(r);
+            let op = match op {
+                parser::BinaryOp::Add => TranslateBinaryOp::Add,
+                _ => TranslateBinaryOp::Sub,
+            };
+            let (expr, ty) = date_arith(l, op, r, r_ty, dst_tree);
+            ok(expr, ty)
+        }
         (parser::BinaryOp::Contain, FieldType::Character(_)) => {
             let translated_r = default_translate(r, src_tree, dst_tree, cx)?.0;
             let haystack = dst_tree.push_expr(translated_r);
@@ -485,6 +648,103 @@ mod tests {
             r#"format('%s%s%.*c',RTRIM('ab  '),'cd',LENGTH('ab  ')-LENGTH(RTRIM('ab  ')),' ')"#,
             sql
         );
+    }
+
+    /// Translates `input` for SQLite with every field being a Date named BDAY
+    fn sqlite_date_sql(input: &str) -> (String, FieldType) {
+        let translator = SqliteTranslator {
+            field_lookup: |_alias, _name| Ok((Cow::from("BDAY"), FieldType::Date)),
+        };
+        let pt = crate::parse(input).expect("parses");
+        let (res, ty) = translator.translate(&pt).expect("translates");
+
+        use crate::to_sql::{Printer, PrinterConfig, SqlitePrinterContext};
+        let p = Printer::new(
+            res,
+            PrinterConfig {
+                context: Box::new(SqlitePrinterContext { pad_strings: false }),
+            },
+        );
+        (format!("{p}"), ty)
+    }
+
+    const BDAY: &str = r#"COALESCE("BDAY", DATE('0001-01-01'))"#;
+
+    #[test]
+    fn sqlite_dtoc_two_digit_year() {
+        let (sql, ty) = sqlite_date_sql("DTOC(BDAY)");
+        assert_eq!(
+            format!("(STRFTIME('%m/%d/',{BDAY}) || SUBSTR(STRFTIME('%Y',{BDAY}),3,2))"),
+            sql
+        );
+        assert_eq!(FieldType::Character(8), ty);
+
+        let (sql, _) = sqlite_date_sql("DTOC(BDAY, 1)");
+        assert_eq!(format!("STRFTIME('%Y%m%d',{BDAY})"), sql);
+    }
+
+    #[test]
+    fn sqlite_date_is_iso() {
+        let (sql, _) = sqlite_date_sql("BDAY = DATE()");
+        assert_eq!(format!("({BDAY}=DATE('now','localtime'))"), sql);
+    }
+
+    #[test]
+    fn sqlite_ctod() {
+        let (sql, ty) = sqlite_date_sql("CTOD('08/10/26')");
+        let r = "REPLACE(RTRIM('08/10/26'),' ','0')";
+        assert_eq!(
+            format!(
+                "COALESCE(DATE((CASE WHEN LENGTH({r})=8 THEN \
+                 ((CASE WHEN SUBSTR({r},7,2)<'69' THEN '20' ELSE '19' END) || SUBSTR({r},7,2) || '-' || SUBSTR({r},1,2) || '-' || SUBSTR({r},4,2)) \
+                 ELSE  NULL  END)),'0001-01-01')"
+            ),
+            sql
+        );
+        assert_eq!(FieldType::Date, ty);
+    }
+
+    #[test]
+    fn sqlite_date_plus_minus_days() {
+        let (sql, ty) = sqlite_date_sql("BDAY + 3");
+        assert_eq!(format!("DATE((JULIANDAY({BDAY})+3))"), sql);
+        assert_eq!(FieldType::Date, ty);
+
+        let (sql, ty) = sqlite_date_sql("BDAY - 3");
+        assert_eq!(format!("DATE((JULIANDAY({BDAY})-3))"), sql);
+        assert_eq!(FieldType::Date, ty);
+
+        // Non-integer day counts are rounded, as in the Postgres translation
+        let (sql, _) = sqlite_date_sql("BDAY + 1.6");
+        assert_eq!(format!("DATE((JULIANDAY({BDAY})+ROUND(1.6)))"), sql);
+    }
+
+    #[test]
+    fn sqlite_date_minus_date() {
+        let (sql, ty) = sqlite_date_sql("BDAY - BDAY");
+        assert_eq!(
+            format!("CAST (JULIANDAY({BDAY})-JULIANDAY({BDAY}) AS INTEGER)"),
+            sql
+        );
+        assert_eq!(FieldType::Numeric { len: 99, dec: 0 }, ty);
+    }
+
+    #[test]
+    fn sqlite_date_sequence() {
+        let (sql, ty) = sqlite_date_sql("BDAY + 3 + 1");
+        assert_eq!(
+            format!("DATE((JULIANDAY(DATE((JULIANDAY({BDAY})+3)))+1))"),
+            sql
+        );
+        assert_eq!(FieldType::Date, ty);
+
+        // date - date yields a number; the remaining steps are plain arithmetic
+        let (sql, ty) = sqlite_date_sql("BDAY - BDAY - 1");
+        assert_eq!(
+            format!("(CAST (JULIANDAY({BDAY})-JULIANDAY({BDAY}) AS INTEGER)-1)"),
+            sql
+        );
+        assert_eq!(FieldType::Numeric { len: 99, dec: 0 }, ty);
     }
 
     #[test]
