@@ -619,18 +619,38 @@ pub fn translate_binary_op_right<'parse, 'field_lookup, T: TranslationContext>(
             FieldType::Double
             | FieldType::Float
             | FieldType::Integer
-            | FieldType::Numeric { .. }
-            | FieldType::Date,
+            | FieldType::Numeric { .. },
         ) => binop(l, BinaryOp::Add, r, ty),
         (
             parser::BinaryOp::Sub,
             FieldType::Double | FieldType::Float | FieldType::Integer | FieldType::Numeric { .. },
         ) => binop(l, BinaryOp::Sub, r, ty),
 
-        // Subtracting from a date will "just work" but we need to change
-        //  the returned type to numeric (number of days)
-        (parser::BinaryOp::Sub, FieldType::Date) => {
-            binop(l, BinaryOp::Sub, r, FieldType::Numeric { len: 99, dec: 0 })
+        // date - date is the number of days between them. date +/- n is a date, but Postgres
+        //  only has date +/- INTEGER, so any other n (a numeric field, VAL(), arithmetic) is
+        //  cast. Integer literals and fields are left alone so SQL that already worked (and
+        //  any index built from it) doesn't change.
+        (parser::BinaryOp::Add | parser::BinaryOp::Sub, FieldType::Date) => {
+            let l = dst_tree.push_expr(l);
+            let (r, r_ty) = translate_expr(r, src_tree, dst_tree, cx)?;
+            let pg_op = if *op == parser::BinaryOp::Add {
+                BinaryOp::Add
+            } else {
+                BinaryOp::Sub
+            };
+            if pg_op == BinaryOp::Sub && matches!(r_ty, FieldType::Date | FieldType::DateTime) {
+                let r = dst_tree.push_expr(r);
+                return tr_binop(l, pg_op, r, FieldType::Numeric { len: 99, dec: 0 });
+            }
+            let is_integer = r_ty == FieldType::Integer
+                || matches!(&r, Expression::NumberLiteral(s) if !s.contains('.'));
+            let r = dst_tree.push_expr(r);
+            let r = if is_integer {
+                r
+            } else {
+                dst_tree.push_expr(Expression::Cast(r, "integer"))
+            };
+            tr_binop(l, pg_op, r, FieldType::Date)
         }
 
         // Add on a character type maps to CONCAT

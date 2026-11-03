@@ -472,3 +472,48 @@ fn parenthesized_number_translate() {
     };
     assert_eq!(num, "1");
 }
+
+/// Translates `expr` and returns the root's operator, its right operand, and the result type.
+fn date_arith(expr: &str) -> (translate::BinaryOp, String, FieldType) {
+    let cx = TestTranslator;
+    let parse_tree = parser::parse(expr).unwrap();
+    let (tree, field_type) = cx.translate(&parse_tree).unwrap();
+    let root = tree.get_root().expect("a root node");
+    let Expression::BinaryOperator(_, op, r, _) = root else {
+        panic!("Expected BinaryOperator, got {root:?}")
+    };
+    let r = format!("{:?}", tree.get_expr_unchecked(*r));
+    (*op, r, field_type)
+}
+
+#[test]
+fn date_minus_date_is_days() {
+    let (op, r, ty) = date_arith("SHIP_DATE - SHIP_DATE");
+    assert_eq!(op, translate::BinaryOp::Sub);
+    assert!(!r.starts_with("Cast"), "{r}");
+    assert_eq!(ty, FieldType::Numeric { len: 99, dec: 0 });
+}
+
+#[test]
+fn date_plus_minus_integer_is_uncast_date() {
+    for expr in ["SHIP_DATE + 5", "SHIP_DATE - 5", "SHIP_DATE - A"] {
+        let (_, r, ty) = date_arith(expr);
+        assert!(!r.starts_with("Cast"), "{expr}: {r}");
+        assert_eq!(ty, FieldType::Date, "{expr}");
+    }
+}
+
+#[test]
+fn date_plus_minus_numeric_is_cast_to_integer() {
+    // Postgres has no date - numeric operator.
+    for (expr, op) in [
+        ("SHIP_DATE - VAL(ID)", translate::BinaryOp::Sub),
+        ("SHIP_DATE + VAL(ID) * 7", translate::BinaryOp::Add),
+        ("SHIP_DATE - 1.5", translate::BinaryOp::Sub),
+    ] {
+        let (got_op, r, ty) = date_arith(expr);
+        assert_eq!(got_op, op, "{expr}");
+        assert!(r.starts_with("Cast") && r.ends_with("\"integer\")"), "{expr}: {r}");
+        assert_eq!(ty, FieldType::Date, "{expr}");
+    }
+}
