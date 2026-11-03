@@ -513,7 +513,10 @@ fn date_plus_minus_numeric_is_cast_to_integer() {
     ] {
         let (got_op, r, ty) = date_arith(expr);
         assert_eq!(got_op, op, "{expr}");
-        assert!(r.starts_with("Cast") && r.ends_with("\"integer\")"), "{expr}: {r}");
+        assert!(
+            r.starts_with("Cast") && r.ends_with("\"integer\")"),
+            "{expr}: {r}"
+        );
         assert_eq!(ty, FieldType::Date, "{expr}");
     }
 }
