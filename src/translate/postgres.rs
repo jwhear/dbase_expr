@@ -616,10 +616,7 @@ pub fn translate_binary_op_right<'parse, 'field_lookup, T: TranslationContext>(
         // For these types, simple addition is fine
         (
             parser::BinaryOp::Add,
-            FieldType::Double
-            | FieldType::Float
-            | FieldType::Integer
-            | FieldType::Numeric { .. },
+            FieldType::Double | FieldType::Float | FieldType::Integer | FieldType::Numeric { .. },
         ) => binop(l, BinaryOp::Add, r, ty),
         (
             parser::BinaryOp::Sub,
